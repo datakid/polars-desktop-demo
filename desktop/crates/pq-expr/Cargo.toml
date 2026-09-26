@@ -1,0 +1,11 @@
+[package]
+name = "pq-expr"
+description = "PQX formula language: parser → typed AST → polars Expr. Same grammar as js/expr.js."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pq-model.workspace = true
+polars.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,24 @@
+{
+  "name": "floe-desktop",
+  "private": true,
+  "version": "0.3.0",
+  "description": "Floe — Polars desktop (Tauri 2)",
+  "type": "module",
+  "scripts": {
+    "setup": "npm install && npm run icons",
+    "icons": "tauri icon ../images/floe-icon.svg",
+    "stage": "node scripts/stage.mjs",
+    "engine": "node scripts/build-engine.mjs",
+    "engine:debug": "node scripts/build-engine.mjs --debug",
+    "dev": "tauri dev",
+    "dev:native": "npm run engine:debug && tauri dev",
+    "build": "tauri build",
+    "build:native": "npm run engine && tauri build --config src-tauri/tauri.engine.conf.json",
+    "test:engine": "cargo test --workspace",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0"
+  },
+  "engines": { "node": ">=18" }
+}

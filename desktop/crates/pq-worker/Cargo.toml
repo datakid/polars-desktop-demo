@@ -1,0 +1,21 @@
+[package]
+name = "pq-worker"
+description = "Floe native engine process. stdio protocol: length-prefixed MessagePack frames; pages as Arrow IPC."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "floe-engine"
+path = "src/main.rs"
+
+[dependencies]
+pq-model.workspace = true
+pq-compiler.workspace = true
+pq-excel.workspace = true
+polars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_bytes = "0.11"
+rmp-serde.workspace = true
+anyhow.workspace = true

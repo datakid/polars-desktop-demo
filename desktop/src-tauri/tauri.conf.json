@@ -1,0 +1,65 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Floe",
+  "version": "0.3.0",
+  "identifier": "dev.floe.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "beforeDevCommand": "node scripts/stage.mjs",
+    "beforeBuildCommand": "node scripts/stage.mjs"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Floe",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "center": true,
+        "dragDropEnabled": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "backgroundColor": "#f2efe8"
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'unsafe-eval'",
+        "worker-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob:",
+        "font-src": "'self' data:",
+        "connect-src": "ipc: http://ipc.localhost"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Polars desktop for data preparation",
+    "longDescription": "Floe turns messy spreadsheets into clean tables with replayable, git-friendly steps, and exports every project to a Polars Python script.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["floe"],
+        "name": "Floe Project",
+        "description": "Floe data preparation project",
+        "role": "Editor",
+        "mimeType": "application/x-floe"
+      }
+    ],
+    "macOS": { "minimumSystemVersion": "10.15" },
+    "windows": { "webviewInstallMode": { "type": "downloadBootstrapper" } }
+  }
+}

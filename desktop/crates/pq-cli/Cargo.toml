@@ -1,0 +1,17 @@
+[package]
+name = "pq-cli"
+description = "floe — headless refresh: `floe run project.floe --param Month=2026-09 --output ./out`"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "floe"
+path = "src/main.rs"
+
+[dependencies]
+pq-model.workspace = true
+pq-compiler.workspace = true
+polars.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PQX — engine golden tests</title>
+  <style>
+    body { font: 13px/1.5 system-ui, sans-serif; margin: 24px; color: #1c2026; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    .sum { margin: 8px 0 16px; font-weight: 600; }
+    .ok { color: #16a34a; } .bad { color: #dc2626; }
+    li { margin: 2px 0; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+    pre { background: #f4f5f7; padding: 8px; font-size: 11px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>PQX engine — golden tests</h1>
+  <p>Runs the step executors, formula language, Excel reader, merge statistics and code generator in-page. In the Rust build these become <code>cargo test</code> fixtures compared against Python Polars output.</p>
+  <div class="sum" id="sum">Running…</div>
+  <ol id="out"></ol>
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="vendor/alasql.min.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/expr.js"></script>
+  <script src="js/io.js"></script>
+  <script src="js/steps.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/host.js"></script>
+  <script src="js/tests.js"></script>
+</body>
+</html>

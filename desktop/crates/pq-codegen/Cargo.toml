@@ -1,0 +1,9 @@
+[package]
+name = "pq-codegen"
+description = "Steps → Polars Python script. Each step implements to_python(); property tests check compile() ≡ exported script."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pq-model.workspace = true

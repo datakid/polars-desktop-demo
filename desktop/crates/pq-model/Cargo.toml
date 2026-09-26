@@ -1,0 +1,12 @@
+[package]
+name = "pq-model"
+description = "PQX project format: queries, steps, parameters. No Polars dependency — upgrading Polars never breaks saved projects."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+specta.workspace = true
+thiserror.workspace = true

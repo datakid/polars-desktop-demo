@@ -1,0 +1,16 @@
+[package]
+name = "pq-compiler"
+description = "Query DAG → Polars LazyFrame per step; schema after every step; fingerprints; per-cell error masks."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pq-model.workspace = true
+pq-expr.workspace = true
+pq-excel.workspace = true
+polars.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+blake3.workspace = true
+dirs.workspace = true

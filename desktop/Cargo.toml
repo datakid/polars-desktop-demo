@@ -1,0 +1,54 @@
+# Floe native engine — Cargo workspace (Polars in Rust, no Python).
+#   cargo test                       engine crates (work in progress, see README → Roadmap)
+# The Tauri 2 desktop shell lives in ./src-tauri as its OWN crate so the app always builds,
+# independent of engine progress:   cd desktop && npm install && npm run dev
+[workspace]
+resolver = "2"
+members = [
+    "crates/pq-model",
+    "crates/pq-expr",
+    "crates/pq-compiler",
+    "crates/pq-excel",
+    "crates/pq-codegen",
+    "crates/pq-worker",
+    "crates/pq-cli",
+]
+exclude = ["src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.80"
+
+[workspace.dependencies]
+# Pin Polars EXACTLY and upgrade on purpose with the golden tests running (plan §2).
+polars = { version = "=0.46.0", default-features = false, features = [
+    "lazy", "csv", "parquet", "ipc", "json", "strings", "temporal", "dtype-date", "dtype-datetime",
+    "dtype-struct", "is_in", "pivot", "cum_agg", "rank", "round_series", "concat_str", "diagonal_concat",
+    "sql", "streaming", "cross_join", "semi_anti_join", "fmt", "is_unique", "dtype-decimal", "dtype-categorical",
+    "unique_counts", "regex", "round_series", "abs", "timezones", "strings", "string_pad",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+specta = { version = "=2.0.0-rc.20", features = ["derive"] }
+thiserror = "1"
+anyhow = "1"
+blake3 = "1"
+calamine = { version = "0.26", features = ["dates"] }
+chumsky = "0.9"
+rmp-serde = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "process", "sync", "time"] }
+interprocess = { version = "2", features = ["tokio"] }
+tracing = "0.1"
+dirs = "5"
+
+pq-model = { path = "crates/pq-model" }
+pq-expr = { path = "crates/pq-expr" }
+pq-compiler = { path = "crates/pq-compiler" }
+pq-excel = { path = "crates/pq-excel" }
+pq-codegen = { path = "crates/pq-codegen" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

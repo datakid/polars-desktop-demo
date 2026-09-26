@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Floe</title>
+  <meta name="description" content="Floe — Polars desktop for data preparation.">
+  <meta name="theme-color" content="#f2efe8">
+  <link rel="icon" href="images/floe-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app">
+    <header id="title-bar" data-tauri-drag-region>
+      <div class="brand" data-tauri-drag-region>
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><g fill="currentColor"><rect x="3" y="17" width="12" height="12" rx="3.2"/><rect x="17" y="17" width="12" height="12" rx="3.2"/><rect x="3" y="3" width="12" height="12" rx="3.2"/></g><rect x="18" y="2" width="12" height="12" rx="3.2" fill="var(--accent)" transform="rotate(12 24 8)"/></svg>
+        <div class="brand-text" data-tauri-drag-region><span class="brand-name">Floe</span></div>
+      </div>
+      <span class="tb-sep"></span>
+      <button class="icon-btn" id="btn-file-menu" title="Menu" aria-label="Menu"><i class="fa-solid fa-bars"></i></button>
+      <input id="project-name" aria-label="Project name" value="Untitled">
+      <span class="save-state" id="save-state">Saved</span>
+      <span class="grow" data-tauri-drag-region></span>
+      <div class="tb-actions">
+        <button class="icon-btn" id="btn-undo" title="Undo" aria-label="Undo"><i class="fa-solid fa-rotate-left"></i></button>
+        <button class="icon-btn" id="btn-redo" title="Redo" aria-label="Redo"><i class="fa-solid fa-rotate-right"></i></button>
+        <button class="icon-btn" id="btn-theme" title="Theme" aria-label="Toggle theme"><i class="fa-solid fa-circle-half-stroke"></i></button>
+        <button class="pill-btn" id="btn-export"><i class="fa-solid fa-arrow-up-from-bracket"></i><span>Export</span></button>
+      </div>
+    </header>
+
+    <nav id="ribbon" aria-label="Transformations"></nav>
+
+    <main id="workspace">
+      <aside id="left-panel" class="panel" aria-label="Queries and files">
+        <div class="panel-h">Queries
+          <span class="actions"><button class="icon-btn" id="btn-new-query" title="New query" aria-label="New query"><i class="fa-solid fa-plus"></i></button></span>
+        </div>
+        <ul id="query-list" class="scroll" role="listbox" aria-label="Queries" style="max-height:46%"></ul>
+        <div class="panel-h">Files
+          <span class="actions"><button class="icon-btn" id="btn-add-file" title="Add files" aria-label="Add files"><i class="fa-solid fa-plus"></i></button></span>
+        </div>
+        <ul id="file-list" class="scroll grow"></ul>
+        <div class="drop-hint" id="drop-hint">Drop files here</div>
+      </aside>
+      <div class="splitter" data-side="left" role="separator" aria-orientation="vertical"></div>
+
+      <section id="center" aria-label="Data">
+        <div id="formula-bar"><span class="fx">fx</span><div id="step-summary" aria-live="polite"></div></div>
+        <div id="suggest-bar" aria-label="Suggestions"></div>
+        <div id="preview-banner" class="hidden"></div>
+        <div id="grid-wrap">
+          <div id="grid" role="grid" aria-label="Result"></div>
+          <div id="grid-msg" class="grid-empty hidden"></div>
+          <div id="empty-state" class="grid-empty">
+            <div class="welcome">
+              <svg class="hero" viewBox="0 0 32 32" aria-hidden="true"><g fill="currentColor"><rect x="3" y="17" width="12" height="12" rx="3.2"/><rect x="17" y="17" width="12" height="12" rx="3.2"/><rect x="3" y="3" width="12" height="12" rx="3.2"/></g><rect x="18" y="2" width="12" height="12" rx="3.2" fill="var(--accent)" transform="rotate(12 24 8)"/></svg>
+              <h1>Open data to begin</h1>
+              <p class="lead">Excel, CSV or JSON. Or drop files into the window.</p>
+              <div class="actions">
+                <button class="btn primary" data-action="getData">Open file</button>
+                <button class="btn" data-action="folder">Folder</button>
+                <button class="btn" data-action="enter">Enter data</button>
+                <button class="btn ghost" data-action="samples">Sample project</button>
+              </div>
+              <div class="kbd-hints"><span><kbd>Ctrl</kbd> <kbd>O</kbd> Open project</span><span><kbd>?</kbd> Shortcuts</span></div>
+            </div>
+          </div>
+          <div id="busy" class="hidden" role="status"></div>
+        </div>
+      </section>
+      <div class="splitter" data-side="right" role="separator" aria-orientation="vertical"></div>
+
+      <aside id="right-panel" class="panel" aria-label="Steps">
+        <div id="right-tabs" role="tablist">
+          <button data-tab="steps" role="tab" class="on">Steps</button>
+          <button data-tab="profile" role="tab">Profile</button>
+          <button data-tab="schema" role="tab">Schema</button>
+        </div>
+        <div id="tab-steps" class="grow" style="display:flex;flex-direction:column;min-height:0">
+          <div id="query-props" class="query-props"></div>
+          <ol id="step-list" class="scroll grow" aria-label="Applied steps"></ol>
+          <div class="step-legend">
+            <span><i class="fa-solid fa-database"></i>Cached</span>
+            <span><i class="fa-solid fa-bolt" style="color:var(--mat)"></i>Materializes</span>
+            <span><i class="fa-solid fa-note-sticky" style="color:var(--accent)"></i>Note</span>
+          </div>
+        </div>
+        <div id="tab-profile" class="scroll grow hidden"></div>
+        <div id="tab-schema" class="scroll grow hidden"></div>
+      </aside>
+    </main>
+
+    <footer id="status-bar">
+      <span><span class="engine-dot" id="engine-dot"></span><span id="engine-label">Starting</span></span>
+      <span class="sep"></span><span id="st-rows">—</span>
+      <span class="sep"></span><span id="st-mode"></span>
+      <span class="sep"></span><span id="st-time"></span>
+      <span class="sep"></span><span id="st-cache"></span>
+      <span class="grow"></span>
+      <span class="env-badge" id="env-badge">Web</span>
+    </footer>
+  </div>
+  <div id="toasts" aria-live="polite"></div>
+
+  <script src="js/util.js"></script>
+  <script src="js/expr.js"></script>
+  <script src="js/io.js"></script>
+  <script src="js/steps.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/platform.js"></script>
+  <script src="vendor/arrow.es2015.min.js"></script>
+  <script src="js/ui/core.js"></script>
+  <script src="js/native-engine.js"></script>
+  <script src="js/ui/grid.js"></script>
+  <script src="js/ui/formula-editor.js"></script>
+  <script src="js/ui/step-dialogs.js"></script>
+  <script src="js/ui/dialogs.js"></script>
+  <script src="js/ui/app.js"></script>
+</body>
+</html>
