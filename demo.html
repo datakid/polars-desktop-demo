@@ -1,6 +1,6 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Floe demo</title>
-<script>/* Opens Floe with the sample project loaded (fresh workspace). Extra params are forwarded (e.g. demo.html?q=Report%20Sheet&open=python). */
-['floe.project.v1', 'floe.ui', 'floe.filePath', 'pqx.project.v1', 'pqx.ui'].forEach((k) => localStorage.removeItem(k));
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Floe demo</title>
+<script>
+['floe.project.v1', 'floe.ui', 'floe.filePath', 'floe.fileName', 'floe.savedHash', 'pqx.project.v1', 'pqx.ui'].forEach((k) => { try { localStorage.removeItem(k); } catch (e) { } });
 location.replace('index.html?demo' + (location.search ? '&' + location.search.slice(1) : ''));
 </script></head><body>Loading demo…</body></html>

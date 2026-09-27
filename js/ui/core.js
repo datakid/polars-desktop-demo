@@ -59,12 +59,15 @@
     UI.closeMenu();
     const el = buildMenu(items);
     document.body.appendChild(el);
+    el.style.maxHeight = (innerHeight - 12) + 'px';
+    el.style.overflowY = 'auto';
     place(el, x, y);
     openMenu = el;
     if (opts && opts.focus !== false) { const first = el.querySelector('.mi:not(:disabled)'); if (first) first.focus(); }
     return el;
   };
   function buildMenu(items, isSub) {
+    items = items.filter(Boolean).filter((it, i, a) => it !== '-' || (i > 0 && i < a.length - 1 && a[i - 1] !== '-'));
     const el = h('div.menu', { role: 'menu', on: { keydown: menuKeys } });
     items.forEach((it) => {
       if (it === '-') return el.appendChild(h('hr'));
@@ -72,7 +75,7 @@
       if (it.node) return el.appendChild(it.node);
       const btn = h('button.mi', { role: 'menuitem', disabled: it.disabled, class: it.danger ? 'danger' : '' },
         it.icon ? UI.icon(it.icon, 'fa-fw') : h('span', { style: { width: '1.25em', display: 'inline-block' } }),
-        h('span', it.label), it.kbd ? h('span.kbd', it.kbd) : null, it.sub ? UI.icon('fa-chevron-right', 'sub-arrow') : null);
+        h('span', it.label), it.kbd ? h('span.kbd', PQ.Platform.kbd(it.kbd)) : null, it.sub ? UI.icon('fa-chevron-right', 'sub-arrow') : null);
       if (it.sub) {
         let sub = null;
         const openSub = () => {
@@ -92,6 +95,7 @@
         btn.addEventListener('mouseenter', () => { if (el._sub) { el._sub.remove(); el._sub = null; } });
         btn.addEventListener('click', (e) => { e.stopPropagation(); UI.closeMenu(); if (it.run) it.run(); });
       }
+      if (it.title) btn.title = it.title;
       el.appendChild(btn);
     });
     return el;
@@ -112,8 +116,31 @@
     el.style.left = left + 'px'; el.style.top = top + 'px';
   }
   UI.placeAt = place;
-  document.addEventListener('mousedown', (e) => { if (!e.target.closest('.menu')) UI.closeMenu(); });
+  document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.menu')) UI.closeMenu(); });
   addEventListener('blur', () => UI.closeMenu());
+  (function longPress() {
+    let timer = null, start = null, fired = 0;
+    const clear = () => { clearTimeout(timer); timer = null; };
+    document.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch' || e.target.closest('input, textarea, select, .menu, .modal-back')) return;
+      clear();
+      start = { x: e.clientX, y: e.clientY, t: e.target };
+      timer = setTimeout(() => {
+        timer = null; fired = Date.now();
+        if (navigator.vibrate) try { navigator.vibrate(8); } catch (err) { }
+        start.t.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: start.x, clientY: start.y }));
+      }, 520);
+    }, { passive: true });
+    document.addEventListener('pointermove', (e) => { if (timer && start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) clear(); }, { passive: true });
+    let blockUntil = 0;
+    ['pointerup', 'pointercancel'].forEach((ev) => document.addEventListener(ev, () => { clear(); if (fired) { blockUntil = Date.now() + 450; fired = 0; } }, { passive: true }));
+    document.addEventListener('contextmenu', (e) => {
+      if (!e.isTrusted) return;
+      if (timer) { clear(); return; }
+      if (fired || Date.now() < blockUntil) { e.preventDefault(); e.stopImmediatePropagation(); }
+    }, true);
+    document.addEventListener('click', (e) => { if (Date.now() < blockUntil) { blockUntil = 0; e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+  })();
   addEventListener('resize', () => UI.closeMenu());
 
   /* ================================ Modals ================================ */
@@ -230,9 +257,15 @@
   function notify() { Engine.listeners.forEach((f) => f(Engine.state)); }
 
   /* ================================ Project store (immutable snapshots + undo/redo) ================================ */
-  const Store = (UI.Store = { project: null, undo: [], redo: [], listeners: new Set(), filePath: null, savedSnapshot: null, ui: { activeQid: null, activeStep: null, mode: 'preview', selCols: [], rightTab: 'steps' } });
+  const Store = (UI.Store = { project: null, undo: [], redo: [], listeners: new Set(), filePath: null, fileHandle: null, fileName: null, savedSnapshot: null, ui: { activeQid: null, activeStep: null, mode: 'preview', selCols: [], rightTab: 'steps', pane: 'data' } });
   Store.dirty = () => Store.savedSnapshot !== null && Store.savedSnapshot !== Store.project;
-  Store.markSaved = () => { Store.savedSnapshot = Store.project; try { localStorage.setItem('floe.filePath', Store.filePath || ''); } catch (e) { /* ignore */ } emit('saved'); };
+  Store.linked = () => !!(Store.filePath || Store.fileHandle);
+  Store.markSaved = () => {
+    Store.savedSnapshot = Store.project;
+    try { localStorage.setItem('floe.filePath', Store.filePath || ''); localStorage.setItem('floe.fileName', Store.fileName || ''); localStorage.setItem('floe.savedHash', String(PQ.hash(JSON.stringify(Store.project)))); } catch (e) { }
+    if (PQ.Platform.kv) { if (Store.fileHandle) PQ.Platform.kv.set('projectHandle', Store.fileHandle); else PQ.Platform.kv.del('projectHandle'); }
+    emit('saved');
+  };
   const LS_KEY = 'floe.project.v1';
   // one-time migration from the pre-rename key
   try { if (!localStorage.getItem(LS_KEY) && localStorage.getItem('pqx.project.v1')) localStorage.setItem(LS_KEY, localStorage.getItem('pqx.project.v1')); } catch (e) { /* storage disabled */ }
@@ -241,18 +274,54 @@
     try { const raw = localStorage.getItem(LS_KEY); if (raw) return PQ.Steps.migrate(JSON.parse(raw)); } catch (e) { console.warn('Could not restore project', e); }
     return Store.newProject();
   };
-  Store.init = function () {
+  Store.init = async function () {
     Store.project = Store.load();
     Store.savedSnapshot = Store.project;
-    Store.filePath = localStorage.getItem('floe.filePath') || null;
-    const ui = JSON.parse(localStorage.getItem('floe.ui') || '{}');
+    let ui = {};
+    try {
+      Store.filePath = PQ.Platform.native ? localStorage.getItem('floe.filePath') || null : null;
+      Store.fileName = localStorage.getItem('floe.fileName') || null;
+      ui = JSON.parse(localStorage.getItem('floe.ui') || '{}');
+    } catch (e) { ui = {}; }
     Store.ui.activeQid = ui.activeQid && Store.project.queries.some((q) => q.id === ui.activeQid) ? ui.activeQid : (Store.project.queries[0] || {}).id || null;
+    if (ui.rightTab) Store.ui.rightTab = ui.rightTab;
+    if (!PQ.Platform.native && PQ.Platform.fsa && Store.fileName) {
+      const hnd = await PQ.Platform.kv.get('projectHandle');
+      if (hnd && hnd.name === Store.fileName) Store.fileHandle = hnd; else Store.fileName = null;
+    } else if (!PQ.Platform.native) Store.fileName = null;
+    let savedHash = null;
+    try { savedHash = localStorage.getItem('floe.savedHash'); } catch (e) { }
+    if (Store.linked() && savedHash && savedHash !== String(PQ.hash(JSON.stringify(Store.project)))) Store.savedSnapshot = Store.newProject();
   };
+  let lastWrite = null;
   const persist = PQ.debounce(() => {
-    try { localStorage.setItem(LS_KEY, JSON.stringify(Store.project)); UI.setSaveState && UI.setSaveState(Store.dirty() && Store.filePath ? 'Autosaved · unsaved changes' : 'Autosaved'); }
-    catch (e) { UI.setSaveState && UI.setSaveState('Not saved: ' + e.message); }
+    try {
+      lastWrite = JSON.stringify(Store.project);
+      localStorage.setItem(LS_KEY, lastWrite);
+      UI.setSaveState && UI.setSaveState(Store.dirty() && Store.linked() ? 'Unsaved changes' : Store.linked() ? 'Saved' : 'Autosaved in browser');
+    } catch (e) {
+      UI.setSaveState && UI.setSaveState('Browser storage full');
+      if (!persist.warned) { persist.warned = true; UI.toast('Could not autosave: browser storage is full. Save the project to a file to keep your work.', 'warn', { ms: 10000 }); }
+    }
   }, 400);
-  Store.saveUI = () => localStorage.setItem('floe.ui', JSON.stringify({ activeQid: Store.ui.activeQid }));
+  Store.flush = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(Store.project)); } catch (e) { } };
+  Store.saveUI = () => { try { localStorage.setItem('floe.ui', JSON.stringify({ activeQid: Store.ui.activeQid, rightTab: Store.ui.rightTab })); } catch (e) { } };
+  addEventListener('storage', (e) => {
+    if (e.key !== LS_KEY || !e.newValue || e.newValue === lastWrite) return;
+    Store.externalChange = e.newValue;
+    emit('external');
+  });
+  Store.adoptExternal = function () {
+    const raw = Store.externalChange; if (!raw) return;
+    Store.externalChange = null;
+    try {
+      const p = PQ.Steps.migrate(JSON.parse(raw));
+      Store.undo.push({ label: 'Load from other tab', project: Store.project, ui: { activeQid: Store.ui.activeQid, activeStep: Store.ui.activeStep } });
+      Store.project = p; lastWrite = raw;
+      if (!p.queries.some((q) => q.id === Store.ui.activeQid)) { Store.ui.activeQid = (p.queries[0] || {}).id || null; Store.ui.activeStep = null; }
+      emit('project');
+    } catch (e) { UI.toast(e.message, 'err'); }
+  };
 
   /** Apply an edit. fn receives a deep copy and mutates it; the previous snapshot goes on the undo stack. */
   Store.edit = function (label, fn, uiPatch) {
@@ -289,7 +358,9 @@
     Store.project = project;
     Store.ui.activeQid = (project.queries[0] || {}).id || null;
     Store.ui.activeStep = null; Store.ui.selCols = [];
-    Store.filePath = null; Store.savedSnapshot = project;
+    Store.filePath = null; Store.fileHandle = null; Store.fileName = null; Store.savedSnapshot = project;
+    try { localStorage.removeItem('floe.fileName'); localStorage.removeItem('floe.savedHash'); } catch (e) { }
+    if (PQ.Platform.kv) PQ.Platform.kv.del('projectHandle');
     persist(); emit('project');
   };
   Store.setUI = function (patch) { Object.assign(Store.ui, patch); Store.saveUI(); emit('ui'); };
@@ -348,6 +419,12 @@
   UI.download = async function (name, data, mime) {
     try { return await PQ.Platform.saveFile(name, data, mime); }
     catch (e) { UI.toast(e.message || String(e), 'err'); return null; }
+  };
+  UI.copy = async function (text, okMsg) {
+    const ok = await PQ.Platform.copyText(text);
+    if (ok) { if (okMsg !== false) UI.toast(okMsg || 'Copied', 'ok', { ms: 1400 }); }
+    else UI.toast('Clipboard is blocked by the browser', 'err');
+    return ok;
   };
   UI.pickFiles = (accept, multiple, dir) => new Promise((res) => {
     const inp = h('input', { type: 'file', accept: accept || '', multiple: multiple ? true : null, webkitdirectory: dir ? true : null, style: { display: 'none' } });

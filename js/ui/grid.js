@@ -15,7 +15,8 @@
       this.inner.append(this.head, this.body);
       el.appendChild(this.inner);
       el.tabIndex = 0;
-      el.addEventListener('scroll', () => this.paint());
+      let raf = 0;
+      el.addEventListener('scroll', () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; this.paint(); }); }, { passive: true });
       el.addEventListener('keydown', (e) => this.keys(e));
       new ResizeObserver(() => this.paint()).observe(el);
       this.body.addEventListener('mousedown', (e) => {
@@ -67,7 +68,7 @@
             h('button.th-menu', { 'aria-label': 'Column menu for ' + c.name, on: { click: (e) => { e.stopPropagation(); if (!this.sel.has(c.name)) { this.sel = new Set([c.name]); this.renderHead(); this.opts.onSelect && this.opts.onSelect([...this.sel]); } this.opts.onColMenu && this.opts.onColMenu(c, e.currentTarget); } } }, UI.icon('fa-caret-down'))),
           q ? h('div.quality', { title: 'Valid ' + PQ.fmtInt(q.valid) + ' · Error ' + PQ.fmtInt(q.error) + ' · Empty ' + PQ.fmtInt(q.empty) }, h('span.qv', { style: { width: pct(q.valid) + '%' } }), h('span.qe', { style: { width: pct(q.error) + '%' } }), h('span.qn', { style: { width: pct(q.empty) + '%' } })) : null,
           q ? h('div.quality-txt', h('span', Math.round(pct(q.valid)) + '% valid'), q.error ? h('span.e', PQ.fmtInt(q.error) + ' err') : null, q.empty ? h('span', Math.round(pct(q.empty)) + '% empty') : null) : null,
-          h('div.resize', { on: { mousedown: (e) => this.startResize(e, c) , dblclick: (e) => { e.stopPropagation(); this.autoFit(c, i); } } }));
+          h('div.resize', { on: { pointerdown: (e) => this.startResize(e, c), click: (e) => e.stopPropagation(), dblclick: (e) => { e.stopPropagation(); this.autoFit(c, i); } } }));
         th.addEventListener('click', (e) => {
           if (e.shiftKey && this.sel.size) {
             const names = r.schema.map((x) => x.name), last = [...this.sel].pop();
@@ -87,11 +88,13 @@
       });
     }
     startResize(e, c) {
+      if (e.button !== 0) return;
       e.preventDefault(); e.stopPropagation();
       const x0 = e.clientX, w0 = this.width(c.name, c.type);
-      const move = (ev) => { this.widths.set(c.name, Math.max(50, w0 + ev.clientX - x0)); this.renderHead(); this.paint(true); };
-      const up = () => { removeEventListener('mousemove', move); removeEventListener('mouseup', up); };
-      addEventListener('mousemove', move); addEventListener('mouseup', up);
+      let raf = 0, last = x0;
+      const move = (ev) => { last = ev.clientX; if (raf) return; raf = requestAnimationFrame(() => { raf = 0; this.widths.set(c.name, Math.max(50, w0 + last - x0)); this.renderHead(); this.paint(true); }); };
+      const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); };
+      addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
     }
     autoFit(c, i) {
       const page = this.pages.get(0) || [];
@@ -165,9 +168,10 @@
         else if (y + ROW_H > this.el.scrollTop + this.el.clientHeight) this.el.scrollTop = y + ROW_H - this.el.clientHeight;
         this.paint();
       } else if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        if (window.getSelection && String(window.getSelection())) return;
+        e.preventDefault();
         const v = this.value(r, c);
-        navigator.clipboard && navigator.clipboard.writeText(UI.cellText(v, this.result.schema[c].type).text);
-        UI.toast('Copied', 'ok', { ms: 1000 });
+        UI.copy(UI.cellText(v, this.result.schema[c].type).text);
       }
     }
   }

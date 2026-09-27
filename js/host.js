@@ -104,8 +104,27 @@
   H.listFiles = () => ({ files: listFiles() });
 
   H.addFile = async function (m) {
-    const rec = await PQ.addFile(m.name, m.buf, { folder: m.folder || '', path: m.path || null });
+    const extra = { folder: m.folder || '', path: m.path || null };
+    if (m.mtime) extra.mtime = m.mtime;
+    if (m.replaceId && PQ.Files.has(m.replaceId)) extra.id = m.replaceId;
+    const rec = await PQ.addFile(m.name, m.buf, extra);
+    if (extra.id) E.clearCache();
     return { file: { id: rec.id, name: rec.name, size: rec.size, mtime: rec.mtime, folder: rec.folder, kind: PQ.IO.fileKind(rec.name) } };
+  };
+  H.updateFile = async function (m) {
+    const rec = PQ.Files.get(m.id);
+    if (!rec) throw new Error('File not found');
+    const next = Object.assign({}, rec, { buf: m.buf, size: m.buf.byteLength, mtime: m.mtime || Date.now() });
+    PQ.Files.set(rec.id, next);
+    try { await PQ.IDB.put(next); } catch (e) { }
+    E.clearCache();
+    results.clear();
+    return { file: { id: next.id, name: next.name, size: next.size, mtime: next.mtime, folder: next.folder || '', kind: PQ.IO.fileKind(next.name) } };
+  };
+  H.storageInfo = function () {
+    let bytes = 0;
+    PQ.Files.forEach((f) => { bytes += f.size || 0; });
+    return { files: PQ.Files.size, bytes };
   };
   H.removeFile = async function (m) { PQ.Files.delete(m.id); await PQ.IDB.del(m.id); E.clearCache(); return { files: listFiles() }; };
   H.loadSamples = async function () {

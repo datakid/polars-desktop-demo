@@ -3,17 +3,40 @@
 (function () {
   const PQ = self.PQ, UI = PQ.UI, h = UI.h, Store = UI.Store, $ = UI.$;
   const App = (UI.App = { files: [], result: null, states: [], queryStatus: new Map(), evalSeq: 0, profile: null, dismissed: new Set() });
+  const P_touch = PQ.Platform.touch;
+  const narrow = () => matchMedia('(max-width: 760px)').matches;
+  function setPane(p) {
+    Store.ui.pane = p;
+    document.body.dataset.pane = p;
+    UI.$$('#pane-tabs button').forEach((b) => { const on = b.dataset.pane === p; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+    if (p === 'data' && App.grid) requestAnimationFrame(() => App.grid.paint());
+    if (p === 'steps' && Store.ui.rightTab === 'profile') loadProfile();
+  }
+  App.setPane = setPane;
+  async function renderRecentOnWelcome() {
+    const box = $('#welcome-recent');
+    if (!box || !PQ.Platform.fsa) return;
+    const list = await PQ.Platform.recent.list();
+    UI.clear(box);
+    if (!list.length) return;
+    box.append(h('div.field-label', 'Recent projects'), h('ul.recent-list', list.slice(0, 5).map((r, i) => h('li', h('button.link-btn', { on: { click: async () => { try { UI.openProject(await PQ.Platform.recent.open(r)); } catch (e) { UI.toast(e.message, 'err'); PQ.Platform.recent.remove(i).then(renderRecentOnWelcome); } } } }, UI.icon('fa-file-lines'), ' ', r.name)))));
+  }
 
   /* ================================ boot ================================ */
   App.boot = async function () {
     App.applyTheme();
     await PQ.Platform.init();
-    Store.init();
-    $('#env-badge').textContent = PQ.Platform.native ? 'Desktop' : 'Web';
-    $('#env-badge').classList.toggle('native', PQ.Platform.native);
+    await Store.init();
+    renderEnvBadge();
+    addEventListener('online', renderEnvBadge);
+    addEventListener('offline', renderEnvBadge);
     PQ.Platform.onMenu(onNativeMenu);
     PQ.Platform.onFilesDropped(async (files) => App.afterAdd(await App.addFiles(files)));
-    addEventListener('beforeunload', (e) => { if (PQ.Platform.native && Store.filePath && Store.dirty()) { e.preventDefault(); e.returnValue = ''; } });
+    addEventListener('beforeunload', (e) => { Store.flush(); if (Store.linked() && Store.dirty()) { e.preventDefault(); e.returnValue = ''; } });
+    addEventListener('pagehide', () => Store.flush());
+    addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); App.installPrompt = e; });
+    addEventListener('appinstalled', () => { App.installPrompt = null; UI.toast(PQ.BRAND.name + ' installed', 'ok'); });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Store.query() && !UI.anyModal()) App.syncSources(false).then((n) => { if (n) App.refresh({ keepScroll: true }); }); });
     buildRibbon();
     wireLayout();
     Store.on((kind) => onStoreChange(kind));
@@ -26,17 +49,19 @@
       filtered: (name) => filteredCols().has(name),
     });
     renderAll();
+    setPane('data');
     try {
       await Promise.all([UI.Engine.start(), UI.NativeEngine.init()]);
       await App.reloadFiles();
       await UI.Engine.setProject(Store.project);
-      PQ.Platform.onOpenProject((f) => UI.openProject(f));
+      PQ.Platform.onOpenProject(async (f) => { if (await UI.guardUnsaved('open')) UI.openProject(f); }, async (files) => App.afterAdd(await App.addFiles(files)));
       if (/[?&]demo\b/.test(location.search) && !Store.project.queries.length) await App.loadSamples();
       // deep links: ?q=<query name>&step=<n>&open=python|merge|deps|files|nav|params|custom
       const qs = new URLSearchParams(location.search);
       const want = qs.get('q') && Store.project.queries.find((x) => x.name === qs.get('q'));
       if (want) Store.setUI({ activeQid: want.id, activeStep: qs.get('step') ? +qs.get('step') - 1 : null });
       await App.refresh();
+      if (['queries', 'data', 'steps'].includes(qs.get('pane'))) setPane(qs.get('pane'));
       const open = qs.get('open');
       if (open) setTimeout(() => ({
         python: () => UI.pythonDialog(Store.ui.activeQid), deps: UI.dependencyDialog, files: UI.projectFilesDialog, params: UI.paramsDialog,
@@ -46,17 +71,33 @@
       }[open] || (() => {}))(), 300);
     } catch (e) {
       console.error(e);
-      showGridMessage(h('div', h('div.big', UI.icon('fa-plug-circle-xmark')), h('h2', 'Engine failed to start'), h('p', e.message), h('p.muted', 'Try reloading the window (Ctrl+R). If it keeps failing, clear the cache in Settings.')));
+      showGridMessage(h('div', h('div.big', UI.icon('fa-plug-circle-xmark')), h('h2', 'Engine failed to start'), h('p', e.message), h('p.muted', PQ.Platform.native ? 'Try reloading the window. If it keeps failing, clear the cache in Settings.' : 'Reload the page. Private browsing modes can block the storage the engine needs.'), h('div.actions', h('button.btn.primary', { on: { click: () => location.reload() } }, 'Reload'))));
     }
   };
+  function renderEnvBadge() {
+    const b = $('#env-badge');
+    const off = !PQ.Platform.native && navigator.onLine === false;
+    b.textContent = PQ.Platform.native ? 'Desktop' : off ? 'Offline' : 'Web';
+    b.classList.toggle('native', PQ.Platform.native);
+    b.classList.toggle('offline', off);
+    b.title = PQ.Platform.native ? '' : off ? 'You are offline. Everything still works; data is processed on this device.' : 'Runs in your browser. Data stays on this device.';
+  }
   App.applyTheme = function () {
     const t = localStorage.getItem('floe.theme') || 'system';
     const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   };
-  UI.setSaveState = (t) => { const el = $('#save-state'); if (el) { el.textContent = t; el.classList.toggle('dirty', Store.dirty() && !!Store.filePath); } updateTitle(); };
+  UI.setSaveState = (t) => {
+    const el = $('#save-state');
+    if (el) {
+      el.textContent = t;
+      el.classList.toggle('dirty', Store.dirty() && Store.linked());
+      el.title = Store.linked() ? (Store.dirty() ? 'Click to save to ' : 'Saved to ') + (Store.fileName || 'file') : 'Kept in this browser. Click to save a project file.';
+    }
+    updateTitle();
+  };
   function updateTitle() {
-    const file = Store.filePath ? String(Store.filePath).split(/[\\/]/).pop() : null;
+    const file = Store.fileName || (Store.filePath ? String(Store.filePath).split(/[\\/]/).pop() : null);
     PQ.Platform.setTitle((Store.dirty() && file ? '● ' : '') + (file || Store.project.name) + ' — ' + PQ.BRAND.name);
   }
   /** Native menu (desktop/src-tauri/src/menu.rs) → actions. */
@@ -75,10 +116,19 @@
     (map[id] || (() => console.warn('unhandled menu', id)))();
   }
   function toggleTheme() { const cur = document.documentElement.dataset.theme; localStorage.setItem('floe.theme', cur === 'dark' ? 'light' : 'dark'); App.applyTheme(); }
-  async function newProject() { if (await UI.confirm('New project?', 'The current project stays in undo history (Ctrl+Z).', 'Create')) Store.replace(Store.newProject(), 'New project'); }
+  async function newProject() {
+    if (Store.linked() && Store.dirty()) { if (!(await UI.guardUnsaved('new'))) return; }
+    else if (Store.project.queries.length && !(await UI.confirm('New project?', 'The current project stays in undo history (' + PQ.Platform.kbd('Ctrl+Z') + ').', 'Create'))) return;
+    Store.replace(Store.newProject(), 'New project');
+  }
+  App.newProject = newProject;
 
   function onStoreChange(kind) {
     if (kind === 'saved') { UI.setSaveState('Saved'); return; }
+    if (kind === 'external') {
+      UI.toast('This project was changed in another tab.', 'warn', { ms: 15000, actions: [{ label: 'Load their version', run: Store.adoptExternal }] });
+      return;
+    }
     if (kind === 'project') {
       UI.Engine.setProject(Store.project).then(() => App.refresh());
       renderAll();
@@ -89,22 +139,55 @@
     renderQueries(); renderFiles(); renderSteps(); renderRight(); renderRibbonState(); renderFormulaBar();
     const q = Store.query();
     $('#empty-state').classList.toggle('hidden', !!q);
+    if (!q) renderRecentOnWelcome();
+    const tabQ = UI.$('#pane-tabs [data-pane="queries"] .count');
+    if (tabQ) tabQ.textContent = Store.project.queries.length || '';
+    const tabS = UI.$('#pane-tabs [data-pane="steps"] .count');
+    if (tabS) tabS.textContent = q ? q.steps.length : '';
   }
 
   /* ================================ files ================================ */
   App.reloadFiles = async function () { const r = await UI.Engine.call('listFiles'); App.files = r.files; renderFiles(); };
   App.folders = () => [...new Set(App.files.filter((f) => f.folder).map((f) => f.folder))].sort();
   /** Accepts browser File objects or platform records {name, size, buf, path?, folder?}. */
+  const MAX_FILE = PQ.Platform.native ? 500 * 1048576 : 250 * 1048576;
   App.addFiles = async function (fileList, folder) {
     const added = [];
-    for (const file of fileList) {
-      if (file.size > 500 * 1048576) { UI.toast(file.name + ': over 500 MB', 'warn'); continue; }
-      const buf = file.buf || (await file.arrayBuffer());
-      const r = await UI.Engine.call('addFile', { name: file.name, buf, folder: folder || file.folder || '', path: file.path || null }, null, [buf]);
-      added.push(r.file);
-    }
+    const list = [...fileList];
+    if (list.length > 3) App.busy('Adding ' + list.length + ' files', false);
+    try {
+      for (const file of list) {
+        if (file.size > MAX_FILE) { UI.toast(file.name + ': ' + UI.fmtBytes(file.size) + ' is too large for the browser engine (limit ' + UI.fmtBytes(MAX_FILE) + ')', 'warn', { ms: 8000 }); continue; }
+        try {
+          const buf = file.buf || (await file.arrayBuffer());
+          const r = await UI.Engine.call('addFile', { name: file.name, buf, folder: folder || file.folder || '', path: file.path || null, mtime: file.mtime || file.lastModified || null }, null, [buf]);
+          if (file.handle) PQ.Platform.fileHandles.set(r.file.id, file.handle);
+          added.push(r.file);
+        } catch (e) { UI.toast(file.name + ': ' + (e.message || e), 'err'); }
+      }
+    } finally { if (list.length > 3) App.busy(null); }
     await App.reloadFiles();
+    if (added.length && !PQ.Platform.native && !App.askedPersist) { App.askedPersist = true; PQ.Platform.persist(); }
     return added;
+  };
+  App.syncSources = async function (ask) {
+    if (PQ.Platform.native || !PQ.Platform.fsa || App.syncing) return 0;
+    App.syncing = true;
+    let n = 0;
+    try {
+      for (const f of App.files) {
+        const hnd = await PQ.Platform.fileHandles.get(f.id);
+        if (!hnd) continue;
+        try {
+          const upd = await PQ.Platform.readIfChanged(hnd, f, ask);
+          if (!upd) continue;
+          await UI.Engine.call('updateFile', { id: f.id, buf: upd.buf, mtime: upd.mtime }, null, [upd.buf]);
+          n++;
+        } catch (e) { if (e && e.name === 'NotFoundError') { PQ.Platform.fileHandles.del(f.id); UI.toast(f.name + ' was moved or deleted on disk; using the last copy.', 'warn'); } }
+      }
+      if (n) { await App.reloadFiles(); UI.toast('Reloaded ' + n + ' changed file' + (n === 1 ? '' : 's') + ' from disk', 'ok', { ms: 2500 }); }
+    } finally { App.syncing = false; }
+    return n;
   };
   App.getData = async function () {
     let files;
@@ -114,7 +197,31 @@
   };
   App.afterAdd = function (added) {
     if (added.length === 1) UI.navigator(added[0].id);
-    else if (added.length) UI.toast(added.length + ' files added', 'ok');
+    else if (added.length) UI.toast(added.length + ' files added. Choose one in Files to load it.', 'ok');
+    if (added.length) setPane(added.length === 1 ? 'data' : 'queries');
+  };
+  App.pasteTable = async function (text) {
+    const t = String(text || '').replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+    if (!t) return false;
+    const lines = t.split('\n');
+    const delim = lines[0].includes('\t') ? '\t' : null;
+    if (!delim) return false;
+    const rows = lines.map((l) => l.split(delim));
+    const width = Math.max(...rows.map((r) => r.length));
+    if (width < 2 && rows.length < 2) return false;
+    const head = rows[0];
+    const looksHeader = rows.length > 1 && head.every((x) => x.trim() && isNaN(+x.replace(/[, ]/g, '')));
+    const seen = new Set();
+    const columns = Array.from({ length: width }, (_, i) => { let n = (looksHeader ? (head[i] || '').trim() : '') || 'Column' + (i + 1); let k = n, j = 2; while (seen.has(k)) k = n + ' ' + j++; seen.add(k); return k; });
+    const body = (looksHeader ? rows.slice(1) : rows).map((r) => Array.from({ length: width }, (_, i) => (r[i] === undefined || r[i] === '' ? null : r[i])));
+    if (body.length > 50000) { UI.toast('That paste is very large. Save it as a CSV and open the file instead.', 'warn'); return true; }
+    const q = { id: PQ.uid('q'), name: PQ.uniqueName('Pasted', Store.project.queries.map((x) => x.name)), load: { target: 'none' }, steps: [{ id: PQ.uid('s'), name: 'Source', kind: { type: 'Source', source: { kind: 'blank', columns, rows: body } } }] };
+    Store.edit('Paste table', (p) => { p.queries.push(q); }, { activeQid: q.id, activeStep: null, selCols: [] });
+    Store.saveUI();
+    setPane('data');
+    autoTypes(q.id);
+    UI.toast('Created "' + q.name + '" from ' + PQ.fmtInt(body.length) + ' pasted rows', 'ok');
+    return true;
   };
   App.addFolder = async function () {
     let r;
@@ -129,8 +236,8 @@
     try {
       await UI.Engine.call('loadSamples');
       await App.reloadFiles();
-      if (!Store.project.queries.length) await buildSampleProject();
-      UI.toast('Sample project loaded', 'ok');
+      if (!Store.project.queries.length) { await buildSampleProject(); UI.toast('Sample project loaded', 'ok'); }
+      else UI.toast('Sample files added to Files', 'ok');
     } catch (e) { UI.toast(e.message, 'err'); }
     finally { App.busy(null); }
   };
@@ -230,7 +337,20 @@
       if (my === App.evalSeq) App.busy(null);
     }
   };
-  App.runFull = function () { Store.ui.mode = 'full'; renderRibbonState(); App.refresh({ mode: 'full' }); };
+  async function autoTypes(qid) {
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 150));
+      if (Store.ui.activeQid !== qid) return;
+      const q = Store.query();
+      if (App.result && q && q.steps.length === 1 && App.states.length === 1) {
+        const s = (App.result.suggestions || []).find((x) => x.id === 'types');
+        if (s) Store.addStep(s.kind);
+        return;
+      }
+    }
+  }
+  App.reload = async function () { await App.syncSources(true); return App.refresh({ keepScroll: true }); };
+  App.runFull = async function () { Store.ui.mode = 'full'; renderRibbonState(); await App.syncSources(true); App.refresh({ mode: 'full' }); };
   App.setMode = function (m) { Store.ui.mode = m; renderRibbonState(); App.refresh(); };
 
   let busyTimer = null;
@@ -283,16 +403,16 @@
         rb('fa-file-circle-plus', 'Get Data', (e) => UI.menu([
           { label: 'File (Excel, CSV, JSON)…', icon: 'fa-file-excel', run: App.getData },
           { label: 'Folder…', icon: 'fa-folder-open', run: UI.folderDialog },
-          { label: 'Enter / paste data…', icon: 'fa-keyboard', run: enterData },
+          { label: 'Enter data…', icon: 'fa-keyboard', run: enterData },
+          { label: 'Paste from clipboard', icon: 'fa-paste', kbd: 'Ctrl+V', run: pasteFromClipboard },
           { label: 'Reference existing query', icon: 'fa-link', disabled: !Store.project.queries.length, sub: Store.project.queries.map((q) => ({ label: q.name, icon: 'fa-table', run: () => referenceQuery(q) })) },
           '-',
-          { label: 'Parquet / Arrow…', icon: 'fa-cubes', disabled: !UI.NativeEngine.available(), run: App.getData },
-          { label: 'Database — soon', icon: 'fa-database', disabled: true },
+          PQ.Platform.native ? { label: 'Parquet / Arrow…', icon: 'fa-cubes', disabled: !UI.NativeEngine.available(), run: App.getData } : null,
           '-',
           { label: 'Load sample data', icon: 'fa-flask', run: App.loadSamples },
         ], e.currentTarget.getBoundingClientRect().left, e.currentTarget.getBoundingClientRect().bottom + 2)),
-        rb('fa-arrows-rotate', 'Refresh', () => App.refresh(), { need: needQ, title: 'Re-evaluate the current step' }),
-        rb('fa-arrows-spin', 'Refresh All', UI.refreshAll, { title: 'Run every output on full data in dependency order' })),
+        rb('fa-arrows-rotate', 'Refresh', () => App.reload(), { need: needQ, title: PQ.Platform.fsa ? 'Re-read changed source files and re-evaluate' : 'Re-evaluate the current step' }),
+        rb('fa-arrows-spin', 'Refresh All', async () => { await App.syncSources(true); UI.refreshAll(); }, { title: 'Run every output on full data in dependency order' })),
       group('Shape', 'glacier',
         rb('fa-table-columns', 'Choose Columns', () => stepDialog('SelectColumns', { cols: Store.ui.selCols.length ? Store.ui.selCols : App.result.schema.map((c) => c.name) }), { need: needQ }),
         rb('fa-delete-left', 'Remove Columns', () => removeSelected(), { need: needCols }),
@@ -343,6 +463,14 @@
     if (s && !cols) return Store.addStep(s.kind);
     UI.toast('Types already set', null, { ms: 2000 });
   }
+  async function pasteFromClipboard() {
+    let text = '';
+    try { text = navigator.clipboard && navigator.clipboard.readText ? await navigator.clipboard.readText() : ''; } catch (e) { text = ''; }
+    if (text && (await App.pasteTable(text))) return;
+    const ta = h('textarea.input', { rows: 10, placeholder: 'Paste cells copied from Excel, Google Sheets or a web table here', style: { fontFamily: 'var(--mono)', fontSize: '12px' }, autofocus: true });
+    UI.modal({ title: 'Paste data', icon: 'fa-paste', size: 'wide', body: h('div.col', ta, h('div.help', 'Tab-separated rows. The first row becomes headers when it looks like one.')), okLabel: 'Create query', onOk: async () => { if (!(await App.pasteTable(ta.value))) { UI.toast('No table found. Copy cells from a spreadsheet and try again.', 'warn'); return false; } } });
+  }
+  App.pasteFromClipboard = pasteFromClipboard;
   async function enterData() {
     const q = { id: PQ.uid('q'), name: PQ.uniqueName('Table', Store.project.queries.map((x) => x.name)), load: { target: 'none' }, steps: [{ id: PQ.uid('s'), name: 'Source', kind: { type: 'Source', source: { kind: 'blank', columns: ['Code', 'Label'], rows: [['EU', 'Europe'], ['US', 'United States'], ['APAC', 'Asia-Pacific'], ['LATAM', 'Latin America']] } } }] };
     Store.edit('Enter data', (p) => { p.queries.push(q); }, { activeQid: q.id, activeStep: null });
@@ -369,6 +497,7 @@
     if (!Store.project.queries.length) ul.appendChild(h('li.muted', { style: { padding: '10px', fontSize: '12px' } }, 'No queries yet.'));
   }
   App.selectQuery = function (id) {
+    if (narrow()) setPane('data');
     if (id === Store.ui.activeQid) return;
     Store.ui.selCols = [];
     Store.setUI({ activeQid: id, activeStep: null });
@@ -387,7 +516,7 @@
       { label: 'Duplicate', icon: 'fa-clone', run: () => { const c = JSON.parse(JSON.stringify(q)); c.id = PQ.uid('q'); c.name = PQ.uniqueName(q.name + ' (copy)', Store.project.queries.map((z) => z.name)); c.steps.forEach((s) => (s.id = PQ.uid('s'))); Store.edit('Duplicate query', (p) => { p.queries.splice(p.queries.findIndex((z) => z.id === q.id) + 1, 0, c); }, { activeQid: c.id, activeStep: null }); } },
       { label: 'Reference', icon: 'fa-link', run: () => referenceQuery(q) },
       '-',
-      { label: 'Load to', icon: 'fa-file-export', sub: [['none', 'Connection only'], ['xlsx', 'Excel workbook'], ['csv', 'CSV'], ['parquet', 'Parquet (desktop)']].map(([t, l]) => ({ label: l + (q.load && q.load.target === t ? '  ✓' : ''), run: () => Store.edit('Set output', (p) => { p.queries.find((z) => z.id === q.id).load = { target: t }; }) })) },
+      { label: 'Load to', icon: 'fa-file-export', sub: loadTargets().map(([t, l]) => ({ label: l + (q.load && q.load.target === t ? '  ✓' : ''), run: () => Store.edit('Set output', (p) => { p.queries.find((z) => z.id === q.id).load = { target: t }; }) })) },
       { label: 'Export to Python', icon: 'fa-brands fa-python', run: () => UI.pythonDialog(q.id) },
       '-',
       { label: 'Move up', icon: 'fa-arrow-up', run: () => moveQuery(q, -1) },
@@ -395,6 +524,11 @@
       '-',
       { label: 'Delete', icon: 'fa-trash', danger: true, run: () => deleteQuery(q) },
     ], x, y);
+  }
+  function loadTargets(long) {
+    const t = [['none', 'Connection only'], ['xlsx', long ? 'Excel workbook (.xlsx)' : 'Excel workbook'], ['csv', 'CSV']];
+    if (PQ.Platform.native) t.push(['parquet', 'Parquet']);
+    return t;
   }
   function moveQuery(q, d) { Store.edit('Move query', (p) => { const i = p.queries.findIndex((z) => z.id === q.id), j = i + d; if (j < 0 || j >= p.queries.length) return false; [p.queries[i], p.queries[j]] = [p.queries[j], p.queries[i]]; }); }
   async function deleteQuery(q) {
@@ -430,7 +564,7 @@
     const box = UI.clear($('#query-props'));
     const q = Store.query(); if (!q) return;
     const name = h('input.input.sm', { value: q.name, 'aria-label': 'Query name', on: { change: (e) => { const v = e.target.value.trim(); if (!v || v === q.name) return; if (Store.project.queries.some((x) => x.name === v)) { UI.toast('Name already used', 'err'); e.target.value = q.name; return; } Store.edit('Rename query', (p) => { p.queries.find((x) => x.id === q.id).name = v; }); } } });
-    const load = UI.W.select([['none', 'Connection only'], ['xlsx', 'Excel workbook (.xlsx)'], ['csv', 'CSV'], ['parquet', 'Parquet (desktop build)']], (q.load || {}).target || 'none', { class: 'sm', 'aria-label': 'Load to' });
+    const load = UI.W.select(loadTargets(true), (q.load || {}).target || 'none', { class: 'sm', 'aria-label': 'Load to' });
     load.classList.add('sm');
     load.addEventListener('change', () => Store.edit('Set output', (p) => { p.queries.find((x) => x.id === q.id).load = { target: load.value }; }));
     box.append(h('div.grid-2', h('div', h('label', 'Name'), name), h('div', h('label', 'Load to'), load)));
@@ -657,8 +791,7 @@
   }
   async function copyColumn(c) {
     const { values } = await UI.Engine.call('distinct', { resultId: App.result.resultId, col: c.name });
-    navigator.clipboard.writeText(values.map((v) => UI.cellText(v.value, c.type).text).join('\n'));
-    UI.toast('Copied ' + values.length + ' distinct values', 'ok');
+    UI.copy(values.map((v) => UI.cellText(v.value, c.type).text).join('\n'), 'Copied ' + values.length + ' distinct values');
   }
   /** Checkbox filter with search, like Excel's autofilter. Produces a Filter step with an `in` condition. */
   function filterPopover(c) {
@@ -707,7 +840,7 @@
     const txt = UI.cellText(v, c.type).text;
     UI.menu([
       { header: c.name + ' = ' + (txt.length > 30 ? txt.slice(0, 30) + '…' : txt) },
-      { label: 'Copy value', icon: 'fa-copy', run: () => navigator.clipboard.writeText(txt) },
+      { label: 'Copy value', icon: 'fa-copy', run: () => UI.copy(txt) },
       '-',
       { label: 'Keep rows equal to this', icon: 'fa-filter', run: () => Store.addStep({ type: 'Filter', mode: 'builder', builder: { join: 'and', conds: [{ col: c.name, op: 'in', values: [lit instanceof Date ? PQ.fmtDate(lit) : lit] }] } }) },
       { label: 'Remove rows equal to this', icon: 'fa-filter-circle-xmark', run: () => Store.addStep({ type: 'Filter', mode: 'builder', builder: { join: 'and', conds: [{ col: c.name, op: 'not_in', values: [lit instanceof Date ? PQ.fmtDate(lit) : lit] }] } }) },
@@ -722,7 +855,7 @@
     App.busy('Exporting ' + q.name, true);
     try {
       const r = await UI.Engine.call('exportQuery', { qid: q.id, format: fmt, limit: fmt === 'tsv' ? 100000 : undefined }, (p) => App.progress(p));
-      if (fmt === 'tsv') { await navigator.clipboard.writeText(r.data); UI.toast('Copied ' + PQ.fmtInt(Math.min(r.rows, 100000)) + ' rows as TSV — paste straight into Excel.', 'ok'); }
+      if (fmt === 'tsv') { await UI.copy(r.data, 'Copied ' + PQ.fmtInt(Math.min(r.rows, 100000)) + ' rows — paste straight into Excel or Sheets.'); }
       else { UI.download(PQ.snake(q.name) + '.' + fmt, r.data, r.mime); UI.toast('Exported ' + PQ.fmtInt(r.rows) + ' rows (full data) to ' + PQ.snake(q.name) + '.' + fmt, 'ok'); }
     } catch (e) { if (!e.cancelled) UI.toast('Export failed: ' + e.message, 'err'); }
     finally { App.busy(null); }
@@ -736,60 +869,79 @@
     $('#btn-add-file').addEventListener('click', App.getData);
     $('#btn-undo').addEventListener('click', Store.undoOne);
     $('#btn-redo').addEventListener('click', Store.redoOne);
-    $('#btn-file-menu').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); UI.menu([
-      { label: 'New project', icon: 'fa-file', kbd: 'Ctrl+N', run: newProject },
+    const fileMenu = (x, y) => UI.menu([
+      { label: 'New project', icon: 'fa-file', kbd: PQ.Platform.native ? 'Ctrl+N' : 'Alt+N', run: newProject },
       { label: 'Open project…', icon: 'fa-folder-open', kbd: 'Ctrl+O', run: () => UI.openProject() },
-      { label: 'Save', icon: 'fa-floppy-disk', kbd: 'Ctrl+S', run: () => UI.saveProject() },
-      { label: 'Save as…', icon: 'fa-copy', kbd: 'Ctrl+Shift+S', run: () => UI.saveProject(true) },
+      PQ.Platform.fsa ? { label: 'Open recent', icon: 'fa-clock-rotate-left', run: () => UI.openRecentMenu(x, y) } : null,
+      { label: PQ.Platform.fsa || PQ.Platform.native ? 'Save' : 'Save (download .floe)', icon: 'fa-floppy-disk', kbd: 'Ctrl+S', run: () => UI.saveProject() },
+      PQ.Platform.fsa || PQ.Platform.native ? { label: 'Save as…', icon: 'fa-copy', kbd: 'Ctrl+Shift+S', run: () => UI.saveProject(true) } : null,
       { label: 'View project files (git)', icon: 'fa-code-branch', run: UI.projectFilesDialog },
       '-',
-      { label: 'Export current query', icon: 'fa-file-export', sub: [{ label: 'Excel workbook (.xlsx)', icon: 'fa-file-excel', run: () => exportAs('xlsx') }, { label: 'CSV', icon: 'fa-file-csv', run: () => exportAs('csv') }, { label: 'Copy to clipboard (TSV)', icon: 'fa-clipboard', run: () => exportAs('tsv') }] },
-      { label: 'Export to Python…', icon: 'fa-brands fa-python', run: () => UI.pythonDialog(Store.ui.activeQid) },
-      { label: 'Run headless (CLI)…', icon: 'fa-terminal', run: UI.cliDialog },
+      { label: 'Export current query', icon: 'fa-file-export', disabled: !Store.query(), sub: [{ label: 'Excel workbook (.xlsx)', icon: 'fa-file-excel', run: () => exportAs('xlsx') }, { label: 'CSV', icon: 'fa-file-csv', run: () => exportAs('csv') }, { label: 'Copy to clipboard (TSV)', icon: 'fa-clipboard', run: () => exportAs('tsv') }] },
+      { label: 'Export to Python…', icon: 'fa-brands fa-python', disabled: !Store.project.queries.length, run: () => UI.pythonDialog(Store.ui.activeQid) },
+      { label: PQ.Platform.native ? 'Run headless (CLI)…' : 'Automate…', icon: 'fa-terminal', run: UI.cliDialog },
       '-',
       { label: 'Load sample data', icon: 'fa-flask', run: App.loadSamples },
       { label: 'Settings…', icon: 'fa-gear', run: UI.settingsDialog },
-      { label: 'Keyboard shortcuts', icon: 'fa-keyboard', kbd: '?', run: UI.shortcutsDialog },
+      App.installPrompt ? { label: 'Install app', icon: 'fa-download', run: async () => { const p = App.installPrompt; App.installPrompt = null; p.prompt(); } } : null,
+      P_touch ? null : { label: 'Keyboard shortcuts', icon: 'fa-keyboard', kbd: '?', run: UI.shortcutsDialog },
       { label: 'About ' + PQ.BRAND.name, icon: 'fa-circle-info', run: UI.aboutDialog },
-    ], r.left, r.bottom + 2); });
+    ], x, y);
+    $('#btn-file-menu').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); fileMenu(r.left, r.bottom + 2); });
+    $('#save-state').addEventListener('click', () => UI.saveProject());
     $('#btn-theme').addEventListener('click', toggleTheme);
-    $('#btn-export').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); UI.menu([{ label: 'Excel workbook (.xlsx)', icon: 'fa-file-excel', run: () => exportAs('xlsx') }, { label: 'CSV', icon: 'fa-file-csv', run: () => exportAs('csv') }, { label: 'Copy to clipboard (TSV)', icon: 'fa-clipboard', run: () => exportAs('tsv') }, '-', { label: 'Python script…', icon: 'fa-brands fa-python', run: () => UI.pythonDialog(Store.ui.activeQid) }], r.left, r.bottom + 2); });
+    $('#btn-export').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); const noQ = !Store.query(); UI.menu([{ label: 'Excel workbook (.xlsx)', icon: 'fa-file-excel', disabled: noQ, run: () => exportAs('xlsx') }, { label: 'CSV', icon: 'fa-file-csv', disabled: noQ, run: () => exportAs('csv') }, { label: 'Copy to clipboard (TSV)', icon: 'fa-clipboard', disabled: noQ, run: () => exportAs('tsv') }, '-', { label: 'Python script…', icon: 'fa-brands fa-python', disabled: !Store.project.queries.length, run: () => UI.pythonDialog(Store.ui.activeQid) }, { label: 'Project file (.floe)', icon: 'fa-file-code', run: () => UI.saveProject(true) }], Math.min(r.left, innerWidth - 240), r.bottom + 2); });
     UI.$$('#right-tabs button').forEach((b) => b.addEventListener('click', () => { Store.setUI({ rightTab: b.dataset.tab }); if (b.dataset.tab === 'profile') loadProfile(); }));
-    UI.$$('[data-action]').forEach((b) => b.addEventListener('click', () => ({ getData: App.getData, samples: App.loadSamples, folder: UI.folderDialog, enter: enterData })[b.dataset.action]()));
-    // splitters
-    UI.$$('.splitter').forEach((sp) => sp.addEventListener('mousedown', (e) => {
-      e.preventDefault(); sp.classList.add('drag');
+    UI.$$('[data-action]').forEach((b) => b.addEventListener('click', () => ({ getData: App.getData, samples: App.loadSamples, folder: UI.folderDialog, enter: enterData, paste: pasteFromClipboard, open: () => UI.openProject() })[b.dataset.action]()));
+    UI.$$('#pane-tabs button').forEach((b) => b.addEventListener('click', () => setPane(b.dataset.pane)));
+    renderRecentOnWelcome();
+    UI.$$('.splitter').forEach((sp) => sp.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault(); sp.classList.add('drag'); sp.setPointerCapture(e.pointerId);
       const side = sp.dataset.side, x0 = e.clientX, root = document.documentElement;
-      const w0 = parseInt(getComputedStyle(root).getPropertyValue(side === 'left' ? '--left-w' : '--right-w')) || (side === 'left' ? 230 : 330);
-      const move = (ev) => { const w = Math.max(160, Math.min(560, side === 'left' ? w0 + ev.clientX - x0 : w0 - (ev.clientX - x0))); root.style.setProperty(side === 'left' ? '--left-w' : '--right-w', w + 'px'); };
-      const up = () => { sp.classList.remove('drag'); removeEventListener('mousemove', move); removeEventListener('mouseup', up); App.grid.paint(); };
-      addEventListener('mousemove', move); addEventListener('mouseup', up);
+      const w0 = parseInt(getComputedStyle(root).getPropertyValue(side === 'left' ? '--left-w' : '--right-w')) || (side === 'left' ? 236 : 340);
+      const move = (ev) => { const w = Math.max(170, Math.min(Math.min(560, innerWidth * 0.4), side === 'left' ? w0 + ev.clientX - x0 : w0 - (ev.clientX - x0))); root.style.setProperty(side === 'left' ? '--left-w' : '--right-w', w + 'px'); };
+      const up = () => { sp.classList.remove('drag'); sp.removeEventListener('pointermove', move); sp.removeEventListener('pointerup', up); sp.removeEventListener('pointercancel', up); App.grid.paint(); try { localStorage.setItem('floe.panes', JSON.stringify({ l: root.style.getPropertyValue('--left-w'), r: root.style.getPropertyValue('--right-w') })); } catch (err) { } };
+      sp.addEventListener('pointermove', move); sp.addEventListener('pointerup', up); sp.addEventListener('pointercancel', up);
     }));
-    // drag & drop files anywhere
+    try { const pw = JSON.parse(localStorage.getItem('floe.panes') || '{}'); if (pw.l) document.documentElement.style.setProperty('--left-w', pw.l); if (pw.r) document.documentElement.style.setProperty('--right-w', pw.r); } catch (e) { }
     let dragDepth = 0;
-    addEventListener('dragenter', (e) => { if (e.dataTransfer.types.includes('Files')) { dragDepth++; document.body.classList.add('dragging'); } });
-    addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) document.body.classList.remove('dragging'); });
-    addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); });
+    const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+    addEventListener('dragenter', (e) => { if (hasFiles(e)) { dragDepth++; document.body.classList.add('dragging'); } });
+    addEventListener('dragleave', (e) => { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) document.body.classList.remove('dragging'); });
+    addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
     addEventListener('drop', async (e) => {
-      if (PQ.Platform.native) { e.preventDefault(); return; } // the Rust side emits floe://files-dropped with real paths
-      if (!e.dataTransfer.files.length) return;
+      if (PQ.Platform.native) { e.preventDefault(); return; }
+      if (!hasFiles(e)) return;
       e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
-      const added = await App.addFiles([...e.dataTransfer.files]);
-      if (added.length === 1) UI.navigator(added[0].id); else if (added.length) UI.toast('Added ' + added.length + ' files', 'ok');
+      if (UI.anyModal()) return UI.toast('Close the dialog first, then drop the files again', 'warn');
+      const r = await PQ.Platform.fromDrop(e.dataTransfer);
+      if (r.skipped.length) UI.toast('Skipped unsupported: ' + r.skipped.slice(0, 4).join(', ') + (r.skipped.length > 4 ? '…' : ''), 'warn');
+      if (r.project) { if (await UI.guardUnsaved('open')) await UI.openProject(r.project); }
+      if (r.files.length) App.afterAdd(await App.addFiles(r.files));
     });
-    // keyboard
+    document.addEventListener('paste', (e) => {
+      if (UI.anyModal() || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable) return;
+      const cd = e.clipboardData; if (!cd) return;
+      const files = [...cd.files].filter((f) => PQ.Platform.isData(f.name));
+      if (files.length) { e.preventDefault(); App.addFiles(files).then(App.afterAdd); return; }
+      const text = cd.getData('text/plain');
+      if (text && text.includes('\t')) { e.preventDefault(); App.pasteTable(text); }
+    });
     addEventListener('keydown', (e) => {
       const inField = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
       const mod = e.ctrlKey || e.metaKey;
+      const k = (e.key || '').toLowerCase();
       if (e.key === 'Escape' && !UI.anyModal() && UI.Engine.state === 'busy') { UI.Engine.cancel(); return; }
       if (UI.anyModal()) return;
-      if (PQ.Platform.menuOwns(e)) return; // accelerator handled by the native menu
-      if (mod && e.key.toLowerCase() === 'z' && !inField) { e.preventDefault(); e.shiftKey ? Store.redoOne() : Store.undoOne(); }
-      else if (mod && e.key.toLowerCase() === 'y' && !inField) { e.preventDefault(); Store.redoOne(); }
-      else if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); UI.saveProject(e.shiftKey); }
-      else if (mod && e.key.toLowerCase() === 'n' && !inField) { e.preventDefault(); newProject(); }
-      else if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); UI.openProject(); }
-      else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); App.runFull(); }
+      if (PQ.Platform.menuOwns(e)) return;
+      if (mod && k === 'z' && !inField) { e.preventDefault(); e.shiftKey ? Store.redoOne() : Store.undoOne(); }
+      else if (mod && k === 'y' && !inField) { e.preventDefault(); Store.redoOne(); }
+      else if (mod && k === 's') { e.preventDefault(); UI.saveProject(e.shiftKey); }
+      else if (((mod && PQ.Platform.native) || (e.altKey && !mod)) && (k === 'n' || e.code === 'KeyN') && !inField) { e.preventDefault(); newProject(); }
+      else if (mod && k === 'o') { e.preventDefault(); UI.openProject(); }
+      else if (mod && e.shiftKey && k === 'f') { e.preventDefault(); App.runFull(); }
+      else if (e.key === 'F5' && !mod && !PQ.Platform.native && Store.query()) { e.preventDefault(); App.reload(); }
       else if (e.key === 'Delete' && !inField && Store.ui.selCols.length && document.activeElement.closest('#center, body') && !document.activeElement.closest('#step-list')) { removeSelected(); }
       else if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && Store.query()) { e.preventDefault(); const i = Store.activeIndex() + (e.key === 'ArrowUp' ? -1 : 1); if (i >= 0 && i < Store.query().steps.length) selectStep(i); }
       else if (e.key === '?' && !inField) UI.shortcutsDialog();

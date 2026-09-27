@@ -1,0 +1,33 @@
+{
+  "name": "Floe — data preparation",
+  "short_name": "Floe",
+  "description": "Clean and reshape messy spreadsheets with replayable steps. Runs locally in your browser.",
+  "id": "/",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#f2efe8",
+  "theme_color": "#f2efe8",
+  "categories": ["productivity", "business", "utilities"],
+  "icons": [
+    { "src": "images/floe-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "images/floe-mark.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "monochrome" }
+  ],
+  "file_handlers": [
+    {
+      "action": "./index.html",
+      "accept": {
+        "application/x-floe+json": [".floe"],
+        "text/csv": [".csv", ".tsv"],
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx", ".xlsm"],
+        "application/vnd.ms-excel": [".xls"],
+        "application/json": [".json", ".ndjson", ".jsonl"]
+      }
+    }
+  ],
+  "launch_handler": { "client_mode": "focus-existing" },
+  "shortcuts": [
+    { "name": "Sample project", "url": "./demo.html" }
+  ]
+}

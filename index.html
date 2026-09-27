@@ -2,11 +2,21 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Floe</title>
-  <meta name="description" content="Floe — Polars desktop for data preparation.">
-  <meta name="theme-color" content="#f2efe8">
+  <meta name="description" content="Floe — clean and reshape messy spreadsheets in your browser. Replayable steps, Excel/CSV/JSON, export to Excel, CSV or a Polars script. Your data never leaves your device.">
+  <meta name="theme-color" content="#f2efe8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1d1b18" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Floe">
+  <meta property="og:title" content="Floe — data preparation in your browser">
+  <meta property="og:description" content="Clean and reshape messy spreadsheets with replayable steps. Runs locally in your browser.">
+  <meta property="og:type" content="website">
   <link rel="icon" href="images/floe-mark.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="images/floe-icon.svg">
+  <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
   <link rel="stylesheet" href="css/app.css">
 </head>
@@ -20,7 +30,7 @@
       <span class="tb-sep"></span>
       <button class="icon-btn" id="btn-file-menu" title="Menu" aria-label="Menu"><i class="fa-solid fa-bars"></i></button>
       <input id="project-name" aria-label="Project name" value="Untitled">
-      <span class="save-state" id="save-state">Saved</span>
+      <button type="button" class="save-state" id="save-state">Saved</button>
       <span class="grow" data-tauri-drag-region></span>
       <div class="tb-actions">
         <button class="icon-btn" id="btn-undo" title="Undo" aria-label="Undo"><i class="fa-solid fa-rotate-left"></i></button>
@@ -31,6 +41,12 @@
     </header>
 
     <nav id="ribbon" aria-label="Transformations"></nav>
+
+    <nav id="pane-tabs" role="tablist" aria-label="Views">
+      <button type="button" role="tab" data-pane="queries"><i class="fa-solid fa-layer-group" aria-hidden="true"></i><span>Queries</span><span class="count"></span></button>
+      <button type="button" role="tab" data-pane="data" class="on"><i class="fa-solid fa-table" aria-hidden="true"></i><span>Data</span></button>
+      <button type="button" role="tab" data-pane="steps"><i class="fa-solid fa-list-check" aria-hidden="true"></i><span>Steps</span><span class="count"></span></button>
+    </nav>
 
     <main id="workspace">
       <aside id="left-panel" class="panel" aria-label="Queries and files">
@@ -57,14 +73,17 @@
             <div class="welcome">
               <svg class="hero" viewBox="0 0 32 32" aria-hidden="true"><g fill="currentColor"><rect x="3" y="17" width="12" height="12" rx="3.2"/><rect x="17" y="17" width="12" height="12" rx="3.2"/><rect x="3" y="3" width="12" height="12" rx="3.2"/></g><rect x="18" y="2" width="12" height="12" rx="3.2" fill="var(--accent)" transform="rotate(12 24 8)"/></svg>
               <h1>Open data to begin</h1>
-              <p class="lead">Excel, CSV or JSON. Or drop files into the window.</p>
+              <p class="lead">Excel, CSV or JSON. Drop files anywhere, or paste cells from a spreadsheet.</p>
               <div class="actions">
                 <button class="btn primary" data-action="getData">Open file</button>
                 <button class="btn" data-action="folder">Folder</button>
-                <button class="btn" data-action="enter">Enter data</button>
-                <button class="btn ghost" data-action="samples">Sample project</button>
+                <button class="btn" data-action="paste">Paste data</button>
+                <button class="btn" data-action="open">Open project</button>
+                <button class="btn ghost" data-action="samples">Try the sample project</button>
               </div>
-              <div class="kbd-hints"><span><kbd>Ctrl</kbd> <kbd>O</kbd> Open project</span><span><kbd>?</kbd> Shortcuts</span></div>
+              <div id="welcome-recent" class="welcome-recent"></div>
+              <p class="privacy"><i class="fa-solid fa-lock" aria-hidden="true"></i> Everything runs in your browser. Files are never uploaded.</p>
+              <div class="kbd-hints"><span><kbd>Ctrl</kbd> <kbd>V</kbd> Paste a table</span><span><kbd>Ctrl</kbd> <kbd>O</kbd> Open project</span><span><kbd>?</kbd> Shortcuts</span></div>
             </div>
           </div>
           <div id="busy" class="hidden" role="status"></div>
@@ -103,6 +122,7 @@
     </footer>
   </div>
   <div id="toasts" aria-live="polite"></div>
+  <noscript><div class="noscript">Floe needs JavaScript to run.</div></noscript>
 
   <script src="js/util.js"></script>
   <script src="js/expr.js"></script>
@@ -110,7 +130,6 @@
   <script src="js/steps.js"></script>
   <script src="js/engine.js"></script>
   <script src="js/platform.js"></script>
-  <script src="vendor/arrow.es2015.min.js"></script>
   <script src="js/ui/core.js"></script>
   <script src="js/native-engine.js"></script>
   <script src="js/ui/grid.js"></script>

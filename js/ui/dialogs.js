@@ -204,7 +204,7 @@
     UI.modal({
       title: 'Export to Python (Polars)', icon: 'fa-brands fa-python', size: 'wide',
       body: h('div.col', W.field('Scope', scope), pre),
-      footer: [h('button.btn', { on: { click: () => { navigator.clipboard.writeText(code); UI.toast('Copied', 'ok'); } } }, UI.icon('fa-copy'), 'Copy')],
+      footer: [h('button.btn', { on: { click: () => UI.copy(code) } }, UI.icon('fa-copy'), 'Copy')],
       okLabel: 'Download .py', onOk: () => { UI.download(PQ.snake(Store.project.name) + '.py', code, 'text/x-python'); return false; },
     });
   };
@@ -230,27 +230,75 @@
   UI.saveProject = async (saveAs) => {
     const text = PQ.stableStringify(bundle(), 2) + '\n';
     const name = PQ.snake(Store.project.name) + '.' + PQ.BRAND.ext;
+    const P = PQ.Platform;
     try {
-      let where;
-      if (PQ.Platform.native && Store.filePath && !saveAs) where = await PQ.Platform.writePath(Store.filePath, text);
-      else where = await PQ.Platform.saveFile(name, text, 'application/json');
-      if (!where) return;
-      if (PQ.Platform.native) Store.filePath = where;
+      if (P.native) {
+        const where = Store.filePath && !saveAs ? await P.writePath(Store.filePath, text) : await P.saveFile(name, text, 'application/json');
+        if (!where) return false;
+        Store.filePath = where; Store.fileName = String(where).split(/[\\/]/).pop();
+        Store.markSaved();
+        UI.toast('Saved ' + Store.fileName, 'ok', { ms: 2200 });
+        return true;
+      }
+      const r = await P.saveProject(Store.fileName || name, text, saveAs ? null : Store.fileHandle);
+      if (!r) return false;
+      if (r.handle) { Store.fileHandle = r.handle; Store.fileName = r.name; P.recent.add(r.handle); }
       Store.markSaved();
-      UI.toast('Saved ' + String(where).split(/[\\/]/).pop(), 'ok', { ms: 2200 });
-    } catch (e) { UI.toast(e.message || String(e), 'err'); }
+      UI.toast(r.handle ? 'Saved ' + r.name : 'Downloaded ' + r.name, 'ok', { ms: 2200 });
+      return true;
+    } catch (e) { UI.toast(e.message || String(e), 'err'); return false; }
+  };
+  UI.guardUnsaved = async function (action) {
+    if (!Store.dirty() || !Store.linked()) return true;
+    const choice = await new Promise((res) => {
+      const m = UI.modal({
+        title: 'Save changes to ' + (Store.fileName || Store.project.name) + '?', icon: 'fa-floppy-disk',
+        body: h('p', { style: { margin: 0 } }, 'Your changes will stay in undo history, but they are not in the project file yet.'),
+        footer: [h('button.btn', { on: { click: () => { res('discard'); m.close(true); } } }, 'Don’t save')],
+        okLabel: 'Save', onOk: () => res('save'), onClose: (ok) => { if (!ok) res('cancel'); },
+      });
+    });
+    if (choice === 'cancel') return false;
+    if (choice === 'save') return !!(await UI.saveProject());
+    return true;
   };
   UI.openProject = async function (given) {
-    const file = given || (await PQ.Platform.openProjectFile());
+    if (!given && !(await UI.guardUnsaved('open'))) return;
+    let file;
+    try { file = given || (await PQ.Platform.openProjectFile()); } catch (e) { return UI.toast(e.message || String(e), 'err'); }
     if (!file) return;
     try {
       const p = PQ.Steps.migrate(JSON.parse(file.text));
       Store.replace(p, 'Open ' + file.name);
-      Store.filePath = file.path; Store.markSaved();
+      Store.filePath = file.path || null;
+      Store.fileHandle = file.handle || null;
+      Store.fileName = file.handle || file.path ? file.name : null;
+      Store.markSaved();
+      if (file.handle) PQ.Platform.recent.add(file.handle);
       const missing = [];
       p.queries.forEach((q) => q.steps.forEach((s) => { const src = s.kind.source; if (s.kind.type === 'Source' && src && src.kind === 'file' && !UI.App.files.some((f) => f.id === src.fileId)) missing.push(src.fileName); }));
-      UI.toast(missing.length ? 'Relink: ' + [...new Set(missing)].join(', ') : 'Opened ' + p.name, missing.length ? 'warn' : 'ok');
-    } catch (e) { UI.toast(e.message, 'err'); }
+      const miss = [...new Set(missing)];
+      if (miss.length) UI.toast('Missing source files: ' + miss.join(', '), 'warn', { ms: 12000, actions: [{ label: 'Add files…', run: () => UI.relinkFiles(miss) }] });
+      else UI.toast('Opened ' + p.name, 'ok');
+    } catch (e) { UI.toast('Not a valid project file: ' + e.message, 'err'); }
+  };
+  UI.relinkFiles = async function () {
+    let files;
+    try { files = await PQ.Platform.pickDataFiles(); } catch (e) { return UI.toast(e.message, 'err'); }
+    if (!files || !files.length) return;
+    const added = await UI.App.addFiles(files);
+    const byName = new Map(added.map((f) => [f.name, f]));
+    let n = 0;
+    Store.edit('Relink sources', (p) => {
+      p.queries.forEach((q) => q.steps.forEach((s) => { const src = s.kind.source; if (s.kind.type === 'Source' && src && src.kind === 'file' && !UI.App.files.some((f) => f.id === src.fileId && f.name === src.fileName) && byName.has(src.fileName)) { src.fileId = byName.get(src.fileName).id; n++; } }));
+      if (!n) return false;
+    });
+    UI.toast(n ? 'Relinked ' + n + ' source' + (n === 1 ? '' : 's') : 'No matching file names', n ? 'ok' : 'warn');
+  };
+  UI.openRecentMenu = async function (x, y) {
+    const list = await PQ.Platform.recent.list();
+    if (!list.length) return UI.openProject();
+    UI.menu([{ header: 'Recent projects' }].concat(list.map((r, i) => ({ label: r.name, icon: 'fa-file-lines', run: async () => { if (!(await UI.guardUnsaved('open'))) return; try { UI.openProject(await PQ.Platform.recent.open(r)); } catch (e) { UI.toast(e.message, 'err'); PQ.Platform.recent.remove(i); } } }))).concat(['-', { label: 'Browse…', icon: 'fa-folder-open', run: () => UI.openProject() }]), x, y);
   };
 
   /* ================================ Dependency graph ================================ */
@@ -325,11 +373,19 @@
     const theme = W.select([['light', 'Light'], ['dark', 'Dark'], ['system', 'System']], localStorage.getItem('floe.theme') || 'system');
     const N = UI.NativeEngine;
     const native = h('input', { type: 'checkbox', checked: N.ready && !N.disabled, disabled: !N.ready });
+    const store = h('div.help', 'Checking storage…');
+    Promise.all([PQ.Platform.storage(), UI.Engine.callWorker('storageInfo')]).then(([s, w]) => {
+      const parts = [w.files + ' file' + (w.files === 1 ? '' : 's') + ' · ' + UI.fmtBytes(w.bytes)];
+      if (s && s.quota) parts.push(UI.fmtBytes(s.usage) + ' of ' + UI.fmtBytes(s.quota) + ' used');
+      if (s) parts.push(s.persisted ? 'persistent storage' : 'the browser may evict data under storage pressure');
+      store.textContent = parts.join(' · ');
+    }).catch(() => { store.textContent = ''; });
     UI.modal({
       title: 'Settings',
       body: h('div.col', h('div.grid-3', W.field('Preview rows', rows), W.field('Locale', loc), W.field('Theme', theme)),
-        h('div.field', h('label', 'Engine'), h('label.check', native, N.ready ? 'Polars ' + (N.info.polars || '') : 'Polars (not installed)'), h('div.help', 'Unsupported steps run on the built-in engine.')),
-        h('div.field', h('label', 'Data'), h('div.row', h('button.btn.sm', { on: { click: async () => { await UI.Engine.callWorker('clearCache'); UI.toast('Cache cleared', 'ok'); UI.App.refresh(); } } }, 'Clear cache'), h('button.btn.sm.danger', { on: { click: async () => { if (await UI.confirm('Remove all files?', 'Queries keep their steps.', 'Remove')) { for (const f of UI.App.files) await UI.Engine.call('removeFile', { id: f.id }); await UI.App.reloadFiles(); UI.App.refresh(); } } } }, 'Remove all files')))),
+        PQ.Platform.native ? h('div.field', h('label', 'Engine'), h('label.check', native, N.ready ? 'Polars ' + (N.info.polars || '') : 'Polars (not installed)'), h('div.help', 'Unsupported steps run on the built-in engine.')) : null,
+        h('div.field', h('label', 'Workspace files (stored in this browser)'), h('div.row', { style: { flexWrap: 'wrap' } }, h('button.btn.sm', { on: { click: async () => { await UI.Engine.callWorker('clearCache'); UI.toast('Cache cleared', 'ok'); UI.App.refresh(); } } }, 'Clear cache'), !PQ.Platform.native ? h('button.btn.sm', { on: { click: async () => { const ok = await PQ.Platform.persist(); UI.toast(ok ? 'Storage marked persistent' : 'The browser declined persistent storage', ok ? 'ok' : 'warn'); } } }, 'Keep data persistent') : null, h('button.btn.sm.danger', { on: { click: async () => { if (await UI.confirm('Remove all files?', 'Queries keep their steps.', 'Remove')) { for (const f of UI.App.files) { await UI.Engine.call('removeFile', { id: f.id }); PQ.Platform.fileHandles.del(f.id); } await UI.App.reloadFiles(); UI.App.refresh(); } } } }, 'Remove all files')), store),
+        !PQ.Platform.native ? h('div.help', PQ.Platform.fsa ? 'Files opened from disk stay linked: Refresh re-reads them when they change.' : 'This browser can’t keep links to files on disk. Re-add a file to update it.') : null),
       okLabel: 'Save',
       onOk: () => {
         if (N.ready && N.disabled === native.checked) { N.setEnabled(native.checked); UI.App.refresh(); }
@@ -354,6 +410,11 @@
 
   /* ================================ CLI dialog ================================ */
   UI.cliDialog = function () {
+    if (!PQ.Platform.native) return UI.modal({
+      title: 'Automate outside the browser', icon: 'fa-terminal', size: 'wide',
+      body: h('div.col', h('p', { style: { margin: 0 } }, 'Export the project as a standalone Polars script. It runs anywhere Python runs — cron, CI or a notebook.'), h('pre.code', 'pip install polars fastexcel xlsxwriter\npython ' + PQ.snake(Store.project.name) + '.py')),
+      okLabel: 'Export Python…', onOk: () => { setTimeout(() => UI.pythonDialog(Store.ui.activeQid), 30); },
+    });
     const p = Store.project;
     const params = (p.params || []).map((x) => ' --param ' + x.name + '=' + (String(x.value).includes(' ') ? '"' + x.value + '"' : x.value)).join('');
     const f = PQ.snake(p.name) + '.floe';
@@ -375,12 +436,15 @@
       h('div.row', { style: { justifyContent: 'center', flexWrap: 'wrap', marginTop: '10px' } },
         h('span.env-badge' + (PQ.Platform.native ? '.native' : ''), PQ.Platform.native ? 'Desktop' : 'Web'),
         i.tauri ? h('span.env-badge', 'Tauri ' + i.tauri) : null,
-        h('span.env-badge', eng.ready ? 'Polars ' + (eng.polars || '') : 'Built-in engine'))) });
+        h('span.env-badge', eng.ready ? 'Polars ' + (eng.polars || '') : 'Built-in engine')),
+      !PQ.Platform.native ? h('p.faint', { style: { fontSize: '12px', maxWidth: '380px', margin: '10px auto 0' } }, 'Your data never leaves this device. Files are processed in your browser and kept in its local storage.') : null) });
   };
 
   /* ================================ Shortcuts ================================ */
   UI.shortcutsDialog = function () {
-    const rows = [['Ctrl+Z / Ctrl+Y', 'Undo / redo'], ['Ctrl+Enter', 'Apply dialog'], ['Ctrl+Space', 'Autocomplete'], ['Ctrl+S', 'Save'], ['Ctrl+O', 'Open'], ['Ctrl+Shift+F', 'Full data'], ['Esc', 'Cancel query'], ['Delete', 'Remove columns'], ['Ctrl+click / Shift+click', 'Multi-select'], ['Ctrl+C', 'Copy cell'], ['Alt+↑ / Alt+↓', 'Previous / next step'], ['F2', 'Rename query']];
-    UI.modal({ title: 'Keyboard shortcuts', icon: 'fa-keyboard', body: h('table.shortcuts', rows.map((r) => h('tr', h('td', r[0].split(' / ').map((k, i) => [i ? ' / ' : '', k.split('+').map((x, j) => [j ? '+' : '', h('kbd', x)])])), h('td', r[1])))) });
+    const mac = PQ.Platform.os === 'mac';
+    const rows = [['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+Enter', 'Apply dialog'], ['Ctrl+Space', 'Autocomplete'], ['Ctrl+S', 'Save'], ['Ctrl+Shift+S', 'Save as'], ['Ctrl+O', 'Open project'], ['Alt+N', 'New project'], ['Ctrl+Shift+F', 'Full data'], ['Ctrl+V', 'Paste a table as a new query'], ['Esc', 'Cancel query'], ['Delete', 'Remove columns'], ['Ctrl+click / Shift+click', 'Multi-select'], ['Ctrl+C', 'Copy cell'], ['Alt+↑ / Alt+↓', 'Previous / next step'], ['F2', 'Rename query']];
+    const key = (x) => (mac ? { Ctrl: '⌘', Shift: '⇧', Alt: '⌥', Enter: '↩' }[x] || x : x);
+    UI.modal({ title: 'Keyboard shortcuts', icon: 'fa-keyboard', body: h('table.shortcuts', rows.map((r) => h('tr', h('td', r[0].split(' / ').map((k, i) => [i ? ' / ' : '', k.split('+').map((x, j) => [j && !mac ? '+' : '', h('kbd', key(x))])])), h('td', r[1])))) });
   };
 })();

@@ -18,9 +18,11 @@
   N.available = () => N.ready && !N.disabled;
   N.status = () => ({ ready: N.available(), polars: N.info && N.info.polars, version: N.info && N.info.version });
 
+  const loadArrow = () => (self.Arrow ? Promise.resolve() : new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'vendor/arrow.es2015.min.js'; s.onload = res; s.onerror = () => rej(new Error('arrow failed to load')); document.head.appendChild(s); }));
   N.init = async function () {
     if (!PQ.Platform.native) return false;
     try {
+      await loadArrow();
       const s = await inv('engine_status');
       if (!s.available || !s.info) return false;
       N.info = s.info;
