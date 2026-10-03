@@ -49,6 +49,13 @@
     }
     totalWidth() { return RN_W + (this.result ? this.result.schema.reduce((s, c) => s + this.width(c.name, c.type), 0) : 0); }
     setSelection(names) { this.sel = new Set(names); this.renderHead(); this.paint(); }
+    scrollToColumn(name) {
+      if (!this.result) return;
+      let x = RN_W;
+      for (const c of this.result.schema) { if (c.name === name) break; x += this.width(c.name, c.type); }
+      this.el.scrollLeft = Math.max(0, x - RN_W - 40);
+      this.paint();
+    }
 
     renderHead() {
       UI.clear(this.head);

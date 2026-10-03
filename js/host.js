@@ -32,9 +32,18 @@
   }
 
   /* ---------------- smart suggestions (messy-file assistance) ---------------- */
+  const derived = new Map();
+  function derivedFor(fp) {
+    if (!fp) return {};
+    let d = derived.get(fp);
+    if (!d) { d = {}; derived.set(fp, d); while (derived.size > 32) derived.delete(derived.keys().next().value); }
+    return d;
+  }
+  Host.derivedFor = derivedFor;
   function suggestions(t, q, upto) {
     const out = [];
     if (!t || !t.n) return out;
+    if (t.n > 20000) t = t.slice(0, 20000);
     const names = t.names;
     const steps = q.steps.slice(0, upto + 1);
     const hasStep = (type) => steps.some((s) => s.kind.type === type);
@@ -138,7 +147,7 @@
   };
 
   H.setProject = function (m) { E.setProject(m.project); return { ok: true }; };
-  H.clearCache = function () { E.clearCache(); results.clear(); return { ok: true }; };
+  H.clearCache = function () { E.clearCache(); results.clear(); derived.clear(); return { ok: true }; };
 
   H.evaluate = function (m, progress) {
     const base = E.getProject();
@@ -152,12 +161,13 @@
       const r = E.evaluate(m.qid, m.upto, m.mode || 'preview', [], (p) => progress(Object.assign({ elapsed: performance.now() - t0 }, p)));
       const out = { states: r.states, truncated: r.truncated, ms: performance.now() - t0, failedAt: r.failedAt };
       if (r.table) {
+        const d = m.draft ? {} : derivedFor(r.fp);
         out.resultId = keep(r.table);
         out.n = r.table.n;
         out.schema = r.table.schema();
-        out.quality = E.quality(r.table);
+        out.quality = d.quality || (d.quality = E.quality(r.table));
         out.firstPage = E.page(r.table, 0, 200);
-        out.suggestions = m.suggest === false ? [] : suggestions(r.table, q, m.upto === undefined || m.upto === null ? q.steps.length - 1 : m.upto);
+        out.suggestions = m.suggest === false ? [] : d.suggestions || (d.suggestions = suggestions(r.table, q, m.upto === undefined || m.upto === null ? q.steps.length - 1 : m.upto));
       }
       return out;
     } finally { E.setProject(base); }

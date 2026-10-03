@@ -1,10 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- App icon source for `tauri icon` (desktop: npm run icons). Squircle with 10% safe margin. -->
-  <rect x="64" y="64" width="896" height="896" rx="210" fill="#2b2926"/>
-  <g transform="translate(232 232) scale(17.5)">
-    <rect x="3" y="17" width="12" height="12" rx="3.2" fill="#f2efe8"/>
-    <rect x="17" y="17" width="12" height="12" rx="3.2" fill="#f2efe8"/>
-    <rect x="3" y="3" width="12" height="12" rx="3.2" fill="#f2efe8"/>
-    <rect x="18" y="2" width="12" height="12" rx="3.2" fill="#d08a64" transform="rotate(12 24 8)"/>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><rect x="64" y="64" width="896" height="896" rx="200" fill="#2b2a26"/><g transform="translate(272 240) scale(15)"><g fill="#f2efe8"><rect x="1" y="17" width="14" height="14" rx="3.6"/><rect x="17.5" y="17" width="14" height="14" rx="3.6"/><rect x="1" y="2.5" width="14" height="14" rx="3.6"/></g><rect x="17.5" y="1" width="14" height="14" rx="3.6" fill="#cf8a64" transform="rotate(10 24.5 8)"/></g></svg>

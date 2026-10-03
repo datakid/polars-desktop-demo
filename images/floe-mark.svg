@@ -1,7 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Floe">
-  <!-- Floe mark: three settled blocks + one block drifting off. 2D, monochrome, scales from 12px to billboard. -->
-  <rect x="3" y="17" width="12" height="12" rx="3.2" fill="#2b2926"/>
-  <rect x="17" y="17" width="12" height="12" rx="3.2" fill="#2b2926"/>
-  <rect x="3" y="3" width="12" height="12" rx="3.2" fill="#2b2926"/>
-  <rect x="18" y="2" width="12" height="12" rx="3.2" fill="#b5643f" transform="rotate(12 24 8)"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><g fill="#2b2926"><rect x="3" y="17" width="12" height="12" rx="3.2"/><rect x="17" y="17" width="12" height="12" rx="3.2"/><rect x="3" y="3" width="12" height="12" rx="3.2"/></g><rect x="18" y="2" width="12" height="12" rx="3.2" fill="#b5643f" transform="rotate(12 24 8)"/></svg>

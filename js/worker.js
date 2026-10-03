@@ -1,12 +1,5 @@
-/* Engine worker entry point — the in-app engine process.
- * Cancel = terminate this worker; a crash here never takes down the UI; the supervisor restarts it.
- * All libraries are bundled locally so the desktop app works offline. */
 /* global importScripts */
-importScripts(
-  '../vendor/xlsx.full.min.js',
-  '../vendor/alasql.min.js',
-  'util.js', 'expr.js', 'io.js', 'steps.js', 'engine.js', 'host.js'
-);
+importScripts('util.js', 'storage.js', 'expr.js', 'io.js', 'steps.js', 'engine.js', 'host.js', 'engine-ext.js');
 
 self.onmessage = async (ev) => {
   const msg = ev.data;
@@ -14,6 +7,7 @@ self.onmessage = async (ev) => {
   try {
     const payload = await self.PQ.Host.handle(msg, progress);
     const transfer = payload && payload.data instanceof ArrayBuffer ? [payload.data] : [];
+    if (payload && Array.isArray(payload.outputs)) payload.outputs.forEach((o) => { if (o.data instanceof ArrayBuffer) transfer.push(o.data); });
     self.postMessage({ id: msg.id, type: 'done', payload }, transfer);
   } catch (e) {
     self.postMessage({ id: msg.id, type: 'error', payload: { message: e && e.message ? e.message : String(e), stack: e && e.stack } });

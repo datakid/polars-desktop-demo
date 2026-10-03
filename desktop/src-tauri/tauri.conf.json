@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Floe",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "identifier": "dev.floe.desktop",
   "build": {
     "frontendDist": "../dist",
-    "beforeDevCommand": "node scripts/stage.mjs",
-    "beforeBuildCommand": "node scripts/stage.mjs"
+    "beforeDevCommand": { "script": "npm run stage", "wait": true },
+    "beforeBuildCommand": "npm run stage"
   },
   "app": {
     "withGlobalTauri": true,
@@ -14,35 +14,40 @@
       {
         "label": "main",
         "title": "Floe",
-        "width": 1440,
-        "height": 900,
-        "minWidth": 1024,
-        "minHeight": 640,
+        "url": "index.html",
+        "width": 1360,
+        "height": 860,
+        "minWidth": 880,
+        "minHeight": 560,
         "center": true,
+        "resizable": true,
         "dragDropEnabled": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
         "backgroundColor": "#f2efe8"
       }
     ],
     "security": {
       "csp": {
         "default-src": "'self'",
-        "script-src": "'self' 'unsafe-eval'",
-        "worker-src": "'self'",
+        "script-src": "'self' 'unsafe-eval' blob:",
+        "worker-src": "'self' blob:",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' data: blob:",
+        "img-src": "'self' data: blob: asset: http://asset.localhost",
         "font-src": "'self' data:",
-        "connect-src": "ipc: http://ipc.localhost"
-      }
+        "connect-src": "'self' ipc: http://ipc.localhost blob: data:",
+        "object-src": "'none'",
+        "base-uri": "'self'"
+      },
+      "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "category": "Productivity",
-    "shortDescription": "Polars desktop for data preparation",
-    "longDescription": "Floe turns messy spreadsheets into clean tables with replayable, git-friendly steps, and exports every project to a Polars Python script.",
+    "shortDescription": "Clean and reshape messy spreadsheets",
+    "longDescription": "Floe cleans and reshapes messy spreadsheets with replayable steps. Excel, CSV, JSON, Parquet and Arrow in; Excel, CSV, Parquet, Arrow or a Polars script out. Everything runs on your computer.",
+    "copyright": "© Floe contributors. MIT License.",
+    "license": "MIT",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -51,15 +56,21 @@
       "icons/icon.ico"
     ],
     "fileAssociations": [
-      {
-        "ext": ["floe"],
-        "name": "Floe Project",
-        "description": "Floe data preparation project",
-        "role": "Editor",
-        "mimeType": "application/x-floe"
-      }
+      { "ext": ["floe"], "name": "Floe Project", "description": "Floe project", "role": "Editor", "mimeType": "application/x-floe+json" },
+      { "ext": ["csv", "tsv"], "name": "CSV", "description": "Delimited text", "role": "Viewer", "mimeType": "text/csv" },
+      { "ext": ["xlsx", "xlsm", "xls"], "name": "Excel Workbook", "description": "Excel workbook", "role": "Viewer" },
+      { "ext": ["parquet"], "name": "Parquet", "description": "Apache Parquet", "role": "Viewer" },
+      { "ext": ["arrow", "feather"], "name": "Arrow IPC", "description": "Apache Arrow IPC", "role": "Viewer" }
     ],
-    "macOS": { "minimumSystemVersion": "10.15" },
-    "windows": { "webviewInstallMode": { "type": "downloadBootstrapper" } }
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "nsis": { "installMode": "currentUser" }
+    },
+    "linux": {
+      "deb": { "depends": [] }
+    }
   }
 }

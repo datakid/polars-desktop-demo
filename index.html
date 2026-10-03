@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Floe</title>
-  <meta name="description" content="Floe — clean and reshape messy spreadsheets in your browser. Replayable steps, Excel/CSV/JSON, export to Excel, CSV or a Polars script. Your data never leaves your device.">
+  <meta name="description" content="Floe — clean and reshape messy spreadsheets in your browser. Replayable steps, Excel/CSV/JSON/Parquet/Arrow, export to Excel, CSV, Parquet or a Polars script. Your data never leaves your device.">
   <meta name="theme-color" content="#f2efe8" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1d1b18" media="(prefers-color-scheme: dark)">
   <meta name="color-scheme" content="light dark">
@@ -14,8 +14,9 @@
   <meta property="og:title" content="Floe — data preparation in your browser">
   <meta property="og:description" content="Clean and reshape messy spreadsheets with replayable steps. Runs locally in your browser.">
   <meta property="og:type" content="website">
-  <link rel="icon" href="images/floe-mark.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="images/floe-icon.svg">
+  <link rel="icon" href="images/floe-icon.svg" type="image/svg+xml">
+  <link rel="alternate icon" href="images/floe-icon-rounded.jpg" type="image/jpeg">
+  <link rel="apple-touch-icon" href="images/floe-icon.jpg">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
   <link rel="stylesheet" href="css/app.css">
@@ -32,6 +33,7 @@
       <input id="project-name" aria-label="Project name" value="Untitled">
       <button type="button" class="save-state" id="save-state">Saved</button>
       <span class="grow" data-tauri-drag-region></span>
+      <button type="button" class="palette-btn" id="btn-palette" aria-label="Command palette" title="Search commands, queries, steps and columns"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><span>Search or run a command</span><kbd>Ctrl K</kbd></button>
       <div class="tb-actions">
         <button class="icon-btn" id="btn-undo" title="Undo" aria-label="Undo"><i class="fa-solid fa-rotate-left"></i></button>
         <button class="icon-btn" id="btn-redo" title="Redo" aria-label="Redo"><i class="fa-solid fa-rotate-right"></i></button>
@@ -73,7 +75,7 @@
             <div class="welcome">
               <svg class="hero" viewBox="0 0 32 32" aria-hidden="true"><g fill="currentColor"><rect x="3" y="17" width="12" height="12" rx="3.2"/><rect x="17" y="17" width="12" height="12" rx="3.2"/><rect x="3" y="3" width="12" height="12" rx="3.2"/></g><rect x="18" y="2" width="12" height="12" rx="3.2" fill="var(--accent)" transform="rotate(12 24 8)"/></svg>
               <h1>Open data to begin</h1>
-              <p class="lead">Excel, CSV or JSON. Drop files anywhere, or paste cells from a spreadsheet.</p>
+              <p class="lead">Excel, CSV, JSON, Parquet or Arrow. Drop files anywhere, or paste cells from a spreadsheet.</p>
               <div class="actions">
                 <button class="btn primary" data-action="getData">Open file</button>
                 <button class="btn" data-action="folder">Folder</button>
@@ -82,8 +84,8 @@
                 <button class="btn ghost" data-action="samples">Try the sample project</button>
               </div>
               <div id="welcome-recent" class="welcome-recent"></div>
-              <p class="privacy"><i class="fa-solid fa-lock" aria-hidden="true"></i> Everything runs in your browser. Files are never uploaded.</p>
-              <div class="kbd-hints"><span><kbd>Ctrl</kbd> <kbd>V</kbd> Paste a table</span><span><kbd>Ctrl</kbd> <kbd>O</kbd> Open project</span><span><kbd>?</kbd> Shortcuts</span></div>
+              <p class="privacy"><i class="fa-solid fa-lock" aria-hidden="true"></i> <span id="privacy-text">Everything runs in your browser. Files are never uploaded.</span></p>
+              <div class="kbd-hints"><span><kbd>Ctrl</kbd> <kbd>V</kbd> Paste a table</span><span><kbd>Ctrl</kbd> <kbd>O</kbd> Open project</span><span><kbd>Ctrl</kbd> <kbd>K</kbd> Commands</span><span><kbd>?</kbd> Shortcuts</span></div>
             </div>
           </div>
           <div id="busy" class="hidden" role="status"></div>
@@ -108,6 +110,7 @@
         </div>
         <div id="tab-profile" class="scroll grow hidden"></div>
         <div id="tab-schema" class="scroll grow hidden"></div>
+        <div id="tab-overview" class="scroll grow hidden"></div>
       </aside>
     </main>
 
@@ -125,10 +128,12 @@
   <noscript><div class="noscript">Floe needs JavaScript to run.</div></noscript>
 
   <script src="js/util.js"></script>
+  <script src="js/storage.js"></script>
   <script src="js/expr.js"></script>
   <script src="js/io.js"></script>
   <script src="js/steps.js"></script>
   <script src="js/engine.js"></script>
+  <script src="js/engine-ext.js"></script>
   <script src="js/platform.js"></script>
   <script src="js/ui/core.js"></script>
   <script src="js/native-engine.js"></script>
@@ -136,6 +141,7 @@
   <script src="js/ui/formula-editor.js"></script>
   <script src="js/ui/step-dialogs.js"></script>
   <script src="js/ui/dialogs.js"></script>
+  <script src="js/ui/features.js"></script>
   <script src="js/ui/app.js"></script>
 </body>
 </html>

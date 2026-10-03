@@ -1,18 +1,23 @@
 {
+  "id": "./",
   "name": "Floe — data preparation",
   "short_name": "Floe",
-  "description": "Clean and reshape messy spreadsheets with replayable steps. Runs locally in your browser.",
-  "id": "/",
+  "description": "Clean and reshape messy spreadsheets with replayable steps. Runs locally; files are never uploaded.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone"],
   "background_color": "#f2efe8",
-  "theme_color": "#f2efe8",
+  "theme_color": "#2b2926",
   "categories": ["productivity", "business", "utilities"],
   "icons": [
     { "src": "images/floe-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
-    { "src": "images/floe-mark.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "monochrome" }
+    { "src": "images/floe-icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" },
+    { "src": "images/floe-icon.jpg", "sizes": "1024x1024", "type": "image/jpeg", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Sample project", "short_name": "Demo", "url": "./demo.html", "icons": [{ "src": "images/floe-icon.svg", "sizes": "any", "type": "image/svg+xml" }] },
+    { "name": "Command palette", "short_name": "Commands", "url": "./index.html?open=palette", "icons": [{ "src": "images/floe-icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
   ],
   "file_handlers": [
     {
@@ -22,12 +27,22 @@
         "text/csv": [".csv", ".tsv"],
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx", ".xlsm"],
         "application/vnd.ms-excel": [".xls"],
-        "application/json": [".json", ".ndjson", ".jsonl"]
-      }
+        "application/json": [".json", ".ndjson", ".jsonl"],
+        "application/vnd.apache.parquet": [".parquet"],
+        "application/vnd.apache.arrow.file": [".arrow", ".feather"]
+      },
+      "launch_type": "single-client"
     }
   ],
-  "launch_handler": { "client_mode": "focus-existing" },
-  "shortcuts": [
-    { "name": "Sample project", "url": "./demo.html" }
-  ]
+  "launch_handler": { "client_mode": ["navigate-existing", "auto"] },
+  "share_target": {
+    "action": "./share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "files": [{ "name": "files", "accept": [".csv", ".tsv", ".txt", ".xlsx", ".xls", ".json", ".parquet", ".arrow", "text/csv", "text/plain", "application/json", "application/octet-stream"] }]
+    }
+  }
 }

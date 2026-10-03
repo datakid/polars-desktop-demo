@@ -1,0 +1,16 @@
+{
+  "name": "floe",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Floe — clean and reshape messy spreadsheets locally. Web app + Tauri desktop shell.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build-web.mjs --target web",
+    "build:desktop-frontend": "node scripts/build-web.mjs --target desktop",
+    "preview": "npx --yes serve dist -l 4173",
+    "desktop:dev": "npm --prefix desktop run dev",
+    "desktop:build": "npm --prefix desktop run build"
+  },
+  "engines": { "node": ">=18" }
+}

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PQX — engine golden tests</title>
+  <title>Floe — engine golden tests</title>
   <style>
     body { font: 13px/1.5 system-ui, sans-serif; margin: 24px; color: #1c2026; }
     h1 { font-size: 18px; margin: 0 0 4px; }
@@ -14,7 +14,7 @@
   </style>
 </head>
 <body>
-  <h1>PQX engine — golden tests</h1>
+  <h1>Floe engine — golden tests</h1>
   <p>Runs the step executors, formula language, Excel reader, merge statistics and code generator in-page. In the Rust build these become <code>cargo test</code> fixtures compared against Python Polars output.</p>
   <div class="sum" id="sum">Running…</div>
   <ol id="out"></ol>
@@ -25,7 +25,9 @@
   <script src="js/io.js"></script>
   <script src="js/steps.js"></script>
   <script src="js/engine.js"></script>
+  <script src="vendor/arrow.es2015.min.js"></script>
   <script src="js/host.js"></script>
+  <script src="js/engine-ext.js"></script>
   <script src="js/tests.js"></script>
 </body>
 </html>

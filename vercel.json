@@ -1,9 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "",
-  "outputDirectory": ".",
   "framework": null,
+  "installCommand": "echo 'no dependencies'",
+  "buildCommand": "node scripts/build-web.mjs --target web",
+  "outputDirectory": "dist",
   "cleanUrls": false,
+  "trailingSlash": false,
+  "redirects": [
+    { "source": "/share-target", "destination": "/index.html?shared=1", "statusCode": 303 }
+  ],
   "headers": [
     {
       "source": "/(.*)",
@@ -12,7 +17,7 @@
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
         { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
         { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()" },
-        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'self'" }
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'" }
       ]
     },
     {
@@ -38,7 +43,11 @@
       ]
     },
     {
-      "source": "/(index|demo|tests).html",
+      "source": "/version.json",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    },
+    {
+      "source": "/(index|demo|tests|tests-ui|404).html",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }]
     }
   ]

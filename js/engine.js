@@ -23,10 +23,73 @@
   E.compareValues = compareValues;
 
   function filterRows(t, pred) {
-    const ix = [];
-    for (let r = 0; r < t.n; r++) if (pred(r)) ix.push(r);
-    return t.take(ix);
+    const ix = new Int32Array(t.n);
+    let k = 0;
+    for (let r = 0; r < t.n; r++) if (pred(r)) ix[k++] = r;
+    return k === t.n ? t : t.take(ix.subarray(0, k));
   }
+
+  class KeyDict {
+    constructor(text) { this.text = !!text; this.num = new Map(); this.str = new Map(); this.date = new Map(); this.t = -1; this.f = -1; this.nul = -1; this.err = -1; this.size = 0; }
+    code(v) {
+      if (v === null || v === undefined) { if (this.nul < 0) this.nul = this.size++; return this.nul; }
+      if (v instanceof CellError) { if (this.err < 0) this.err = this.size++; return this.err; }
+      if (this.text) v = PQ.fmtValue(v);
+      const ty = typeof v;
+      let m;
+      if (ty === 'string') m = this.str;
+      else if (ty === 'number') m = this.num;
+      else if (ty === 'boolean') { if (v) { if (this.t < 0) this.t = this.size++; return this.t; } if (this.f < 0) this.f = this.size++; return this.f; }
+      else if (v instanceof Date) { m = this.date; v = v.getTime(); }
+      else { m = this.str; v = String(v); }
+      let c = m.get(v);
+      if (c === undefined) { c = this.size++; m.set(v, c); }
+      return c;
+    }
+  }
+  E.KeyDict = KeyDict;
+
+  function encodeColumns(cols, n, dicts, skipNull, out) {
+    const a = cols[0], d = dicts[0];
+    for (let r = 0; r < n; r++) { const v = a[r]; out[r] = skipNull && (v === null || v === undefined || v instanceof CellError) ? -1 : d.code(v); }
+    return out;
+  }
+
+  function groupCodes(t, keys) {
+    const arrs = keys.map((k) => t.get(k));
+    const n = t.n, codes = new Int32Array(n);
+    if (!arrs.length) return { codes, ng: 1 };
+    if (arrs.length === 1) {
+      const d = new KeyDict(false);
+      encodeColumns(arrs, n, [d], false, codes);
+      return { codes, ng: d.size };
+    }
+    const dicts = arrs.map(() => new KeyDict(false));
+    const per = arrs.map((a, j) => { const c = new Int32Array(n); encodeColumns([a], n, [dicts[j]], false, c); return c; });
+    let prev = per[0], card = dicts[0].size;
+    for (let j = 1; j < per.length; j++) {
+      const cj = per[j], cc = dicts[j].size, map = new Map(), next = j === per.length - 1 ? codes : new Int32Array(n);
+      for (let r = 0; r < n; r++) {
+        const key = prev[r] * cc + cj[r];
+        let id = map.get(key);
+        if (id === undefined) { id = map.size; map.set(key, id); }
+        next[r] = id;
+      }
+      prev = next; card = map.size;
+    }
+    return { codes, ng: card };
+  }
+  E.groupCodes = groupCodes;
+
+  function csr(codes, ng, n) {
+    const off = new Int32Array(ng + 1);
+    for (let r = 0; r < n; r++) { const c = codes[r]; if (c >= 0) off[c + 1]++; }
+    for (let g = 0; g < ng; g++) off[g + 1] += off[g];
+    const pos = off.slice(0, ng), order = new Int32Array(off[ng]);
+    for (let r = 0; r < n; r++) { const c = codes[r]; if (c >= 0) order[pos[c]++] = r; }
+    return { off, order };
+  }
+  E.csr = csr;
   function mapCol(arr, f) { const out = new Array(arr.length); for (let i = 0; i < arr.length; i++) out[i] = f(arr[i], i); return out; }
 
   /** Builder filter → formula text (so the formula is the single source of truth and codegen gets it for free). */
@@ -80,15 +143,11 @@
   E.AGG = AGG;
 
   function groupIndex(t, keys) {
-    const arrs = keys.map((k) => t.get(k));
-    const map = new Map(), groups = [];
-    for (let r = 0; r < t.n; r++) {
-      let k = '';
-      for (let j = 0; j < arrs.length; j++) k += keyOf(arrs[j][r]) + '\u001f';
-      let g = map.get(k);
-      if (!g) { g = []; map.set(k, g); groups.push(g); }
-      g.push(r);
-    }
+    if (!t.n) return [];
+    const { codes, ng } = groupCodes(t, keys);
+    const { off, order } = csr(codes, ng, t.n);
+    const groups = new Array(ng);
+    for (let g = 0; g < ng; g++) groups[g] = Array.prototype.slice.call(order, off[g], off[g + 1]);
     return groups;
   }
   E.groupIndex = groupIndex;
@@ -116,12 +175,9 @@
     for (const ch of s.changes || []) {
       const src = t.get(ch.col);
       const locale = ch.locale || s.locale || ctx.locale;
-      let errs = 0, firstErr = null;
-      const casted = mapCol(src, (v, i) => {
-        const c = PQ.cast(v, ch.type, locale);
-        if (isErr(c) && !isErr(v)) { errs++; if (firstErr === null) firstErr = { row: i, v, msg: c.msg }; }
-        return c;
-      });
+      const cc = PQ.castColumn(src, ch.type, locale);
+      const casted = cc.values, errs = cc.errors;
+      const firstErr = errs ? { row: cc.first, v: src[cc.first], msg: casted[cc.first].msg } : null;
       if (errs && mode === 'fail') throw new StepError('Row ' + (firstErr.row + 1) + ': ' + firstErr.msg + ' (column `' + ch.col + '`, ' + PQ.fmtInt(errs) + ' failing value' + (errs > 1 ? 's' : '') + ')', { fixes: [{ kind: 'setOnError', value: 'error', label: 'Keep errors per cell instead' }, { kind: 'setOnError', value: 'null', label: 'Turn failures into nulls' }] });
       if (errs && mode === 'null') for (let i = 0; i < casted.length; i++) if (isErr(casted[i]) && !isErr(src[i])) casted[i] = null;
       if (mode === 'keep') {
@@ -138,7 +194,10 @@
     const f = E.filterFormula(s);
     if (f.trim() === 'true') return t;
     const { values } = Formula.evaluate(f, t, ctx.params);
-    return filterRows(t, (r) => values[r] === true);
+    const ix = new Int32Array(t.n);
+    let k = 0;
+    for (let r = 0; r < t.n; r++) if (values[r] === true) ix[k++] = r;
+    return k === t.n ? t : t.take(ix.subarray(0, k));
   };
 
   X.Sort = (t, s) => {
@@ -159,16 +218,21 @@
 
   X.Distinct = (t, s) => {
     const cols = s.subset && s.subset.length ? s.subset : t.names;
-    const arrs = cols.map((c) => t.get(c));
-    const seen = new Set();
-    return filterRows(t, (r) => { let k = ''; for (const a of arrs) k += keyOf(a[r]) + '\u001f'; if (seen.has(k)) return false; seen.add(k); return true; });
+    t.need(cols);
+    if (!t.n || !cols.length) return t.n > 1 && !cols.length ? t.slice(0, 1) : t;
+    const { codes, ng } = groupCodes(t, cols);
+    const seen = new Uint8Array(ng);
+    return filterRows(t, (r) => { const c = codes[r]; if (seen[c]) return false; seen[c] = 1; return true; });
   };
   X.KeepDuplicates = (t, s) => {
     const cols = s.subset && s.subset.length ? s.subset : t.names;
-    const arrs = cols.map((c) => t.get(c));
-    const counts = new Map(), keys = new Array(t.n);
-    for (let r = 0; r < t.n; r++) { let k = ''; for (const a of arrs) k += keyOf(a[r]) + '\u001f'; keys[r] = k; counts.set(k, (counts.get(k) || 0) + 1); }
-    return filterRows(t, (r) => counts.get(keys[r]) > 1);
+    t.need(cols);
+    if (!t.n) return t;
+    if (!cols.length) return t.n > 1 ? t : t.slice(0, 0);
+    const { codes, ng } = groupCodes(t, cols);
+    const counts = new Int32Array(ng);
+    for (let r = 0; r < t.n; r++) counts[codes[r]]++;
+    return filterRows(t, (r) => counts[codes[r]] > 1);
   };
 
   X.KeepRows = (t, s) => {
@@ -330,17 +394,54 @@
     t.need(keys);
     const aggs = s.aggs || [];
     aggs.forEach((a) => { if (a.fn !== 'count_rows') t.need([a.col]); if (!AGG[a.fn]) throw new StepError('Unknown aggregation ' + a.fn); });
-    const groups = keys.length ? groupIndex(t, keys) : [Array.from({ length: t.n }, (_, i) => i)];
+    const n = t.n;
+    let codes, ng;
+    if (keys.length) { if (!n) { codes = new Int32Array(0); ng = 0; } else ({ codes, ng } = groupCodes(t, keys)); }
+    else { codes = new Int32Array(n); ng = 1; }
+    const first = new Int32Array(ng).fill(-1), last = new Int32Array(ng).fill(-1), size = new Int32Array(ng);
+    for (let r = 0; r < n; r++) { const g = codes[r]; if (first[g] < 0) first[g] = r; last[g] = r; size[g]++; }
+    let grp = null;
+    const groupsOf = () => grp || (grp = csr(codes, ng, n));
     const cols = keys.map((k) => ({ name: k, type: t.type(k) }));
-    const data = keys.map((k) => { const a = t.get(k); return groups.map((g) => a[g[0]]); });
+    const data = keys.map((k) => { const a = t.get(k), o = new Array(ng); for (let g = 0; g < ng; g++) o[g] = a[first[g]]; return o; });
     const used = new Set(keys);
     aggs.forEach((a) => {
       const src = a.fn === 'count_rows' ? null : t.get(a.col);
       const name = PQ.uniqueName(a.name || (AGG[a.fn].label + (a.col ? ' of ' + a.col : '')), used); used.add(name);
       cols.push({ name, type: AGG[a.fn].type(a.col ? t.type(a.col) : 'int') });
-      data.push(groups.map((g) => AGG[a.fn].fn(src ? g.map((r) => src[r]) : g, a.sep)));
+      const o = new Array(ng);
+      switch (a.fn) {
+        case 'count_rows': for (let g = 0; g < ng; g++) o[g] = size[g]; break;
+        case 'count': { o.fill(0); for (let r = 0; r < n; r++) { const v = src[r]; if (v !== null && !(v instanceof CellError)) o[codes[r]]++; } break; }
+        case 'sum': case 'mean': {
+          const sum = new Float64Array(ng), cnt = new Int32Array(ng);
+          for (let r = 0; r < n; r++) { const v = src[r]; if (typeof v === 'number') { const g = codes[r]; sum[g] += v; cnt[g]++; } }
+          for (let g = 0; g < ng; g++) o[g] = cnt[g] ? (a.fn === 'sum' ? sum[g] : sum[g] / cnt[g]) : null;
+          break;
+        }
+        case 'min': case 'max': {
+          o.fill(null);
+          const sign = a.fn === 'min' ? -1 : 1;
+          for (let r = 0; r < n; r++) {
+            const v = src[r];
+            if (v === null || v instanceof CellError) continue;
+            const g = codes[r], m = o[g];
+            if (m === null) { o[g] = v; continue; }
+            if (typeof v === 'number' && typeof m === 'number') { if ((v - m) * sign > 0) o[g] = v; }
+            else if (compareValues(v, m) * sign > 0) o[g] = v;
+          }
+          break;
+        }
+        case 'first': for (let g = 0; g < ng; g++) o[g] = first[g] < 0 ? null : src[first[g]]; break;
+        case 'last': for (let g = 0; g < ng; g++) o[g] = last[g] < 0 ? null : src[last[g]]; break;
+        default: {
+          const { off, order } = groupsOf();
+          for (let g = 0; g < ng; g++) { const vs = new Array(off[g + 1] - off[g]); for (let k = off[g]; k < off[g + 1]; k++) vs[k - off[g]] = src[order[k]]; o[g] = AGG[a.fn].fn(vs, a.sep); }
+        }
+      }
+      data.push(o);
     });
-    const out = new Table(cols, data, groups.length);
+    const out = new Table(cols, data, ng);
     out.cols.forEach((c, i) => { if (c.type === 'any') c.type = PQ.valuesType(out.data[i]); });
     return out;
   };
@@ -370,25 +471,41 @@
     const index = s.index && s.index.length ? s.index : t.names.filter((n) => n !== s.on && n !== s.values);
     t.need(index);
     const onArr = t.get(s.on), valArr = s.values ? t.get(s.values) : null;
-    const newCols = [], seen = new Set();
-    for (let r = 0; r < t.n; r++) { const k = onArr[r] === null ? 'null' : String(PQ.fmtValue(onArr[r])); if (!seen.has(k)) { seen.add(k); newCols.push(k); } }
+    const n = t.n;
+    const newCols = [], colOf = new Map(), colIx = new Int32Array(n);
+    for (let r = 0; r < n; r++) {
+      const k = onArr[r] === null ? 'null' : String(PQ.fmtValue(onArr[r]));
+      let c = colOf.get(k);
+      if (c === undefined) { c = newCols.length; colOf.set(k, c); newCols.push(k); }
+      colIx[r] = c;
+    }
     if (newCols.length > 500) throw new StepError('Pivot would create ' + newCols.length + ' columns (limit 500). Filter or group `' + s.on + '` first.');
     const agg = AGG[s.agg || 'sum'] || AGG.first;
-    const groups = index.length ? groupIndex(t, index) : [Array.from({ length: t.n }, (_, i) => i)];
+    let codes, ng;
+    if (index.length) { if (!n) { codes = new Int32Array(0); ng = 0; } else ({ codes, ng } = groupCodes(t, index)); }
+    else { codes = new Int32Array(n); ng = 1; }
+    const first = new Int32Array(ng).fill(-1);
+    for (let r = 0; r < n; r++) if (first[codes[r]] < 0) first[codes[r]] = r;
     const cols = index.map((k) => ({ name: k, type: t.type(k) }));
-    const data = index.map((k) => { const a = t.get(k); return groups.map((g) => a[g[0]]); });
+    const data = index.map((k) => { const a = t.get(k), o = new Array(ng); for (let g = 0; g < ng; g++) o[g] = a[first[g]]; return o; });
+    const nc = newCols.length;
+    const cells = new Map();
+    for (let r = 0; r < n; r++) {
+      const id = codes[r] * nc + colIx[r];
+      let b = cells.get(id);
+      if (!b) cells.set(id, (b = []));
+      b.push(valArr ? valArr[r] : 1);
+    }
+    const outCols = newCols.map(() => new Array(ng).fill(null));
+    cells.forEach((vs, id) => { const g = Math.floor(id / nc); outCols[id - g * nc][g] = agg.fn(vs); });
     const idxNames = new Set(index);
     const valType = valArr ? agg.type(t.type(s.values)) : 'int';
-    newCols.forEach((nc) => {
-      const name = PQ.uniqueName(nc, idxNames); idxNames.add(name);
+    newCols.forEach((name0, c) => {
+      const name = PQ.uniqueName(name0, idxNames); idxNames.add(name);
       cols.push({ name, type: valType === 'any' ? 'number' : valType });
-      data.push(groups.map((g) => {
-        const vs = [];
-        for (const r of g) { const k = onArr[r] === null ? 'null' : String(PQ.fmtValue(onArr[r])); if (k === nc) vs.push(valArr ? valArr[r] : 1); }
-        return vs.length ? agg.fn(vs) : null;
-      }));
+      data.push(outCols[c]);
     });
-    return new Table(cols, data, groups.length);
+    return new Table(cols, data, ng);
   };
 
   X.Transpose = (t, s) => {
@@ -417,18 +534,16 @@
     if (!on.length) throw new StepError('Choose at least one key column on each side');
     t.need(on.map((p) => p[0]));
     right.need(on.map((p) => p[1]));
-    const kf = s.castKeys ? textKey : keyOf;
-    const lk = on.map((p) => t.get(p[0])), rk = on.map((p) => right.get(p[1]));
-    const key = (arrs, r) => { let k = ''; for (const a of arrs) { const v = a[r]; if (v === null || isErr(v)) return null; k += kf(v) + '\u001f'; } return k; };
-    const idx = new Map();
-    for (let r = 0; r < right.n; r++) { const k = key(rk, r); if (k === null) continue; let a = idx.get(k); if (!a) idx.set(k, (a = [])); a.push(r); }
-    if (how === 'semi' || how === 'anti') return filterRows(t, (r) => { const k = key(lk, r); const m = k !== null && idx.has(k); return how === 'semi' ? m : !m; });
+    const { lc, rc, ng } = joinCodes(t, right, on, !!s.castKeys);
+    const { off, order } = csr(rc, ng, right.n);
+    if (how === 'semi' || how === 'anti') return filterRows(t, (r) => { const c = lc[r]; const m = c >= 0 && off[c + 1] > off[c]; return how === 'semi' ? m : !m; });
     const li = [], ri = [];
     const matchedRight = how === 'right' || how === 'full' ? new Uint8Array(right.n) : null;
+    const keepLeft = how === 'left' || how === 'full';
     for (let r = 0; r < t.n; r++) {
-      const k = key(lk, r), m = k === null ? undefined : idx.get(k);
-      if (m) for (const x of m) { li.push(r); ri.push(x); if (matchedRight) matchedRight[x] = 1; }
-      else if (how === 'left' || how === 'full') { li.push(r); ri.push(-1); }
+      const c = lc[r];
+      if (c >= 0 && off[c + 1] > off[c]) { for (let k = off[c]; k < off[c + 1]; k++) { const x = order[k]; li.push(r); ri.push(x); if (matchedRight) matchedRight[x] = 1; } }
+      else if (keepLeft) { li.push(r); ri.push(-1); }
     }
     if (how === 'right') {
       // keep right order semantics: matched pairs + unmatched right
@@ -445,6 +560,41 @@
     }
     return out;
   };
+  function joinCodes(left, right, on, castKeys) {
+    const dicts = on.map(() => new KeyDict(castKeys));
+    const la = on.map((p) => left.get(p[0])), ra = on.map((p) => right.get(p[1]));
+    const lc = new Int32Array(left.n), rc = new Int32Array(right.n);
+    if (on.length === 1) {
+      encodeColumns(ra, right.n, dicts, true, rc);
+      encodeColumns(la, left.n, dicts, true, lc);
+      return { lc, rc, ng: dicts[0].size };
+    }
+    const enc = (arrs, n) => arrs.map((a, j) => { const c = new Int32Array(n); encodeColumns([a], n, [dicts[j]], true, c); return c; });
+    const rp = enc(ra, right.n), lp = enc(la, left.n);
+    let rPrev = rp[0], lPrev = lp[0], size = dicts[0].size;
+    for (let j = 1; j < on.length; j++) {
+      const cc = dicts[j].size, map = new Map();
+      const rNext = j === on.length - 1 ? rc : new Int32Array(right.n), lNext = j === on.length - 1 ? lc : new Int32Array(left.n);
+      for (let r = 0; r < right.n; r++) {
+        const a = rPrev[r], b = rp[j][r];
+        if (a < 0 || b < 0) { rNext[r] = -1; continue; }
+        const key = a * cc + b;
+        let id = map.get(key);
+        if (id === undefined) { id = map.size; map.set(key, id); }
+        rNext[r] = id;
+      }
+      for (let r = 0; r < left.n; r++) {
+        const a = lPrev[r], b = lp[j][r];
+        if (a < 0 || b < 0) { lNext[r] = -1; continue; }
+        const id = map.get(a * cc + b);
+        lNext[r] = id === undefined ? -1 : id;
+      }
+      rPrev = rNext; lPrev = lNext; size = map.size;
+    }
+    return { lc, rc, ng: size };
+  }
+  E.joinCodes = joinCodes;
+
   function joinOutput(left, right, li, ri, s) {
     const L = left.take(li);
     const rightKeys = new Set((s.on || []).map((p) => p[1]));
@@ -531,9 +681,10 @@
   };
 
   X.CustomSql = (t, s, ctx) => {
-    if (typeof alasql === 'undefined') throw new StepError('SQL engine failed to load — check your network connection');
     if (!s.sql || !s.sql.trim()) throw new StepError('Write a SQL query. The previous step is available as `self`.');
-    const db = new alasql.Database();
+    const SQL = PQ.lib('alasql');
+    if (!SQL) throw new StepError('SQL engine failed to load — reload the app');
+    const db = new SQL.Database();
     const register = (name, table) => {
       db.exec('CREATE TABLE [' + name.replace(/]/g, '') + ']');
       const names = table.names;
@@ -602,11 +753,18 @@
   const MATERIALIZES = new Set(['Pivot', 'Transpose', 'Merge', 'GroupBy', 'Sort', 'Distinct', 'CustomSql', 'Checkpoint']);
   E.MATERIALIZES = MATERIALIZES;
 
-  const cache = new Map(); // fingerprint → Table  (the Rust build writes these as Arrow IPC to the OS cache dir)
-  const CACHE_MAX = 80;
+  const cache = new Map();
+  const CACHE_MAX = 80, CELL_BUDGET = 60e6;
+  let cachedCells = 0;
+  const cellsOf = (t) => Math.max(1, t.n * Math.max(1, t.cols.length));
   function cacheGet(k) { const v = cache.get(k); if (v) { cache.delete(k); cache.set(k, v); } return v; }
-  function cachePut(k, v) { cache.set(k, v); while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value); }
-  E.clearCache = () => cache.clear();
+  function cacheDrop(k) { const v = cache.get(k); if (v) { cachedCells -= cellsOf(v); cache.delete(k); } }
+  function cachePut(k, v) {
+    cacheDrop(k);
+    cache.set(k, v); cachedCells += cellsOf(v);
+    while (cache.size > 1 && (cache.size > CACHE_MAX || cachedCells > CELL_BUDGET)) cacheDrop(cache.keys().next().value);
+  }
+  E.clearCache = () => { cache.clear(); cachedCells = 0; };
   E.cacheSize = () => cache.size;
 
   let project = null;

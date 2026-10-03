@@ -22,9 +22,9 @@
   N.init = async function () {
     if (!PQ.Platform.native) return false;
     try {
-      await loadArrow();
       const s = await inv('engine_status');
-      if (!s.available || !s.info) return false;
+      if (!s || !s.available || !s.info) return false;
+      await loadArrow();
       N.info = s.info;
       N.supported = new Set(s.info.supported || []);
       N.ready = true;

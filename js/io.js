@@ -23,31 +23,45 @@
   /** RFC 4180 parser. Stops after maxRows records (preview = head(N) at the source). */
   IO.parseCSV = function (text, delim, maxRows, skipRows) {
     const rows = [];
-    let row = [], field = '', i = 0, q = false, skipped = 0;
     const n = text.length, limit = maxRows === undefined || maxRows === null ? Infinity : maxRows;
+    const D = (delim || ',').charCodeAt(0), Q = 34, CR = 13, LF = 10;
     skipRows = skipRows || 0;
-    const push = () => {
-      row.push(field); field = '';
-    };
+    let skipped = 0, row = [], i = 0;
     const endRow = () => {
-      push();
       if (skipped < skipRows) skipped++;
       else if (!(row.length === 1 && row[0] === '')) rows.push(row);
       row = [];
     };
     while (i < n) {
-      const ch = text[i];
-      if (q) {
-        if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i += 2; continue; } q = false; i++; continue; }
-        field += ch; i++; continue;
+      let c = text.charCodeAt(i);
+      if (c === Q) {
+        let j = i + 1, s = '', from = j;
+        for (;;) {
+          const k = text.indexOf('"', j);
+          if (k < 0) { s += text.slice(from); j = n; break; }
+          if (text.charCodeAt(k + 1) === Q) { s += text.slice(from, k + 1); j = k + 2; from = j; continue; }
+          s += text.slice(from, k); j = k + 1; break;
+        }
+        let e = j;
+        while (e < n) { const x = text.charCodeAt(e); if (x === D || x === CR || x === LF) break; e++; }
+        if (e > j) s += text.slice(j, e);
+        row.push(s);
+        i = e;
+      } else {
+        let e = i;
+        while (e < n) { c = text.charCodeAt(e); if (c === D || c === CR || c === LF) break; e++; }
+        row.push(e > i ? text.slice(i, e) : '');
+        i = e;
       }
-      if (ch === '"' && field === '') { q = true; i++; continue; }
-      if (ch === delim) { push(); i++; continue; }
-      if (ch === '\r') { i++; if (text[i] === '\n') i++; endRow(); if (rows.length >= limit) return { rows, truncated: i < n }; continue; }
-      if (ch === '\n') { i++; endRow(); if (rows.length >= limit) return { rows, truncated: i < n }; continue; }
-      field += ch; i++;
+      if (i >= n) break;
+      c = text.charCodeAt(i);
+      if (c === D) { i++; if (i >= n) row.push(''); continue; }
+      i++;
+      if (c === CR && text.charCodeAt(i) === LF) i++;
+      endRow();
+      if (rows.length >= limit) return { rows, truncated: i < n };
     }
-    if (field !== '' || row.length) endRow();
+    if (row.length) endRow();
     return { rows, truncated: false };
   };
 
@@ -78,7 +92,7 @@
   };
 
   function csvTable(rec, opts, maxRows) {
-    const { text, encoding } = IO.decode(rec.buf, opts.encoding);
+    const { text, encoding } = decodeCached(rec, opts.encoding);
     const delim = opts.delimiter || IO.sniffCSV(text).delimiter;
     const want = maxRows === Infinity || maxRows === undefined ? undefined : maxRows + (opts.header ? 1 : 0);
     const { rows, truncated } = IO.parseCSV(text, delim, want, opts.skipRows || 0);
@@ -96,6 +110,21 @@
     t.meta = { truncated, encoding, delimiter: delim };
     return t;
   }
+
+  const textCache = new Map();
+  function decodeCached(rec, encoding) {
+    const k = rec.id + ':' + rec.mtime + ':' + rec.size + ':' + (encoding || 'auto');
+    let v = textCache.get(k);
+    if (!v) {
+      v = IO.decode(rec.buf, encoding);
+      textCache.set(k, v);
+      let total = 0;
+      for (const x of textCache.values()) total += x.text.length;
+      while (textCache.size > 1 && (textCache.size > 4 || total > 400e6)) { const first = textCache.keys().next().value; total -= textCache.get(first).text.length; textCache.delete(first); }
+    } else { textCache.delete(k); textCache.set(k, v); }
+    return v;
+  }
+  IO.decodeCached = decodeCached;
 
   /* ============================== Header detection ============================== */
   /** Scores candidate header rows: share of text cells, uniqueness, fill, and a type change on the rows below. */
@@ -136,9 +165,9 @@
   function workbook(rec) {
     const key = rec.id + ':' + rec.mtime;
     if (wbCache.has(key)) return wbCache.get(key);
-    if (typeof XLSX === 'undefined') throw new PQ.StepError('Excel reader (SheetJS) failed to load — check your network connection');
-    const wb = XLSX.read(new Uint8Array(rec.buf), { type: 'array', cellNF: true, cellDates: false, cellStyles: false, sheetStubs: false });
-    const info = { wb, date1904: !!(wb.Workbook && wb.Workbook.WBProps && wb.Workbook.WBProps.date1904), tables: readListObjects(rec.buf, wb) };
+    if (!PQ.lib('xlsx')) throw new PQ.StepError('Excel reader (SheetJS) failed to load — reload the app');
+    const wb = XLSX.read(new Uint8Array(rec.buf), { type: 'array', cellNF: true, cellDates: false, cellStyles: false, sheetStubs: false, dense: true });
+    const info = { wb, date1904: !!(wb.Workbook && wb.Workbook.WBProps && wb.Workbook.WBProps.date1904), tables: /\.xls[xm]$/i.test(rec.name) ? readListObjects(rec.buf, wb) : [], dateFmt: new Map() };
     wbCache.set(key, info);
     if (wbCache.size > 8) wbCache.delete(wbCache.keys().next().value);
     return info;
@@ -192,11 +221,23 @@
     return out;
   };
 
+  let fmtMemo = new Map();
+  function isDateFmt(z) {
+    let v = fmtMemo.get(z);
+    if (v === undefined) { v = !!XLSX.SSF.is_date(z); if (fmtMemo.size > 2000) fmtMemo = new Map(); fmtMemo.set(z, v); }
+    return v;
+  }
+  function getCell(ws, r, c) {
+    if (Array.isArray(ws)) { const row = ws[r]; return row ? row[c] : undefined; }
+    const d = ws['!data'];
+    if (d) { const row = d[r]; return row ? row[c] : undefined; }
+    return ws[XLSX.utils.encode_cell({ r, c })];
+  }
   function cellValue(cell, date1904) {
     if (!cell) return null;
     switch (cell.t) {
       case 'n': {
-        if (cell.z && XLSX.SSF.is_date(cell.z)) return PQ.excelSerialToDate(cell.v, date1904);
+        if (cell.z && cell.z !== 'General' && isDateFmt(cell.z)) return PQ.excelSerialToDate(cell.v, date1904);
         return cell.v;
       }
       case 's': case 'str': return cell.v === '' ? null : cell.v;
@@ -226,7 +267,7 @@
     const merged = opts && opts.fillMerged ? ws['!merges'] || [] : [];
     const mergeMap = new Map();
     for (const m of merged) {
-      const tl = cellValue(ws[XLSX.utils.encode_cell(m.s)], info.date1904);
+      const tl = cellValue(getCell(ws, m.s.r, m.s.c), info.date1904);
       for (let r = m.s.r; r <= m.e.r; r++) for (let c = m.s.c; c <= m.e.c; c++) if (r !== m.s.r || c !== m.s.c) mergeMap.set(r * 20000 + c, tl);
     }
     const grid = [];
@@ -235,7 +276,7 @@
       let any = false;
       for (let c = c1; c <= c2; c++) {
         const key = r * 20000 + c;
-        let v = mergeMap.has(key) ? mergeMap.get(key) : cellValue(ws[XLSX.utils.encode_cell({ r, c })], info.date1904);
+        let v = mergeMap.size && mergeMap.has(key) ? mergeMap.get(key) : cellValue(getCell(ws, r, c), info.date1904);
         if (typeof v === 'string' && v.trim() === '') v = null;
         row[c - c1] = v;
         if (v !== null) any = true;
@@ -254,7 +295,7 @@
     const H = Math.min(b.r2 - b.r1 + 1, 2000), W = Math.min(b.c2 - b.c1 + 1, 200);
     const filled = new Uint8Array(H * W);
     for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
-      const cell = ws[XLSX.utils.encode_cell({ r: r + b.r1, c: c + b.c1 })];
+      const cell = getCell(ws, r + b.r1, c + b.c1);
       if (cell && cell.v !== undefined && cell.v !== null && cell.v !== '') filled[r * W + c] = 1;
     }
     (ws['!merges'] || []).forEach((m) => {
@@ -409,7 +450,7 @@
     const kind = IO.fileKind(rec.name);
     if (kind === 'excel') return IO.inspectExcel(rec);
     if (kind === 'csv') {
-      const { text, encoding } = IO.decode(rec.buf);
+      const { text, encoding } = decodeCached(rec);
       const sniff = IO.sniffCSV(text);
       const { rows } = IO.parseCSV(text, sniff.delimiter, 40);
       return { kind: 'csv', encoding, ...sniff, preview: rows.map((r) => r.slice(0, 26)) };
@@ -421,16 +462,27 @@
   /* ============================== Writers ============================== */
   IO.toCSV = function (t, delim) {
     delim = delim || ',';
+    const needs = new RegExp('["\\n\\r' + delim.replace(/[\\\]^-]/g, '\\$&') + ',]');
     const esc = (v) => {
       if (v === null || v === undefined) return '';
+      if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(+v.toFixed(10));
       const s = v instanceof CellError ? '#ERROR' : PQ.fmtValue(v);
-      return /[",\n\r]/.test(s) || s.includes(delim) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      return needs.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
-    const lines = [t.names.map(esc).join(delim)];
-    for (let r = 0; r < t.n; r++) lines.push(t.data.map((c) => esc(c[r])).join(delim));
-    return lines.join('\r\n');
+    const parts = [t.names.map(esc).join(delim)];
+    const cols = t.data, m = cols.length;
+    let chunk = [];
+    for (let r = 0; r < t.n; r++) {
+      let line = m ? esc(cols[0][r]) : '';
+      for (let c = 1; c < m; c++) line += delim + esc(cols[c][r]);
+      chunk.push(line);
+      if (chunk.length === 50000) { parts.push(chunk.join('\r\n')); chunk = []; }
+    }
+    if (chunk.length) parts.push(chunk.join('\r\n'));
+    return parts.join('\r\n');
   };
   IO.toXLSX = function (t, sheetName) {
+    if (!PQ.lib('xlsx')) throw new PQ.StepError('Excel writer (SheetJS) failed to load — reload the app');
     const aoa = [t.names].concat(t.toRows().map((row) => row.map((v) => (v instanceof CellError ? '#ERROR' : v instanceof Date ? v : v))));
     const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true, dateNF: 'yyyy-mm-dd' });
     ws['!autofilter'] = { ref: ws['!ref'] };
@@ -442,7 +494,7 @@
     t.cols.forEach((c, i) => {
       const fmt = c.type === 'date' ? 'yyyy-mm-dd' : c.type === 'datetime' ? 'yyyy-mm-dd hh:mm:ss' : c.type === 'number' ? '#,##0.00' : null;
       if (!fmt) return;
-      for (let r = 1; r <= t.n; r++) { const cell = ws[XLSX.utils.encode_cell({ r, c: i })]; if (cell) cell.z = fmt; }
+      for (let r = 1; r <= t.n; r++) { const cell = getCell(ws, r, i); if (cell) cell.z = fmt; }
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, String(sheetName || 'Data').slice(0, 31).replace(/[\\/?*[\]:]/g, '_'));
@@ -456,6 +508,7 @@
 
   /* ============================== Sample data (a deliberately messy set) ============================== */
   IO.makeSamples = function () {
+    PQ.lib('xlsx');
     let seed = 42;
     const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
     const pick = (a) => a[Math.floor(rnd() * a.length)];

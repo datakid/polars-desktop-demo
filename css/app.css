@@ -557,7 +557,63 @@ body.dragging::after { content: 'Drop files to add them'; position: fixed; inset
 }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+/* ───────── command palette ───────── */
+.palette-btn { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px 0 11px; min-width: 240px; border: 1px solid var(--border); background: var(--panel); color: var(--faint); border-radius: 10px; cursor: pointer; font-size: 12.5px; transition: border-color .15s, color .15s; }
+.palette-btn:hover { border-color: var(--border-2); color: var(--muted); }
+.palette-btn span { flex: 1; text-align: left; }
+.palette-btn kbd, .palette-h kbd { font: 600 10px var(--mono); padding: 2px 6px; border-radius: 6px; background: var(--panel-3); color: var(--muted); border: 0; }
+.palette-back { position: fixed; inset: 0; z-index: 90; background: rgba(40, 32, 24, .22); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; animation: fade .12s ease-out; }
+[data-theme='dark'] .palette-back { background: rgba(0, 0, 0, .45); }
+.palette { width: min(620px, calc(100vw - 24px)); background: var(--panel); border: 1px solid var(--border-2); border-radius: var(--radius-lg); box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column; max-height: 66vh; }
+.palette-h { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.palette-input { flex: 1; border: 0; background: transparent; outline: none; font-size: 15px; color: var(--text); min-width: 0; }
+.palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
+.palette-g { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); padding: 8px 10px 3px; }
+.palette-i { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; cursor: pointer; font-size: 13px; }
+.palette-i i { color: var(--muted); }
+.palette-i.on { background: var(--accent-2); }
+.palette-i.on i { color: var(--accent-ink); }
+.palette-hint { color: var(--faint); font-size: 11.5px; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-i .kbd { font: 500 10.5px var(--mono); color: var(--faint); }
+.palette-empty { padding: 18px; text-align: center; color: var(--faint); }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ───────── overview ───────── */
+.overview { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.ov-score { display: flex; align-items: center; gap: 14px; padding: 12px; border-radius: var(--radius); background: var(--panel-2); border: 1px solid var(--border); }
+.ov-ring { --c: var(--ok); width: 58px; height: 58px; border-radius: 50%; flex: none; display: grid; place-items: center; background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--panel-3) 0); }
+.ov-ring span { width: 44px; height: 44px; border-radius: 50%; background: var(--panel-2); display: grid; place-items: center; font: 600 17px var(--serif); }
+.ov-score.warn .ov-ring { --c: var(--warn); }
+.ov-score.err .ov-ring { --c: var(--err); }
+.ov-title { font-family: var(--serif); font-weight: 600; font-size: 15px; }
+.stat .v.warn { color: var(--warn); }
+.ov-fixes { display: flex; flex-wrap: wrap; gap: 6px; }
+.ov-cols { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ov-cols li { padding: 7px 8px; border-radius: 9px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+.ov-cols li:hover, .ov-cols li:focus-visible { background: var(--panel-2); outline: none; }
+.ov-c1 { display: flex; align-items: center; gap: 7px; font-size: 12.5px; }
+.ov-c1 .faint { font-size: 11px; }
+.ov-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.ov-c2 { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; font-family: var(--mono); }
+.ov-c2 span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-cols .quality { height: 4px; }
+
+/* ───────── cluster + validate dialogs ───────── */
+.cluster-list { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto; padding-right: 2px; }
+.cluster { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--panel-2); display: flex; flex-direction: column; gap: 6px; transition: opacity .15s; }
+.cluster.off { opacity: .55; }
+.cluster-h { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.cluster-h .input { flex: 1; min-width: 0; }
+.cluster-vals { display: flex; flex-wrap: wrap; gap: 5px; }
+.cluster-vals .chip { font-size: 11.5px; }
+.cluster-vals .cnt { color: var(--faint); margin-left: 6px; font-family: var(--mono); font-size: 10.5px; }
+.validate-row { display: grid; grid-template-columns: 1.2fr 1.3fr 1fr .8fr; gap: 6px; }
+.validate-row > .hidden + .hidden { display: none; }
+.validate-row select:last-child:not(.hidden) { grid-column: 1 / -1; }
+
 @media (max-width: 1100px) {
+  .palette-btn { min-width: 0; }
+  .palette-btn span, .palette-btn kbd { display: none; }
   #workspace { grid-template-columns: var(--left-w, 200px) 8px 1fr 8px var(--right-w, 290px); }
   #project-name { width: 170px; }
 }
@@ -593,7 +649,11 @@ body.dragging::after { content: 'Drop files to add them'; position: fixed; inset
   #st-cache, #st-time, #status-bar .sep { display: none; }
   #formula-bar { min-height: 38px; padding: 5px 8px; }
   #formula-bar .fx { display: none; }
-  #toasts { left: 10px; right: 10px; bottom: calc(92px + env(safe-area-inset-bottom)); }
+  .palette-btn { width: 34px; height: 34px; padding: 0; justify-content: center; }
+  .palette-back { padding-top: max(10px, env(safe-area-inset-top)); }
+  .palette { max-height: 78vh; }
+  .validate-row { grid-template-columns: 1fr 1fr; }
+  #toasts { left: 10px; right: 10px; bottom: calc(118px + env(safe-area-inset-bottom)); }
   .toast { min-width: 0; max-width: none; }
   #busy { top: 8px; right: 8px; left: 8px; justify-content: center; }
   .welcome h1 { font-size: 24px; }

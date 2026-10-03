@@ -10,11 +10,11 @@
     fsa,
     os: /Mac|iPhone|iPad|iPod/i.test(ua) ? 'mac' : /Win/i.test(ua) ? 'windows' : 'linux',
     touch: typeof matchMedia === 'function' && matchMedia('(hover: none) and (pointer: coarse)').matches,
-    info: { name: PQ.BRAND.name, version: '0.3.0', nativeEngine: false },
+    info: { name: PQ.BRAND.name, version: PQ.VERSION, nativeEngine: false },
   });
   const inv = (cmd, args, opts) => T.core.invoke(cmd, args, opts);
   const toBuf = (x) => (x instanceof ArrayBuffer ? x : ArrayBuffer.isView(x) ? x.buffer.slice(x.byteOffset, x.byteOffset + x.byteLength) : new Uint8Array(x).buffer);
-  const DATA_EXT = ['csv', 'tsv', 'txt', 'xlsx', 'xlsm', 'xlsb', 'xls', 'ods', 'json', 'ndjson', 'jsonl'];
+  const DATA_EXT = ['csv', 'tsv', 'txt', 'xlsx', 'xlsm', 'xlsb', 'xls', 'ods', 'json', 'ndjson', 'jsonl', 'parquet', 'pq', 'arrow', 'feather', 'ipc'];
   const DATA_ACCEPT = DATA_EXT.map((e) => '.' + e).join(',');
   const DATA_RE = new RegExp('\\.(' + DATA_EXT.join('|') + ')$', 'i');
   const PICK_DATA = [{
@@ -25,6 +25,8 @@
       'application/vnd.ms-excel': ['.xls'],
       'application/vnd.oasis.opendocument.spreadsheet': ['.ods'],
       'application/json': ['.json', '.ndjson', '.jsonl'],
+      'application/vnd.apache.parquet': ['.parquet', '.pq'],
+      'application/vnd.apache.arrow.file': ['.arrow', '.feather', '.ipc'],
     },
   }];
   const PICK_PROJECT = [{ description: PQ.BRAND.name + ' project', accept: { 'application/json': ['.' + PQ.BRAND.ext, '.json'] } }];
@@ -32,6 +34,7 @@
   P.isData = (name) => DATA_RE.test(String(name || ''));
   P.isProject = (name) => /\.(floe|pqproj)$/i.test(String(name || ''));
   const aborted = (e) => !!e && e.name === 'AbortError';
+  const NATIVE_MAX = 500 * 1048576;
 
   const kv = {
     p: null,
@@ -72,7 +75,10 @@
 
   async function readAll(metas) {
     const out = [];
-    for (const m of metas || []) out.push(Object.assign({}, m, { buf: toBuf(await inv('read_file', { path: m.path })) }));
+    for (const m of metas || []) {
+      if (m.size > NATIVE_MAX) { out.push(Object.assign({}, m, { buf: null })); continue; }
+      out.push(Object.assign({}, m, { buf: toBuf(await inv('read_file', { path: m.path })) }));
+    }
     return out;
   }
   async function fromFileObjects(files, folder) {
@@ -196,6 +202,12 @@
     return path;
   };
   P.stat = (path) => (native && path ? inv('file_stat', { path }) : Promise.resolve(null));
+  P.readPathIfChanged = async function (path, rec) {
+    const s = await inv('file_stat', { path });
+    if (!s) { const e = new Error(path + ' not found'); e.name = 'NotFoundError'; throw e; }
+    if (s.mtime === rec.mtime && s.size === rec.size) return null;
+    return { buf: toBuf(await inv('read_file', { path })), mtime: s.mtime, size: s.size };
+  };
   P.readPath = async (path) => toBuf(await inv('read_file', { path }));
 
   P.fileHandles = {
@@ -286,12 +298,23 @@
     T.event.listen('floe://files-dropped', async (e) => { document.body.classList.remove('dragging'); fn(await readAll(e.payload)); });
     T.event.listen('tauri://drag-enter', () => document.body.classList.add('dragging'));
     T.event.listen('tauri://drag-leave', () => document.body.classList.remove('dragging'));
+    T.event.listen('tauri://drag-drop', () => document.body.classList.remove('dragging'));
+  };
+  P.onCloseRequested = function (fn) {
+    if (!native || !T.window || !T.window.getCurrentWindow) return;
+    T.window.getCurrentWindow().onCloseRequested(async (e) => {
+      let ok = true;
+      try { ok = await fn(); } catch (err) { ok = true; }
+      if (!ok) e.preventDefault();
+    });
   };
   P.onOpenProject = function (fn, onData) {
     if (native) {
       const load = async (m) => { if (!m) return; const buf = toBuf(await inv('read_file', { path: m.path })); fn({ name: m.name, path: m.path, text: new TextDecoder().decode(buf) }); };
-      inv('take_launch_file').then(load).catch(() => {});
-      T.event.listen('floe://open-project', (e) => load(e.payload));
+      const loadData = async (metas) => { if (metas && metas.length && onData) onData(await readAll(metas)); };
+      T.event.listen('floe://open-project', (e) => load(e.payload).catch((err) => console.warn('open failed', err)));
+      T.event.listen('floe://open-data', (e) => loadData(e.payload).catch((err) => console.warn('open failed', err)));
+      inv('take_launch_files').then(async (r) => { if (!r) return; await load(r.project); await loadData(r.data); }).catch(() => {});
       return;
     }
     if (!self.launchQueue || typeof self.launchQueue.setConsumer !== 'function') return;
@@ -310,11 +333,17 @@
     document.body.classList.add(native ? 'native' : 'web', 'os-' + P.os);
     if (fsa) document.body.classList.add('fsa');
     if (P.touch) document.body.classList.add('touch');
-    if (native) { try { P.info = Object.assign(P.info, await inv('app_info')); } catch (e) { } return; }
+    if (native) {
+      try { P.info = Object.assign(P.info, await inv('app_info')); } catch (e) { }
+      const pt = document.getElementById('privacy-text');
+      if (pt) pt.textContent = 'Everything runs on this computer. Files are read from disk, never uploaded.';
+      return;
+    }
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || /^(localhost|127\.0\.0\.1)$/.test(location.hostname))) {
       navigator.serviceWorker.register('sw.js').then((reg) => { P.sw = reg; }).catch(() => {});
     }
   };
   P.kbd = (s) => (!s ? s : P.os === 'mac' ? s.replace(/Ctrl\+/g, '⌘').replace(/Shift\+/g, '⇧').replace(/Alt\+/g, '⌥') : s);
-  P.menuOwns = (e) => native && (e.ctrlKey || e.metaKey) && ['n', 'o', 's', 'e', ','].includes(e.key.toLowerCase()) || (native && (e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') || (native && e.key === 'F5');
+  const menuKeys = native && P.os === 'mac';
+  P.menuOwns = (e) => menuKeys && ((e.metaKey && ['n', 'o', 's', 'e', ',', 'q'].includes((e.key || '').toLowerCase())) || (e.metaKey && e.shiftKey && (e.key || '').toLowerCase() === 'f') || e.key === 'F5');
 })();

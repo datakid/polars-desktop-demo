@@ -14,6 +14,7 @@
     try { info = (await UI.Engine.call('inspectFile', { fileId })).info; }
     catch (e) { loading.close(); return UI.toast(e.message, 'err'); }
     loading.close();
+    if (info.kind === 'parquet' || info.kind === 'arrow') return columnarNavigator(f, info, opts);
     if (info.kind === 'csv' || info.kind === 'json') return csvNavigator(f, info, opts);
 
     const tree = h('div.nav-tree');
@@ -134,6 +135,20 @@
     return p.length >= 2 ? p + '*' : '*';
   }
 
+  function columnarNavigator(f, info, opts) {
+    const label = info.kind === 'parquet' ? 'Parquet' : 'Arrow IPC';
+    const rows = (info.preview || []).slice(1, 31);
+    const body = h('div.col',
+      h('div.callout.ok', UI.icon('fa-check'), h('div', h('b', label), ' · ', h('b', PQ.fmtInt(info.rows)), ' rows · ', h('b', info.cols), ' typed columns', info.meta && info.meta.rowGroups ? ' · ' + info.meta.rowGroups + ' row group' + (info.meta.rowGroups > 1 ? 's' : '') : '', '. Types come from the file, no inference needed.')),
+      UI.miniTable(info.schema, rows, { maxHeight: '360px' }));
+    UI.modal({
+      title: f.name, icon: info.kind === 'parquet' ? 'fa-cubes' : 'fa-cube', size: 'wide', body, okLabel: opts.replaceSourceOf ? 'Replace source' : 'Load',
+      onOk: async () => {
+        const source = { kind: 'file', fileId: f.id, fileName: f.name, format: info.kind };
+        await UI.App.createQueryFromSource(source, f.name.replace(/\.\w+$/, ''), null, opts.replaceSourceOf);
+      },
+    });
+  }
   function csvNavigator(f, info, opts) {
     const d = W.select([[',', 'Comma ,'], [';', 'Semicolon ;'], ['\t', 'Tab'], ['|', 'Pipe |']], info.delimiter || ',');
     const loc = W.select(Object.keys(PQ.LOCALES).map((k) => [k, PQ.LOCALES[k].label]), info.locale || Store.project.settings.locale);
@@ -383,7 +398,7 @@
     UI.modal({
       title: 'Settings',
       body: h('div.col', h('div.grid-3', W.field('Preview rows', rows), W.field('Locale', loc), W.field('Theme', theme)),
-        PQ.Platform.native ? h('div.field', h('label', 'Engine'), h('label.check', native, N.ready ? 'Polars ' + (N.info.polars || '') : 'Polars (not installed)'), h('div.help', 'Unsupported steps run on the built-in engine.')) : null,
+        PQ.Platform.native && N.ready ? h('div.field', h('label', 'Engine'), h('label.check', native, N.ready ? 'Polars ' + (N.info.polars || '') : 'Polars (not installed)'), h('div.help', 'Unsupported steps run on the built-in engine.')) : null,
         h('div.field', h('label', 'Workspace files (stored in this browser)'), h('div.row', { style: { flexWrap: 'wrap' } }, h('button.btn.sm', { on: { click: async () => { await UI.Engine.callWorker('clearCache'); UI.toast('Cache cleared', 'ok'); UI.App.refresh(); } } }, 'Clear cache'), !PQ.Platform.native ? h('button.btn.sm', { on: { click: async () => { const ok = await PQ.Platform.persist(); UI.toast(ok ? 'Storage marked persistent' : 'The browser declined persistent storage', ok ? 'ok' : 'warn'); } } }, 'Keep data persistent') : null, h('button.btn.sm.danger', { on: { click: async () => { if (await UI.confirm('Remove all files?', 'Queries keep their steps.', 'Remove')) { for (const f of UI.App.files) { await UI.Engine.call('removeFile', { id: f.id }); PQ.Platform.fileHandles.del(f.id); } await UI.App.reloadFiles(); UI.App.refresh(); } } } }, 'Remove all files')), store),
         !PQ.Platform.native ? h('div.help', PQ.Platform.fsa ? 'Files opened from disk stay linked: Refresh re-reads them when they change.' : 'This browser can’t keep links to files on disk. Re-add a file to update it.') : null),
       okLabel: 'Save',
@@ -410,8 +425,8 @@
 
   /* ================================ CLI dialog ================================ */
   UI.cliDialog = function () {
-    if (!PQ.Platform.native) return UI.modal({
-      title: 'Automate outside the browser', icon: 'fa-terminal', size: 'wide',
+    if (!PQ.Platform.native || !(UI.NativeEngine.ready && UI.NativeEngine.info && UI.NativeEngine.info.cli)) return UI.modal({
+      title: 'Automate', icon: 'fa-terminal', size: 'wide',
       body: h('div.col', h('p', { style: { margin: 0 } }, 'Export the project as a standalone Polars script. It runs anywhere Python runs — cron, CI or a notebook.'), h('pre.code', 'pip install polars fastexcel xlsxwriter\npython ' + PQ.snake(Store.project.name) + '.py')),
       okLabel: 'Export Python…', onOk: () => { setTimeout(() => UI.pythonDialog(Store.ui.activeQid), 30); },
     });
@@ -437,13 +452,13 @@
         h('span.env-badge' + (PQ.Platform.native ? '.native' : ''), PQ.Platform.native ? 'Desktop' : 'Web'),
         i.tauri ? h('span.env-badge', 'Tauri ' + i.tauri) : null,
         h('span.env-badge', eng.ready ? 'Polars ' + (eng.polars || '') : 'Built-in engine')),
-      !PQ.Platform.native ? h('p.faint', { style: { fontSize: '12px', maxWidth: '380px', margin: '10px auto 0' } }, 'Your data never leaves this device. Files are processed in your browser and kept in its local storage.') : null) });
+      h('p.faint', { style: { fontSize: '12px', maxWidth: '380px', margin: '10px auto 0' } }, PQ.Platform.native ? 'Your data never leaves this device. Files are read from disk and processed locally.' : 'Your data never leaves this device. Files are processed in your browser and kept in its local storage.')) });
   };
 
   /* ================================ Shortcuts ================================ */
   UI.shortcutsDialog = function () {
     const mac = PQ.Platform.os === 'mac';
-    const rows = [['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+Enter', 'Apply dialog'], ['Ctrl+Space', 'Autocomplete'], ['Ctrl+S', 'Save'], ['Ctrl+Shift+S', 'Save as'], ['Ctrl+O', 'Open project'], ['Alt+N', 'New project'], ['Ctrl+Shift+F', 'Full data'], ['Ctrl+V', 'Paste a table as a new query'], ['Esc', 'Cancel query'], ['Delete', 'Remove columns'], ['Ctrl+click / Shift+click', 'Multi-select'], ['Ctrl+C', 'Copy cell'], ['Alt+↑ / Alt+↓', 'Previous / next step'], ['F2', 'Rename query']];
+    const rows = [['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+Enter', 'Apply dialog'], ['Ctrl+Space', 'Autocomplete'], ['Ctrl+S', 'Save'], ['Ctrl+Shift+S', 'Save as'], ['Ctrl+O', 'Open project'], ['Alt+N', 'New project'], ['Ctrl+Shift+F', 'Full data'], ['Ctrl+V', 'Paste a table as a new query'], ['Ctrl+K', 'Command palette'], ['Esc', 'Cancel query'], ['Delete', 'Remove columns'], ['Ctrl+click / Shift+click', 'Multi-select'], ['Ctrl+C', 'Copy cell'], ['Alt+↑ / Alt+↓', 'Previous / next step'], ['F2', 'Rename query']];
     const key = (x) => (mac ? { Ctrl: '⌘', Shift: '⇧', Alt: '⌥', Enter: '↩' }[x] || x : x);
     UI.modal({ title: 'Keyboard shortcuts', icon: 'fa-keyboard', body: h('table.shortcuts', rows.map((r) => h('tr', h('td', r[0].split(' / ').map((k, i) => [i ? ' / ' : '', k.split('+').map((x, j) => [j && !mac ? '+' : '', h('kbd', key(x))])])), h('td', r[1])))) });
   };

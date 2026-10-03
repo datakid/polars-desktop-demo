@@ -1,0 +1,37 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8"><style>html,body{margin:0;height:100%}iframe{border:0;width:100%;height:100%}</style></head><body>
+<iframe id="f" src="index.html?demo"></iframe>
+<script>
+const f = document.getElementById('f');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(fn, ms) { const t0 = Date.now(); while (Date.now() - t0 < (ms || 20000)) { try { const v = fn(); if (v) return v; } catch (e) { } await sleep(150); } throw new Error('timeout'); }
+f.addEventListener('load', async () => {
+  const w = f.contentWindow, UI = () => w.PQ.UI;
+  try {
+    await until(() => UI().App.result && UI().App.result.fp);
+    console.log('E2E fp ok', UI().App.result.n);
+    UI().palette();
+    const inp = w.document.querySelector('.palette-input');
+    inp.value = 'clus'; inp.dispatchEvent(new w.Event('input'));
+    console.log('E2E palette top', w.document.querySelector('.palette-i.on').textContent);
+    inp.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape' }));
+    UI().Store.setUI({ rightTab: 'overview' }); UI().App.renderRight();
+    await until(() => w.document.querySelector('.ov-ring'));
+    console.log('E2E overview score', w.document.querySelector('.ov-ring').textContent, 'cols', w.document.querySelectorAll('.ov-cols li').length);
+    UI().App.stepDialog('ClusterValues', { col: 'status', method: 'fingerprint', pairs: [] });
+    await until(() => w.document.querySelector('.cluster') || w.document.querySelector('.cluster-list .callout'));
+    console.log('E2E clusters', w.document.querySelectorAll('.cluster').length);
+    w.document.querySelector('.modal .btn.primary').click();
+    await sleep(1500);
+    const q = UI().Store.query();
+    console.log('E2E last step', q.steps[q.steps.length - 1].kind.type);
+    UI().App.stepDialog('Validate', { rules: [{ col: 'unit_price', check: 'range', arg: '0', arg2: '50' }], action: 'flag', name: 'Issues' });
+    await until(() => w.document.querySelector('.live-preview .mini-table'));
+    console.log('E2E validate preview', w.document.querySelector('.lp-h').textContent);
+    w.document.querySelector('.modal .btn.primary').click();
+    await until(() => UI().App.result && UI().App.result.schema.some((c) => c.name === 'Issues'));
+    const r = await UI().Engine.call('exportQuery', { qid: UI().Store.ui.activeQid, format: 'parquet' });
+    console.log('E2E parquet export rows', r.rows, 'bytes', r.data.byteLength);
+    console.log('E2E DONE');
+  } catch (e) { console.log('E2E FAIL', e.message, e.stack); }
+});
+</script></body></html>

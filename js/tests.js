@@ -163,6 +163,114 @@
     out.insertAdjacentHTML('beforeend', '<li class="faint">   60,000 rows in ' + Math.round(ms) + ' ms</li>');
   });
 
+  async function atest(name, fn) {
+    try { await fn(); pass++; out.insertAdjacentHTML('beforeend', '<li class="ok">✓ ' + PQ.esc(name) + '</li>'); }
+    catch (e) { fail++; out.insertAdjacentHTML('beforeend', '<li class="bad">✗ ' + PQ.esc(name) + '<pre>' + PQ.esc(e.stack || e.message) + '</pre></li>'); console.error('FAIL', name, e.message); }
+  }
+  const typed = () => T.fromRows(['id', 'name', 'price', 'ok', 'day'], [[1, 'Ana', 1.5, true, new Date(Date.UTC(2026, 0, 2))], [2, null, null, false, null], [3, 'Zoë', 3.25, null, new Date(Date.UTC(2026, 5, 30))]], ['int', 'text', 'number', 'bool', 'date']);
+  const roundtrip = (t2) => [t2.names, t2.cols.map((c) => c.type), t2.toRows().map((r) => r.map((v) => (v instanceof Date ? PQ.fmtDate(v) : v)))];
+
+  /* ---------- v0.4: columnar formats ---------- */
+  await atest('Parquet: write → read round-trip keeps names, types, nulls', async () => {
+    const buf = await PQ.IO.toParquet(typed());
+    const t2 = await PQ.IO.decodeParquet({ id: 'pq1', name: 'x.parquet', mtime: 1, size: buf.byteLength, buf });
+    assertEq(roundtrip(t2), roundtrip(typed()));
+  });
+  await atest('Parquet: readFile honours the preview row limit', async () => {
+    const buf = await PQ.IO.toParquet(typed());
+    const rec = { id: 'pq2', name: 'y.parquet', mtime: 1, size: buf.byteLength, buf };
+    PQ.Files.set(rec.id, rec);
+    await PQ.IO.prepare();
+    const t2 = PQ.IO.readFile(rec, {}, 2);
+    assert(t2.n === 2 && t2.meta.truncated, 'rows ' + t2.n);
+    PQ.Files.delete(rec.id);
+  });
+  test('Arrow IPC: write → read round-trip', () => {
+    const buf = PQ.IO.toArrow(typed());
+    const t2 = PQ.IO.decodeArrow({ id: 'ar1', name: 'x.arrow', mtime: 1, size: buf.byteLength, buf });
+    assertEq(roundtrip(t2), roundtrip(typed()));
+  });
+  test('fileKind recognises parquet / arrow / feather', () => assertEq(['a.parquet', 'b.arrow', 'c.feather', 'd.csv'].map(PQ.IO.fileKind), ['parquet', 'arrow', 'arrow', 'csv']));
+
+  /* ---------- v0.4: new steps ---------- */
+  test('Sort: locale-aware, numeric-aware text, stable, nulls last', () => {
+    const t = T.fromRows(['s', 'i'], [['item10', 1], ['Item2', 2], [null, 3], ['élan', 4], ['eagle', 5], ['item2', 6]], ['text', 'int']);
+    assertEq(col(E.X.Sort(t, { by: [{ col: 's' }] }), 'i'), [5, 4, 2, 6, 1, 3]);
+    assertEq(col(E.X.Sort(t, { by: [{ col: 's', desc: true }] }), 'i'), [1, 2, 6, 4, 5, 3]);
+  });
+  test('Sort: 200k rows < 1.5s', () => {
+    const n = 200000, a = new Array(n), b = new Array(n);
+    let s = 7; for (let i = 0; i < n; i++) { s = (s * 16807) % 2147483647; a[i] = 'k' + (s % 5000); b[i] = s % 997; }
+    const t = new T([{ name: 'a', type: 'text' }, { name: 'b', type: 'int' }], [a, b], n);
+    const t0 = performance.now(); const r = E.X.Sort(t, { by: [{ col: 'a' }, { col: 'b', desc: true }] }); const ms = performance.now() - t0;
+    assert(r.n === n && ms < 1500, ms + 'ms');
+    out.insertAdjacentHTML('beforeend', '<li class="faint">   200,000-row two-key sort in ' + Math.round(ms) + ' ms</li>');
+  });
+  test('Sample: deterministic by seed, keeps order, n and percent', () => {
+    const t = T.fromRows(['x'], Array.from({ length: 100 }, (_, i) => [i]), ['int']);
+    const a = col(E.X.Sample(t, { mode: 'n', n: 10, seed: 1 }), 'x'), b = col(E.X.Sample(t, { mode: 'n', n: 10, seed: 1 }), 'x');
+    assertEq(a, b); assert(a.length === 10 && a.every((v, i) => !i || v > a[i - 1]), JSON.stringify(a));
+    assert(E.X.Sample(t, { mode: 'percent', percent: 25 }).n === 25);
+  });
+  test('Fingerprint: case, accents, punctuation, word order', () => assertEq(['Acme, Inc.', 'acme inc', 'Inc ACME', 'Société Générale', 'societe generale'].map(PQ.fingerprint), ['acme inc', 'acme inc', 'acme inc', 'generale societe', 'generale societe']));
+  test('ClusterValues: clusters find variants, step merges to most frequent', () => {
+    const t = T.fromRows(['c'], [['Berlin'], ['Berlin'], ['berlin '], ['BERLIN'], ['Lisbon'], ['lisbon'], ['Lisbon'], ['Osaka']], ['text']);
+    const cl = E.clusters(t, 'c', 'fingerprint');
+    assertEq(cl.map((c) => c.canonical), ['Berlin', 'Lisbon']);
+    assertEq(col(E.X.ClusterValues(t, { col: 'c', pairs: E.clusterPairs(cl) }), 'c'), ['Berlin', 'Berlin', 'Berlin', 'Berlin', 'Lisbon', 'Lisbon', 'Lisbon', 'Osaka']);
+    assertEq(col(E.X.ClusterValues(t, { col: 'c', auto: true }), 'c').filter((v) => v === 'Berlin').length, 4);
+  });
+  test('Validate: flag / keep_valid / keep_invalid / fail with fixes', () => {
+    const t = T.fromRows(['id', 'email', 'age'], [[1, 'a@x.io', 30], [2, 'bad', 200], [2, null, 40]], ['int', 'text', 'int']);
+    const rules = [{ col: 'id', check: 'unique' }, { col: 'email', check: 'regex', arg: '^[^@]+@[^@]+$' }, { col: 'age', check: 'range', arg: '0', arg2: '120' }, { col: 'email', check: 'not_null' }];
+    const f = E.X.Validate(t, { rules, action: 'flag' });
+    assertEq(col(f, 'Issues').map((x) => (x ? x.split('; ').length : 0)), [0, 3, 2]);
+    assert(E.X.Validate(t, { rules, action: 'keep_valid' }).n === 1 && E.X.Validate(t, { rules, action: 'keep_invalid' }).n === 2);
+    let err = null; try { E.X.Validate(t, { rules, action: 'fail' }); } catch (e) { err = e; }
+    assert(err && /2 rows fail/.test(err.message) && err.fixes.length === 2, err && err.message);
+  });
+  test('Formula: regex + diacritics + clamp', () => {
+    const t = T.fromRows(['s'], [['AB-123 Chloé'], ['xx']], ['text']);
+    assertEq(PQ.Formula.evaluate('Text.RegexMatch([s], "^[A-Z]{2}-\\d+")', t).values, [true, false]);
+    assertEq(PQ.Formula.evaluate('Text.RegexExtract([s], "-(\\d+)", 1)', t).values, ['123', null]);
+    assertEq(PQ.Formula.evaluate('Text.RemoveDiacritics(Text.RegexReplace([s], "\\d", "#"))', t).values, ['AB-### Chloe', 'xx']);
+    assertEq(PQ.Formula.evaluate('Number.Clamp(Text.Length([s]) * 10, 0, 100)', t).values, [100, 20]);
+  });
+  test('Overview: quality score, duplicates, whitespace, per-column stats', () => {
+    const t = T.fromRows(['a', 'b'], [['x ', 1], ['x ', 1], [null, 2], ['y', new PQ.CellError('bad')]], ['text', 'int']);
+    const o = E.overview(t);
+    assert(o.duplicateRows === 1 && o.errors === 1 && o.empty === 1 && o.whitespace === 2 && o.score < 100 && o.score > 0, JSON.stringify(o));
+    assertEq([o.columns[0].distinct, o.columns[0].top, o.columns[0].topCount], [2, 'x ', 2]);
+  });
+  test('codegen: new steps + parquet/arrow sources and sinks are emitted', () => {
+    const p = { name: 'N', settings: { previewRows: 1000, locale: 'en-US' }, params: [], queries: [
+      { id: 'a', name: 'A', load: { target: 'parquet' }, steps: [{ id: 's', name: 'Source', kind: { type: 'Source', source: { kind: 'file', fileName: 'in.parquet' } } },
+        { id: 'v', name: 'Validate', kind: { type: 'Validate', rules: [{ col: 'x', check: 'regex', arg: '^\\d+$' }], action: 'fail' } },
+        { id: 'c', name: 'ClusterValues', kind: { type: 'ClusterValues', col: 'x', pairs: [['a ', 'a']] } },
+        { id: 'm', name: 'Sample', kind: { type: 'Sample', mode: 'n', n: 5, seed: 3 } }] },
+      { id: 'b', name: 'B', load: { target: 'arrow' }, steps: [{ id: 's', name: 'Source', kind: { type: 'Source', source: { kind: 'file', fileName: 'in.feather' } } }] }] };
+    const py = PQ.Steps.toPython(p);
+    ['pl.scan_parquet', 'pl.scan_ipc', 'def assert_valid', '.replace({"a ": "a"})', '.sample(n=5, seed=3)', 'sink_parquet', 'sink_ipc'].forEach((s) => assert(py.includes(s), 'missing ' + s));
+  });
+  await atest('host: overview + clusters ops, cluster suggestion appears', async () => {
+    const p = { settings: { previewRows: 1000, locale: 'en-US' }, params: [], queries: [{ id: 'c', name: 'C', steps: [{ id: 's', name: 'Source', kind: { type: 'Source', source: { kind: 'blank', columns: ['city', 'n'], rows: [['Berlin', '1'], ['berlin', '2'], ['Berlin', '3'], ['Lisbon', '4']] } } }] }] };
+    E.setProject(p);
+    const r = await PQ.Host.handle({ op: 'evaluate', qid: 'c', mode: 'preview' });
+    assert(r.fp && r.suggestions.some((s) => s.id === 'cluster_city'), JSON.stringify(r.suggestions.map((s) => s.id)));
+    const o = await PQ.Host.handle({ op: 'overview', fp: r.fp });
+    assert(o.overview.rows === 4 && o.overview.columns.length === 2);
+    const c = await PQ.Host.handle({ op: 'clusters', qid: 'c', col: 'city' });
+    assertEq(c.clusters[0].canonical, 'Berlin');
+  });
+  await atest('host: export to parquet and arrow on full data', async () => {
+    const p = { settings: { previewRows: 2, locale: 'en-US' }, params: [], queries: [{ id: 'e', name: 'E', steps: [{ id: 's', name: 'Source', kind: { type: 'Source', source: { kind: 'blank', columns: ['a'], rows: [['1'], ['2'], ['3']] } } }] }] };
+    E.setProject(p);
+    for (const format of ['parquet', 'arrow']) {
+      const r = await PQ.Host.handle({ op: 'exportQuery', qid: 'e', format });
+      assert(r.rows === 3 && r.data.byteLength > 50, format);
+    }
+  });
+
   await new Promise((r) => setTimeout(r, 50));
   const sum = document.getElementById('sum');
   sum.textContent = pass + ' passed, ' + fail + ' failed';

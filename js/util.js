@@ -4,7 +4,8 @@
 (function () {
   const PQ = (self.PQ = self.PQ || {}); // `self` works both on the page and inside the engine Web Worker
   /** Product identity — the only place the name lives. */
-  PQ.BRAND = { name: 'Floe', tagline: 'Polars desktop', full: 'Floe — Polars desktop', ext: 'floe', cli: 'floe', id: 'dev.floe.desktop' };
+  PQ.BRAND = { name: 'Floe', tagline: 'Data preparation', full: 'Floe — data preparation', ext: 'floe', cli: 'floe', id: 'dev.floe.desktop' };
+  PQ.VERSION = '1.0.0';
 
   /* ---------- Per-cell errors (Polars has none; we add them, like the plan's error mask) ---------- */
   class CellError {
@@ -130,6 +131,16 @@
   /** Lenient number parse for messy spreadsheets: currency, %, (accounting negatives), thousands separators. */
   PQ.parseNumber = function (s, locale) {
     const loc = PQ.LOCALES[locale] || PQ.LOCALES['en-US'];
+    if (typeof s === 'string' && loc.dec === '.' && s.length) {
+      const c = s.charCodeAt(0);
+      if ((c >= 48 && c <= 57) || c === 45 || c === 46) {
+        const c1 = s.charCodeAt(1) | 32;
+        if (!(c === 48 && (c1 === 120 || c1 === 98 || c1 === 111))) {
+          const n = +s;
+          if (n === n && n !== Infinity && n !== -Infinity) return n;
+        }
+      }
+    }
     let t = String(s).trim();
     if (t === '') return null;
     let neg = false, pct = false;
@@ -223,6 +234,50 @@
         if (type === 'date') return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
         return d;
       }
+    }
+    return v;
+  };
+
+  PQ.castColumn = function (src, type, locale) {
+    const n = src.length, out = new Array(n);
+    let errors = 0, first = -1;
+    const cast = PQ.cast;
+    if (type === 'date' || type === 'datetime' || type === 'bool') {
+      const memo = new Map();
+      for (let i = 0; i < n; i++) {
+        const v = src[i];
+        let c;
+        if (typeof v === 'string') {
+          c = memo.get(v);
+          if (c === undefined) { c = cast(v, type, locale); if (memo.size < 250000) memo.set(v, c); }
+        } else c = cast(v, type, locale);
+        out[i] = c;
+        if (c instanceof CellError && !(v instanceof CellError)) { errors++; if (first < 0) first = i; }
+      }
+    } else {
+      for (let i = 0; i < n; i++) {
+        const v = src[i];
+        const c = typeof v === 'number' && type === 'number' && v - v === 0 ? v : cast(v, type, locale);
+        out[i] = c;
+        if (c instanceof CellError && !(v instanceof CellError)) { errors++; if (first < 0) first = i; }
+      }
+    }
+    return { values: out, errors, first };
+  };
+
+  PQ.collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+  const LIBS = {
+    xlsx: ['xlsx.full.min.js', () => (typeof XLSX !== 'undefined' ? XLSX : undefined)],
+    alasql: ['alasql.min.js', () => (typeof alasql !== 'undefined' ? alasql : undefined)],
+    arrow: ['arrow.es2015.min.js', () => (typeof Arrow !== 'undefined' ? Arrow : undefined)],
+  };
+  PQ.lib = function (name) {
+    const [file, get] = LIBS[name];
+    let v = get();
+    if (v === undefined && typeof importScripts === 'function' && typeof document === 'undefined') {
+      try { importScripts('../vendor/' + file); } catch (e) { console.warn('Could not load ' + file, e); }
+      v = get();
     }
     return v;
   };

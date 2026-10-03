@@ -1,6 +1,11 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Floe demo</title>
-<script>
-['floe.project.v1', 'floe.ui', 'floe.filePath', 'floe.fileName', 'floe.savedHash', 'pqx.project.v1', 'pqx.ui'].forEach((k) => { try { localStorage.removeItem(k); } catch (e) { } });
-location.replace('index.html?demo' + (location.search ? '&' + location.search.slice(1) : ''));
-</script></head><body>Loading demo…</body></html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Floe demo</title>
+  <link rel="icon" href="images/floe-icon.svg" type="image/svg+xml">
+  <script src="js/demo.js"></script>
+</head>
+<body>Loading demo…</body>
+</html>

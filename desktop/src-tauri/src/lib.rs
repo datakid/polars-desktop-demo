@@ -1,89 +1,260 @@
-//! Floe — Polars desktop. Tauri 2 shell.
-//!
-//! The UI (repo root: index.html, css/, js/) is staged into ../dist and served from the app bundle.
-//! Everything runs offline. The UI's in-app engine runs in a Web Worker (cancel = kill + restart);
-//! the native Polars worker process (desktop/crates/pq-worker) plugs in behind the same message protocol.
-//!
-//! Security model: the webview gets NO generic filesystem permission. Every file read/write goes through
-//! the commands below, which only accept paths the user explicitly granted — picked in a native dialog,
-//! dropped on the window, or opened via file association / command line.
-
 use serde::Serialize;
+use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 use tauri::ipc::{InvokeBody, Request, Response};
-use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent};
-use tauri_plugin_dialog::DialogExt;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::{DialogExt, FilePath};
+use tokio::sync::oneshot;
 
-mod engine;
-mod menu;
+const DATA_EXT: &[&str] = &[
+    "csv", "tsv", "txt", "xlsx", "xlsm", "xlsb", "xls", "ods", "json", "ndjson", "jsonl", "parquet", "pq",
+    "arrow", "feather", "ipc",
+];
+const PROJECT_EXT: &[&str] = &["floe", "pqproj"];
+const MAX_FILES: usize = 5000;
+const MAX_DEPTH: usize = 4;
+const MAX_GRANTS: usize = 20000;
 
-const DATA_EXT: &[&str] = &["csv", "tsv", "txt", "xlsx", "xlsm", "xlsb", "xls", "ods", "json", "ndjson", "jsonl"];
-const PROJECT_EXT: &[&str] = &["floe", "json"];
+#[derive(Serialize, Clone)]
+struct FileMeta {
+    name: String,
+    path: String,
+    size: u64,
+    mtime: f64,
+    folder: String,
+}
 
-/// Paths the user has granted this session.
-#[derive(Default)]
-pub struct Grants {
-    paths: Mutex<HashSet<PathBuf>>,
-    launch: Mutex<Option<PathBuf>>,
+#[derive(Serialize, Clone, Default)]
+struct LaunchFiles {
+    project: Option<FileMeta>,
+    data: Vec<FileMeta>,
+}
+
+impl LaunchFiles {
+    fn is_empty(&self) -> bool {
+        self.project.is_none() && self.data.is_empty()
+    }
+}
+
+#[derive(Serialize)]
+struct FolderPick {
+    folder: String,
+    files: Vec<FileMeta>,
+}
+
+#[derive(Serialize)]
+struct Stat {
+    size: u64,
+    mtime: f64,
+}
+
+struct Grants {
+    set: Mutex<HashSet<PathBuf>>,
+    store: Option<PathBuf>,
 }
 
 impl Grants {
-    fn grant(&self, p: &Path) {
-        let mut g = self.paths.lock().unwrap();
-        g.insert(p.to_path_buf());
-        if let Ok(c) = std::fs::canonicalize(p) { g.insert(c); }
+    fn load(store: Option<PathBuf>) -> Self {
+        let set = store
+            .as_ref()
+            .and_then(|p| fs::read(p).ok())
+            .and_then(|b| serde_json::from_slice::<Vec<PathBuf>>(&b).ok())
+            .map(|v| v.into_iter().collect())
+            .unwrap_or_default();
+        Grants { set: Mutex::new(set), store }
     }
-    pub fn check(&self, p: &Path) -> Result<PathBuf, String> {
-        let g = self.paths.lock().unwrap();
-        if g.contains(p) || std::fs::canonicalize(p).map(|c| g.contains(&c)).unwrap_or(false) {
-            Ok(p.to_path_buf())
-        } else {
-            Err(format!("Floe has no permission for {} — pick it again from a dialog", p.display()))
+    fn add(&self, p: &Path) {
+        let mut s = self.set.lock().unwrap_or_else(|e| e.into_inner());
+        if s.len() > MAX_GRANTS {
+            s.clear();
+        }
+        s.insert(p.to_path_buf());
+        if let Ok(c) = fs::canonicalize(p) {
+            s.insert(c);
+        }
+    }
+    fn allowed(&self, p: &Path) -> bool {
+        let s = self.set.lock().unwrap_or_else(|e| e.into_inner());
+        s.contains(p) || fs::canonicalize(p).map(|c| s.contains(&c)).unwrap_or(false)
+    }
+    fn save(&self) {
+        if let Some(store) = &self.store {
+            let v: Vec<PathBuf> = self.set.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect();
+            if let Ok(b) = serde_json::to_vec(&v) {
+                let _ = fs::write(store, b);
+            }
         }
     }
 }
 
-#[derive(Serialize, Clone)]
-struct FileMeta { name: String, path: String, size: u64, mtime: u64, folder: String }
-
-#[derive(Serialize)]
-struct FolderPick { folder: String, files: Vec<FileMeta> }
-
-fn ext_in(p: &Path, list: &[&str]) -> bool {
-    p.extension().and_then(|e| e.to_str()).map(|e| list.contains(&e.to_ascii_lowercase().as_str())).unwrap_or(false)
+struct Launch {
+    pending: Mutex<LaunchFiles>,
+    ready: Mutex<bool>,
 }
 
-fn file_meta(p: &Path, folder: &str) -> Option<FileMeta> {
-    let m = std::fs::metadata(p).ok()?;
-    if !m.is_file() { return None; }
+fn ext_of(p: &Path) -> String {
+    p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
+}
+fn is_data(p: &Path) -> bool {
+    DATA_EXT.contains(&ext_of(p).as_str())
+}
+fn is_project(p: &Path) -> bool {
+    PROJECT_EXT.contains(&ext_of(p).as_str())
+}
+
+fn meta(p: &Path, folder: &str) -> Option<FileMeta> {
+    let md = fs::metadata(p).ok()?;
+    if !md.is_file() {
+        return None;
+    }
     Some(FileMeta {
         name: p.file_name()?.to_string_lossy().into_owned(),
         path: p.to_string_lossy().into_owned(),
-        size: m.len(),
-        mtime: m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0),
+        size: md.len(),
+        mtime: mtime_ms(&md),
         folder: folder.to_string(),
     })
 }
 
-/// Data files directly inside a folder (sorted), granted as we go.
-fn folder_files(grants: &Grants, dir: &Path) -> (String, Vec<FileMeta>) {
-    let folder = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "folder".into());
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir).map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect()).unwrap_or_default();
-    entries.sort();
-    let files = entries.into_iter().filter(|p| p.is_file() && ext_in(p, DATA_EXT)).filter_map(|p| { grants.grant(&p); file_meta(&p, &folder) }).collect();
-    (folder, files)
+fn mtime_ms(md: &fs::Metadata) -> f64 {
+    md.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0)
+}
+
+fn walk(dir: &Path, folder: &str, depth: usize, out: &mut Vec<FileMeta>) {
+    if out.len() >= MAX_FILES {
+        return;
+    }
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    let mut entries: Vec<_> = rd.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        if out.len() >= MAX_FILES {
+            return;
+        }
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        let p = e.path();
+        let Ok(ft) = e.file_type() else { continue };
+        if ft.is_dir() {
+            if depth < MAX_DEPTH {
+                walk(&p, folder, depth + 1, out);
+            }
+        } else if ft.is_file() && is_data(&p) {
+            if let Some(m) = meta(&p, folder) {
+                out.push(m);
+            }
+        }
+    }
+}
+
+fn classify(paths: &[PathBuf], grants: &Grants) -> LaunchFiles {
+    let mut lf = LaunchFiles::default();
+    for p in paths {
+        if p.is_dir() {
+            let folder = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "folder".into());
+            let mut files = Vec::new();
+            walk(p, &folder, 0, &mut files);
+            for f in &files {
+                grants.add(Path::new(&f.path));
+            }
+            lf.data.extend(files);
+        } else if is_project(p) {
+            if lf.project.is_none() {
+                if let Some(m) = meta(p, "") {
+                    grants.add(p);
+                    lf.project = Some(m);
+                }
+            }
+        } else if is_data(p) {
+            if let Some(m) = meta(p, "") {
+                grants.add(p);
+                lf.data.push(m);
+            }
+        }
+    }
+    grants.save();
+    lf
+}
+
+fn paths_from_args<I: IntoIterator<Item = String>>(args: I, cwd: Option<&Path>) -> Vec<PathBuf> {
+    args.into_iter()
+        .filter(|a| !a.starts_with('-'))
+        .map(PathBuf::from)
+        .map(|p| match cwd {
+            Some(c) if p.is_relative() => c.join(p),
+            _ => p,
+        })
+        .filter(|p| p.exists())
+        .collect()
+}
+
+fn emit_launch(app: &AppHandle, lf: LaunchFiles) {
+    if let Some(p) = lf.project {
+        let _ = app.emit("floe://open-project", p);
+    }
+    if !lf.data.is_empty() {
+        let _ = app.emit("floe://open-data", lf.data);
+    }
+}
+
+fn deliver(app: &AppHandle, paths: Vec<PathBuf>) {
+    if paths.is_empty() {
+        return;
+    }
+    let (Some(grants), Some(launch)) = (app.try_state::<Grants>(), app.try_state::<Launch>()) else { return };
+    let lf = classify(&paths, &grants);
+    if lf.is_empty() {
+        return;
+    }
+    let ready = *launch.ready.lock().unwrap_or_else(|e| e.into_inner());
+    if ready {
+        emit_launch(app, lf);
+    } else {
+        let mut pending = launch.pending.lock().unwrap_or_else(|e| e.into_inner());
+        if lf.project.is_some() {
+            pending.project = lf.project;
+        }
+        pending.data.extend(lf.data);
+    }
+}
+
+fn focus_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
 }
 
 fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
+    let hex = |c: u8| -> Option<u8> {
+        match c {
+            b'0'..=b'9' => Some(c - b'0'),
+            b'a'..=b'f' => Some(c - b'a' + 10),
+            b'A'..=b'F' => Some(c - b'A' + 10),
+            _ => None,
+        }
+    };
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Some(v) = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) { out.push(v); i += 3; continue; }
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
         }
         out.push(b[i]);
         i += 1;
@@ -91,169 +262,364 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/* ─────────────────────────────── commands ─────────────────────────────── */
-
-#[tauri::command]
-async fn pick_files(app: AppHandle, grants: State<'_, Grants>, kind: String, multiple: bool) -> Result<Vec<FileMeta>, String> {
-    let dialog = if kind == "project" {
-        app.dialog().file().set_title("Open Floe project").add_filter("Floe project", PROJECT_EXT)
-    } else {
-        app.dialog().file().set_title("Open data").add_filter("Excel, CSV, JSON", DATA_EXT)
-    };
-    let picked: Vec<PathBuf> = if multiple {
-        dialog.blocking_pick_files().unwrap_or_default().into_iter().filter_map(|f| f.into_path().ok()).collect()
-    } else {
-        dialog.blocking_pick_file().and_then(|f| f.into_path().ok()).into_iter().collect()
-    };
-    Ok(picked.iter().filter_map(|p| { grants.grant(p); file_meta(p, "") }).collect())
+fn into_path(fp: FilePath) -> Option<PathBuf> {
+    fp.into_path().ok()
 }
 
 #[tauri::command]
-async fn pick_folder(app: AppHandle, grants: State<'_, Grants>) -> Result<Option<FolderPick>, String> {
-    let Some(dir) = app.dialog().file().set_title("Combine files from folder").blocking_pick_folder().and_then(|f| f.into_path().ok()) else { return Ok(None) };
-    let (folder, files) = folder_files(&grants, &dir);
-    Ok(Some(FolderPick { folder, files }))
-}
-
-#[tauri::command]
-async fn pick_save(app: AppHandle, grants: State<'_, Grants>, default_name: String) -> Result<Option<String>, String> {
-    let ext = Path::new(&default_name).extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
-    let mut dialog = app.dialog().file().set_title("Save").set_file_name(&default_name);
-    if !ext.is_empty() {
-        let label = match ext.as_str() { "floe" => "Floe project", "xlsx" => "Excel workbook", "csv" => "CSV", "py" => "Python script", _ => "File" };
-        dialog = dialog.add_filter(label, &[ext.as_str()]);
-    }
-    let Some(path) = dialog.blocking_save_file().and_then(|f| f.into_path().ok()) else { return Ok(None) };
-    grants.grant(&path);
-    Ok(Some(path.to_string_lossy().into_owned()))
-}
-
-/// Raw bytes back to JS (ArrayBuffer) — no JSON/base64 round trip.
-#[tauri::command]
-async fn read_file(grants: State<'_, Grants>, path: String) -> Result<Response, String> {
-    let p = grants.check(Path::new(&path))?;
-    let bytes = std::fs::read(&p).map_err(|e| format!("Could not read {}: {e}", p.display()))?;
-    Ok(Response::new(bytes))
-}
-
-/// Raw request body = file bytes; target path in the `x-path` header (percent-encoded). Atomic write.
-#[tauri::command]
-fn write_file(grants: State<'_, Grants>, request: Request<'_>) -> Result<(), String> {
-    let InvokeBody::Raw(bytes) = request.body() else { return Err("expected raw bytes".into()) };
-    let path = request.headers().get("x-path").and_then(|v| v.to_str().ok()).map(percent_decode).ok_or("missing x-path header")?;
-    let p = grants.check(Path::new(&path))?;
-    let tmp = p.with_extension(format!("{}.floe-tmp", p.extension().and_then(|e| e.to_str()).unwrap_or("")));
-    std::fs::write(&tmp, bytes).map_err(|e| format!("Could not write {}: {e}", p.display()))?;
-    std::fs::rename(&tmp, &p).map_err(|e| { let _ = std::fs::remove_file(&tmp); format!("Could not save {}: {e}", p.display()) })?;
-    Ok(())
-}
-
-#[tauri::command]
-fn file_stat(grants: State<'_, Grants>, path: String) -> Result<Option<FileMeta>, String> {
-    let p = grants.check(Path::new(&path))?;
-    Ok(file_meta(&p, ""))
-}
-
-/// A project passed on the command line or via file association, consumed once by the UI at boot.
-#[tauri::command]
-fn take_launch_file(grants: State<'_, Grants>) -> Option<FileMeta> {
-    grants.launch.lock().unwrap().take().and_then(|p| file_meta(&p, ""))
-}
-
-#[tauri::command]
-fn app_info(app: AppHandle) -> serde_json::Value {
-    serde_json::json!({
-        "name": app.package_info().name,
+fn app_info(app: AppHandle) -> Value {
+    json!({
+        "name": "Floe",
         "version": app.package_info().version.to_string(),
         "tauri": tauri::VERSION,
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
-        "nativeEngine": engine::installed(&app),
+        "nativeEngine": false
     })
 }
 
-fn open_project_path(app: &AppHandle, p: PathBuf) {
-    let grants = app.state::<Grants>();
-    grants.grant(&p);
-    *grants.launch.lock().unwrap() = Some(p.clone());
-    if let Some(m) = file_meta(&p, "") { let _ = app.emit("floe://open-project", m); }
+#[tauri::command]
+async fn pick_files(app: AppHandle, grants: State<'_, Grants>, kind: String, multiple: bool) -> Result<Vec<FileMeta>, String> {
+    let (tx, rx) = oneshot::channel::<Vec<FilePath>>();
+    let mut d = app.dialog().file();
+    if kind == "project" {
+        d = d.set_title("Open project").add_filter("Floe project", &["floe", "json", "pqproj"]);
+    } else {
+        d = d.set_title("Open data").add_filter("Data files", DATA_EXT);
+    }
+    if let Some(w) = app.get_webview_window("main") {
+        d = d.set_parent(&w);
+    }
+    if multiple {
+        d.pick_files(move |r| {
+            let _ = tx.send(r.unwrap_or_default());
+        });
+    } else {
+        d.pick_file(move |r| {
+            let _ = tx.send(r.map(|p| vec![p]).unwrap_or_default());
+        });
+    }
+    let picked = rx.await.map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for fp in picked {
+        if let Some(p) = into_path(fp) {
+            if let Some(m) = meta(&p, "") {
+                grants.add(&p);
+                out.push(m);
+            }
+        }
+    }
+    grants.save();
+    Ok(out)
 }
 
-/* ─────────────────────────────── app ─────────────────────────────── */
+#[tauri::command]
+async fn pick_folder(app: AppHandle, grants: State<'_, Grants>) -> Result<Option<FolderPick>, String> {
+    let (tx, rx) = oneshot::channel::<Option<FilePath>>();
+    let mut d = app.dialog().file().set_title("Open folder");
+    if let Some(w) = app.get_webview_window("main") {
+        d = d.set_parent(&w);
+    }
+    d.pick_folder(move |r| {
+        let _ = tx.send(r);
+    });
+    let Some(dir) = rx.await.map_err(|e| e.to_string())?.and_then(into_path) else { return Ok(None) };
+    let folder = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "folder".into());
+    let files = tauri::async_runtime::spawn_blocking(move || {
+        let mut files = Vec::new();
+        walk(&dir, &folder, 0, &mut files);
+        (folder, files)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    for f in &files.1 {
+        grants.add(Path::new(&f.path));
+    }
+    grants.save();
+    Ok(Some(FolderPick { folder: files.0, files: files.1 }))
+}
+
+#[tauri::command]
+async fn pick_save(app: AppHandle, grants: State<'_, Grants>, default_name: String) -> Result<Option<String>, String> {
+    let (tx, rx) = oneshot::channel::<Option<FilePath>>();
+    let ext = ext_of(Path::new(&default_name));
+    let mut d = app.dialog().file().set_title("Save").set_file_name(&default_name);
+    if !ext.is_empty() {
+        let label = ext.to_uppercase() + " file";
+        d = d.add_filter(label, &[ext.as_str()]);
+    }
+    if let Some(w) = app.get_webview_window("main") {
+        d = d.set_parent(&w);
+    }
+    d.save_file(move |r| {
+        let _ = tx.send(r);
+    });
+    let Some(p) = rx.await.map_err(|e| e.to_string())?.and_then(into_path) else { return Ok(None) };
+    grants.add(&p);
+    grants.save();
+    Ok(Some(p.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+async fn read_file(grants: State<'_, Grants>, path: String) -> Result<Response, String> {
+    let p = PathBuf::from(&path);
+    if !grants.allowed(&p) {
+        return Err(format!("Floe has no permission to read {path}. Open it again from the file picker."));
+    }
+    let bytes = tauri::async_runtime::spawn_blocking(move || fs::read(&p))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{path}: {e}"))?;
+    Ok(Response::new(bytes))
+}
+
+#[tauri::command]
+async fn write_file(request: Request<'_>, grants: State<'_, Grants>) -> Result<(), String> {
+    let path = request
+        .headers()
+        .get("x-path")
+        .and_then(|v| v.to_str().ok())
+        .map(percent_decode)
+        .ok_or_else(|| "write_file: missing x-path header".to_string())?;
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("write_file: expected a binary body".into());
+    };
+    let p = PathBuf::from(&path);
+    if !grants.allowed(&p) {
+        return Err(format!("Floe has no permission to write {path}. Use Save As."));
+    }
+    let bytes = bytes.clone();
+    let target = p.clone();
+    tauri::async_runtime::spawn_blocking(move || -> std::io::Result<()> {
+        let dir = target.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+        let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
+        let tmp = dir.join(format!(".{name}.floe-tmp"));
+        fs::write(&tmp, &bytes)?;
+        match fs::rename(&tmp, &target) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                let r = fs::write(&target, &bytes);
+                let _ = fs::remove_file(&tmp);
+                r
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| format!("{path}: {e}"))?;
+    grants.add(&p);
+    grants.save();
+    Ok(())
+}
+
+#[tauri::command]
+fn file_stat(grants: State<'_, Grants>, path: String) -> Result<Option<Stat>, String> {
+    let p = PathBuf::from(&path);
+    if !grants.allowed(&p) {
+        return Err(format!("Floe has no permission to read {path}"));
+    }
+    match fs::metadata(&p) {
+        Ok(md) if md.is_file() => Ok(Some(Stat { size: md.len(), mtime: mtime_ms(&md) })),
+        _ => Ok(None),
+    }
+}
+
+#[tauri::command]
+fn take_launch_files(launch: State<'_, Launch>) -> LaunchFiles {
+    *launch.ready.lock().unwrap_or_else(|e| e.into_inner()) = true;
+    std::mem::take(&mut *launch.pending.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+#[tauri::command]
+fn engine_status() -> Value {
+    json!({ "available": false })
+}
+
+#[tauri::command]
+fn engine_cancel() {}
+
+#[cfg(target_os = "macos")]
+fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+    let item = |id: &str, text: &str, acc: Option<&str>| MenuItem::with_id(app, id.to_string(), text, true, acc);
+    let sep = || PredefinedMenuItem::separator(app);
+
+    let app_menu = Submenu::with_items(
+        app,
+        "Floe",
+        true,
+        &[
+            &item("help.about", "About Floe", None)?,
+            &sep()?,
+            &item("file.settings", "Settings…", Some("Cmd+,"))?,
+            &sep()?,
+            &PredefinedMenuItem::services(app, None)?,
+            &sep()?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::show_all(app, None)?,
+            &sep()?,
+            &item("app.quit", "Quit Floe", Some("Cmd+Q"))?,
+        ],
+    )?;
+    let file = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[
+            &item("file.new", "New Project", Some("Cmd+N"))?,
+            &item("file.open", "Open Project…", Some("Cmd+O"))?,
+            &sep()?,
+            &item("file.get_data", "Open Data…", None)?,
+            &item("file.folder", "Open Folder…", None)?,
+            &item("file.samples", "Load Sample Data", None)?,
+            &sep()?,
+            &item("file.save", "Save", Some("Cmd+S"))?,
+            &item("file.save_as", "Save As…", Some("Cmd+Shift+S"))?,
+            &sep()?,
+            &item("file.export_xlsx", "Export to Excel…", Some("Cmd+E"))?,
+            &item("file.export_csv", "Export to CSV…", None)?,
+            &item("file.export_python", "Export to Python…", None)?,
+            &sep()?,
+            &PredefinedMenuItem::close_window(app, None)?,
+        ],
+    )?;
+    let edit = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &item("edit.undo", "Undo Step", None)?,
+            &item("edit.redo", "Redo Step", None)?,
+            &sep()?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+    let query = Submenu::with_items(
+        app,
+        "Query",
+        true,
+        &[
+            &item("query.refresh", "Refresh", Some("F5"))?,
+            &item("query.refresh_all", "Refresh All Outputs", None)?,
+            &sep()?,
+            &item("query.preview", "Preview Rows", None)?,
+            &item("query.full", "Full Data", Some("Cmd+Shift+F"))?,
+            &sep()?,
+            &item("query.params", "Parameters…", None)?,
+            &item("query.deps", "Dependencies…", None)?,
+            &item("query.project_files", "Project Files…", None)?,
+        ],
+    )?;
+    let view = Submenu::with_items(
+        app,
+        "View",
+        true,
+        &[&item("view.theme", "Toggle Theme", None)?, &sep()?, &PredefinedMenuItem::fullscreen(app, None)?],
+    )?;
+    let window = Submenu::with_items(
+        app,
+        "Window",
+        true,
+        &[&PredefinedMenuItem::minimize(app, None)?, &PredefinedMenuItem::maximize(app, None)?],
+    )?;
+    let help = Submenu::with_items(
+        app,
+        "Help",
+        true,
+        &[&item("help.shortcuts", "Keyboard Shortcuts", None)?, &item("help.about", "About Floe", None)?],
+    )?;
+    Menu::with_items(app, &[&app_menu, &file, &edit, &query, &view, &window, &help])
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let paths = paths_from_args(argv.into_iter().skip(1), Some(Path::new(&cwd)));
+            deliver(app, paths);
+            focus_main(app);
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_dialog::init())
-        .manage(Grants::default())
-        .manage(engine::Engine::default())
-        .invoke_handler(tauri::generate_handler![
-            pick_files, pick_folder, pick_save, read_file, write_file, file_stat, take_launch_file, app_info,
-            engine::engine_status, engine::engine_call, engine::engine_page, engine::engine_cancel
-        ])
         .setup(|app| {
-            let handle = app.handle().clone();
-            app.set_menu(menu::build(&handle)?)?;
-            app.on_menu_event(|app, event| { let _ = app.emit("floe://menu", event.id().as_ref()); });
-            // `floe path/to/project.floe` (also how Windows/Linux file associations launch us)
-            if let Some(arg) = std::env::args().skip(1).find(|a| !a.starts_with('-')) {
-                let p = PathBuf::from(arg);
-                if p.is_file() && ext_in(&p, PROJECT_EXT) {
-                    let grants = handle.state::<Grants>();
-                    grants.grant(&p);
-                    *grants.launch.lock().unwrap() = Some(p);
-                }
+            let store = app.path().app_data_dir().ok().and_then(|d| {
+                fs::create_dir_all(&d).ok()?;
+                Some(d.join("granted-paths.json"))
+            });
+            app.manage(Grants::load(store));
+            app.manage(Launch { pending: Mutex::new(LaunchFiles::default()), ready: Mutex::new(false) });
+
+            #[cfg(target_os = "macos")]
+            {
+                let menu = build_menu(app.handle())?;
+                app.handle().set_menu(menu)?;
             }
+
+            let handle = app.handle().clone();
+            let initial = paths_from_args(std::env::args().skip(1), None);
+            deliver(&handle, initial);
             Ok(())
         })
-        .on_window_event(|window, event| {
-            // OS drag & drop: real paths → grant → hand metadata to the UI, which reads the bytes.
-            if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
-                let grants = window.state::<Grants>();
-                let mut files = vec![];
-                for p in paths {
-                    if p.is_dir() {
-                        files.extend(folder_files(&grants, p).1);
-                    } else if ext_in(p, PROJECT_EXT) && p.extension().and_then(|e| e.to_str()) == Some("floe") {
-                        open_project_path(window.app_handle(), p.clone());
-                    } else if ext_in(p, DATA_EXT) {
-                        grants.grant(p);
-                        files.extend(file_meta(p, ""));
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref().to_string();
+            if id == "app.quit" {
+                match app.get_webview_window("main") {
+                    Some(w) => {
+                        let _ = w.close();
                     }
+                    None => app.exit(0),
                 }
-                if !files.is_empty() { let _ = window.emit("floe://files-dropped", files); }
+                return;
+            }
+            let _ = app.emit("floe://menu", id);
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                let app = window.app_handle();
+                let grants = app.state::<Grants>();
+                let lf = classify(paths, &grants);
+                if let Some(p) = lf.project {
+                    let _ = app.emit("floe://open-project", p);
+                }
+                if !lf.data.is_empty() {
+                    let _ = app.emit("floe://files-dropped", lf.data);
+                }
             }
         })
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            pick_files,
+            pick_folder,
+            pick_save,
+            read_file,
+            write_file,
+            file_stat,
+            take_launch_files,
+            engine_status,
+            engine_cancel
+        ])
         .build(tauri::generate_context!())
-        .expect("error while building Floe");
-
-    app.run(|_handle, _event| {
-        if let tauri::RunEvent::Exit = _event { _handle.state::<engine::Engine>().kill(); }
-        // macOS delivers "open with" / double-clicked .floe files as an Opened event.
-        #[cfg(target_os = "macos")]
-        if let tauri::RunEvent::Opened { urls } = _event {
-            for u in urls {
-                if let Ok(p) = u.to_file_path() { open_project_path(_handle, p); }
-            }
-        }
-    });
+        .expect("error while building Floe")
+        .run(on_run_event);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn decodes_paths() {
-        assert_eq!(percent_decode("C%3A%5CUsers%5Cana%5Cq3%20report.xlsx"), "C:\\Users\\ana\\q3 report.xlsx");
-        assert_eq!(percent_decode("%2Fhome%2Fana%2Fr%C3%A9sum%C3%A9.csv"), "/home/ana/résumé.csv");
-        assert_eq!(percent_decode("plain"), "plain");
-    }
-    #[test]
-    fn grants_are_enforced() {
-        let g = Grants::default();
-        assert!(g.check(Path::new("/etc/passwd")).is_err());
-        g.grant(Path::new("/tmp/floe-test.csv"));
-        assert!(g.check(Path::new("/tmp/floe-test.csv")).is_ok());
+#[cfg(target_os = "macos")]
+fn on_run_event(app: &AppHandle, event: tauri::RunEvent) {
+    if let tauri::RunEvent::Opened { urls } = event {
+        let paths: Vec<PathBuf> = urls.into_iter().filter_map(|u| u.to_file_path().ok()).collect();
+        deliver(app, paths);
+        focus_main(app);
     }
 }
+
+#[cfg(not(target_os = "macos"))]
+fn on_run_event(_app: &AppHandle, _event: tauri::RunEvent) {}

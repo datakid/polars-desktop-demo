@@ -32,7 +32,8 @@
     addEventListener('offline', renderEnvBadge);
     PQ.Platform.onMenu(onNativeMenu);
     PQ.Platform.onFilesDropped(async (files) => App.afterAdd(await App.addFiles(files)));
-    addEventListener('beforeunload', (e) => { Store.flush(); if (Store.linked() && Store.dirty()) { e.preventDefault(); e.returnValue = ''; } });
+    addEventListener('beforeunload', (e) => { Store.flush(); if (!PQ.Platform.native && Store.linked() && Store.dirty()) { e.preventDefault(); e.returnValue = ''; } });
+    PQ.Platform.onCloseRequested(async () => { Store.flush(); return UI.guardUnsaved('close'); });
     addEventListener('pagehide', () => Store.flush());
     addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); App.installPrompt = e; });
     addEventListener('appinstalled', () => { App.installPrompt = null; UI.toast(PQ.BRAND.name + ' installed', 'ok'); });
@@ -171,19 +172,26 @@
     return added;
   };
   App.syncSources = async function (ask) {
-    if (PQ.Platform.native || !PQ.Platform.fsa || App.syncing) return 0;
+    const P = PQ.Platform;
+    if ((!P.native && !P.fsa) || App.syncing) return 0;
     App.syncing = true;
     let n = 0;
     try {
       for (const f of App.files) {
-        const hnd = await PQ.Platform.fileHandles.get(f.id);
-        if (!hnd) continue;
         try {
-          const upd = await PQ.Platform.readIfChanged(hnd, f, ask);
+          let upd = null;
+          if (P.native) {
+            if (!f.path) continue;
+            upd = await P.readPathIfChanged(f.path, f);
+          } else {
+            const hnd = await P.fileHandles.get(f.id);
+            if (!hnd) continue;
+            upd = await P.readIfChanged(hnd, f, ask);
+          }
           if (!upd) continue;
           await UI.Engine.call('updateFile', { id: f.id, buf: upd.buf, mtime: upd.mtime }, null, [upd.buf]);
           n++;
-        } catch (e) { if (e && e.name === 'NotFoundError') { PQ.Platform.fileHandles.del(f.id); UI.toast(f.name + ' was moved or deleted on disk; using the last copy.', 'warn'); } }
+        } catch (e) { if (e && e.name === 'NotFoundError') { if (!P.native) P.fileHandles.del(f.id); UI.toast(f.name + ' was moved or deleted on disk; using the last copy.', 'warn'); } }
       }
       if (n) { await App.reloadFiles(); UI.toast('Reloaded ' + n + ' changed file' + (n === 1 ? '' : 's') + ' from disk', 'ok', { ms: 2500 }); }
     } finally { App.syncing = false; }
@@ -407,7 +415,7 @@
           { label: 'Paste from clipboard', icon: 'fa-paste', kbd: 'Ctrl+V', run: pasteFromClipboard },
           { label: 'Reference existing query', icon: 'fa-link', disabled: !Store.project.queries.length, sub: Store.project.queries.map((q) => ({ label: q.name, icon: 'fa-table', run: () => referenceQuery(q) })) },
           '-',
-          PQ.Platform.native ? { label: 'Parquet / Arrow…', icon: 'fa-cubes', disabled: !UI.NativeEngine.available(), run: App.getData } : null,
+          { label: 'Parquet / Arrow / Feather…', icon: 'fa-cubes', run: App.getData },
           '-',
           { label: 'Load sample data', icon: 'fa-flask', run: App.loadSamples },
         ], e.currentTarget.getBoundingClientRect().left, e.currentTarget.getBoundingClientRect().bottom + 2)),
@@ -418,7 +426,7 @@
         rb('fa-delete-left', 'Remove Columns', () => removeSelected(), { need: needCols }),
         rb('fa-list-ol', 'Keep Rows', (e) => UI.menu([
           { label: 'Keep top rows…', run: () => stepDialog('KeepRows', { mode: 'top', n: 100 }) }, { label: 'Keep bottom rows…', run: () => stepDialog('KeepRows', { mode: 'bottom', n: 100 }) }, { label: 'Keep range of rows…', run: () => stepDialog('KeepRows', { mode: 'range', n: 100, offset: 0 }) }, { label: 'Keep duplicates', run: () => Store.addStep({ type: 'KeepDuplicates', subset: Store.ui.selCols }) }, { label: 'Keep errors', run: () => Store.addStep({ type: 'KeepErrors', cols: Store.ui.selCols }) }, '-',
-          { label: 'Remove top rows…', run: () => stepDialog('KeepRows', { mode: 'remove_top', n: 1 }) }, { label: 'Remove bottom rows…', run: () => stepDialog('KeepRows', { mode: 'remove_bottom', n: 1 }) }, { label: 'Remove alternate rows…', run: () => stepDialog('KeepRows', { mode: 'alternate', keep: 1, skip: 1 }) }, { label: 'Remove blank rows', run: () => Store.addStep({ type: 'KeepRows', mode: 'remove_blank' }) }, { label: 'Remove duplicates', run: () => Store.addStep({ type: 'Distinct', subset: Store.ui.selCols }) }, { label: 'Remove errors', run: () => Store.addStep({ type: 'RemoveErrors', cols: Store.ui.selCols }) },
+          { label: 'Remove top rows…', run: () => stepDialog('KeepRows', { mode: 'remove_top', n: 1 }) }, { label: 'Remove bottom rows…', run: () => stepDialog('KeepRows', { mode: 'remove_bottom', n: 1 }) }, { label: 'Remove alternate rows…', run: () => stepDialog('KeepRows', { mode: 'alternate', keep: 1, skip: 1 }) }, { label: 'Remove blank rows', run: () => Store.addStep({ type: 'KeepRows', mode: 'remove_blank' }) }, { label: 'Random sample…', icon: 'fa-dice', run: () => stepDialog('Sample', { mode: 'n', n: 1000, seed: 42 }) }, { label: 'Remove duplicates', run: () => Store.addStep({ type: 'Distinct', subset: Store.ui.selCols }) }, { label: 'Remove errors', run: () => Store.addStep({ type: 'RemoveErrors', cols: Store.ui.selCols }) },
         ], e.currentTarget.getBoundingClientRect().left, e.currentTarget.getBoundingClientRect().bottom + 2), { need: needQ }),
         rb('fa-filter', 'Filter', () => stepDialog('Filter', { mode: 'builder', builder: { join: 'and', conds: [{ col: Store.ui.selCols[0] || (App.result && App.result.schema[0] || {}).name, op: 'eq', value: '' }] } }), { need: needQ }),
         rb('fa-arrow-down-wide-short', 'Sort', () => stepDialog('Sort', { by: [{ col: Store.ui.selCols[0] || (App.result && App.result.schema[0] || {}).name, desc: false }] }), { need: needQ })),
@@ -429,6 +437,10 @@
         rb('fa-table-cells', 'Unpivot', () => stepDialog('Unpivot', { ids: App.result.schema.map((c) => c.name).filter((n) => !Store.ui.selCols.includes(n)) }), { need: needQ, title: 'Unpivot the selected columns (keeps the others)' }),
         rb('fa-table-cells-large', 'Pivot', () => stepDialog('Pivot', { on: Store.ui.selCols[0] }), { need: needQ }),
         rb('fa-rotate', 'Transpose', () => stepDialog('Transpose', {}), { need: needQ })),
+      group('Clean', 'sage',
+        rb('fa-object-ungroup', 'Cluster', () => stepDialog('ClusterValues', { col: Store.ui.selCols[0] || firstText(), method: 'fingerprint', pairs: [] }), { need: needQ, title: 'Find and merge spelling variants ("Acme Inc" / "ACME, inc.")' }),
+        rb('fa-shield-halved', 'Validate', () => stepDialog('Validate', { rules: [{ col: Store.ui.selCols[0] || (App.result.schema[0] || {}).name, check: 'not_null' }], action: 'flag', name: 'Issues' }), { need: needQ, title: 'Data quality rules: required, unique, pattern, range, allowed values' }),
+        rb('fa-gauge-high', 'Overview', () => { Store.setUI({ rightTab: 'overview' }); App.setPane('steps'); }, { need: needQ, title: 'Quality score and per-column health for the current result' })),
       group('Combine', 'orchid',
         rb('fa-code-merge', 'Merge', () => UI.mergeDialog({ qid: Store.ui.activeQid, insertAt: Store.activeIndex() + 1, kind: { type: 'Merge' } }), { need: needQ }),
         rb('fa-object-ungroup', 'Append', () => stepDialog('Append', { others: [], mode: 'diagonal' }), { need: needQ })),
@@ -457,6 +469,7 @@
     const q = Store.query(); if (!q) return;
     UI.editStep({ qid: q.id, insertAt: Store.activeIndex() + 1, kind: Object.assign({ type }, init || {}), focusCol: Store.ui.selCols[0] });
   }
+  App.stepDialog = stepDialog;
   function removeSelected() { if (Store.ui.selCols.length) { Store.addStep({ type: 'RemoveColumns', cols: Store.ui.selCols.slice() }); Store.ui.selCols = []; } }
   function detectTypes(cols) {
     const s = (App.result && App.result.suggestions || []).find((x) => x.id === 'types');
@@ -526,9 +539,7 @@
     ], x, y);
   }
   function loadTargets(long) {
-    const t = [['none', 'Connection only'], ['xlsx', long ? 'Excel workbook (.xlsx)' : 'Excel workbook'], ['csv', 'CSV']];
-    if (PQ.Platform.native) t.push(['parquet', 'Parquet']);
-    return t;
+    return [['none', 'Connection only'], ['xlsx', long ? 'Excel workbook (.xlsx)' : 'Excel workbook'], ['csv', 'CSV'], ['parquet', 'Parquet'], ['arrow', long ? 'Arrow IPC / Feather' : 'Arrow IPC']];
   }
   function moveQuery(q, d) { Store.edit('Move query', (p) => { const i = p.queries.findIndex((z) => z.id === q.id), j = i + d; if (j < 0 || j >= p.queries.length) return false; [p.queries[i], p.queries[j]] = [p.queries[j], p.queries[i]]; }); }
   async function deleteQuery(q) {
@@ -542,7 +553,7 @@
     const loose = App.files.filter((f) => !f.folder);
     const folders = App.folders();
     const item = (f) => h('li.f-item', { title: f.name + ' · ' + UI.fmtBytes(f.size) },
-      UI.icon(f.kind === 'excel' ? 'fa-file-excel' : f.kind === 'json' ? 'fa-file-code' : 'fa-file-csv', 'fa-fw muted'),
+      UI.icon(f.kind === 'excel' ? 'fa-file-excel' : f.kind === 'json' ? 'fa-file-code' : f.kind === 'parquet' ? 'fa-cubes' : f.kind === 'arrow' ? 'fa-cube' : 'fa-file-csv', 'fa-fw muted'),
       h('span.grow', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, f.name),
       h('span.f-actions', !f.folder ? h('button.icon-btn', { title: 'Load into a new query', 'aria-label': 'Load ' + f.name, on: { click: () => UI.navigator(f.id) } }, UI.icon('fa-plus')) : null,
         h('button.icon-btn.danger', { title: 'Remove file', 'aria-label': 'Remove ' + f.name, on: { click: async () => { await UI.Engine.call('removeFile', { id: f.id }); await App.reloadFiles(); App.refresh(); } } }, UI.icon('fa-trash'))));
@@ -554,11 +565,10 @@
   /* ================================ right panel ================================ */
   function renderRight() {
     UI.$$('#right-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === Store.ui.rightTab));
-    $('#tab-steps').classList.toggle('hidden', Store.ui.rightTab !== 'steps');
-    $('#tab-profile').classList.toggle('hidden', Store.ui.rightTab !== 'profile');
-    $('#tab-schema').classList.toggle('hidden', Store.ui.rightTab !== 'schema');
+    ['steps', 'profile', 'schema', 'overview'].forEach((t) => { const el = $('#tab-' + t); if (el) el.classList.toggle('hidden', Store.ui.rightTab !== t); });
     renderQueryProps();
     if (Store.ui.rightTab === 'schema') renderSchema();
+    if (Store.ui.rightTab === 'overview' && UI.renderOverview) UI.renderOverview();
   }
   function renderQueryProps() {
     const box = UI.clear($('#query-props'));
@@ -661,6 +671,16 @@
       h('ul.schema-list', st.schema.map((c) => h('li', UI.typeChip(c.type), h('span.grow', { class: added.includes(c.name) ? 'diff-add' : changed.includes(c.name) ? 'diff-mod' : '' }, c.name), h('span.faint', { style: { fontSize: '11px' } }, PQ.TYPES[c.type].label))))));
   }
 
+  App.loadProfile = () => loadProfile();
+  App.renderRight = () => renderRight();
+  App.removeSelected = () => removeSelected();
+  App.enterData = () => enterData();
+  App.firstText = () => firstText();
+  App.selectStep = (i) => selectStep(i);
+  App.renameQuery = () => Store.query() && renameQuery(Store.query());
+  App.toggleTheme = () => toggleTheme();
+  App.detectTypes = () => detectTypes();
+  function firstText() { const s = App.result ? App.result.schema : []; return (s.find((c) => c.type === 'text') || s[0] || {}).name; }
   async function loadProfile() {
     const box = $('#tab-profile');
     const col = Store.ui.selCols[0];
@@ -769,6 +789,8 @@
       { label: 'Split column', icon: 'fa-scissors', disabled: multi, sub: [{ label: 'By delimiter…', run: () => stepDialog('SplitColumn', { col: c.name, mode: 'each', delimiter: guessDelim(c) }) }, { label: 'By positions…', run: () => stepDialog('SplitColumn', { col: c.name, mode: 'positions', positions: '0, 3' }) }, { label: 'Into rows…', run: () => stepDialog('SplitColumn', { col: c.name, mode: 'rows', delimiter: guessDelim(c) }) }] },
       { label: 'Merge columns…', icon: 'fa-object-group', disabled: !multi, run: () => stepDialog('MergeColumns', { cols: sel, sep: ' ', name: 'Merged' }) },
       { label: 'Expand JSON', icon: 'fa-sitemap', disabled: multi || !isText, run: () => Store.addStep({ type: 'ExpandJson', col: c.name }) },
+      { label: 'Cluster similar values…', icon: 'fa-object-ungroup', disabled: multi || !isText, run: () => stepDialog('ClusterValues', { col: c.name, method: 'fingerprint', pairs: [] }) },
+      { label: 'Validate…', icon: 'fa-shield-halved', run: () => stepDialog('Validate', { rules: sel.map((n) => ({ col: n, check: 'not_null' })), action: 'flag', name: 'Issues' }) },
       '-',
       { label: 'Group by…', icon: 'fa-layer-group', run: () => stepDialog('GroupBy', { keys: sel, aggs: [{ fn: 'count_rows', name: 'Count' }] }) },
       { label: 'Unpivot', icon: 'fa-table-cells', sub: [{ label: 'Unpivot selected columns', run: () => Store.addStep({ type: 'Unpivot', ids: App.result.schema.map((z) => z.name).filter((n) => !sel.includes(n)) }) }, { label: 'Unpivot other columns', run: () => Store.addStep({ type: 'Unpivot', ids: sel }) }] },
@@ -877,9 +899,9 @@
       PQ.Platform.fsa || PQ.Platform.native ? { label: 'Save as…', icon: 'fa-copy', kbd: 'Ctrl+Shift+S', run: () => UI.saveProject(true) } : null,
       { label: 'View project files (git)', icon: 'fa-code-branch', run: UI.projectFilesDialog },
       '-',
-      { label: 'Export current query', icon: 'fa-file-export', disabled: !Store.query(), sub: [{ label: 'Excel workbook (.xlsx)', icon: 'fa-file-excel', run: () => exportAs('xlsx') }, { label: 'CSV', icon: 'fa-file-csv', run: () => exportAs('csv') }, { label: 'Copy to clipboard (TSV)', icon: 'fa-clipboard', run: () => exportAs('tsv') }] },
+      { label: 'Export current query', icon: 'fa-file-export', disabled: !Store.query(), sub: [{ label: 'Excel workbook (.xlsx)', icon: 'fa-file-excel', run: () => exportAs('xlsx') }, { label: 'CSV', icon: 'fa-file-csv', run: () => exportAs('csv') }, { label: 'Parquet', icon: 'fa-cubes', run: () => exportAs('parquet') }, { label: 'Arrow IPC / Feather', icon: 'fa-cube', run: () => exportAs('arrow') }, { label: 'Copy to clipboard (TSV)', icon: 'fa-clipboard', run: () => exportAs('tsv') }] },
       { label: 'Export to Python…', icon: 'fa-brands fa-python', disabled: !Store.project.queries.length, run: () => UI.pythonDialog(Store.ui.activeQid) },
-      { label: PQ.Platform.native ? 'Run headless (CLI)…' : 'Automate…', icon: 'fa-terminal', run: UI.cliDialog },
+      { label: 'Automate…', icon: 'fa-terminal', run: UI.cliDialog },
       '-',
       { label: 'Load sample data', icon: 'fa-flask', run: App.loadSamples },
       { label: 'Settings…', icon: 'fa-gear', run: UI.settingsDialog },
@@ -890,7 +912,7 @@
     $('#btn-file-menu').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); fileMenu(r.left, r.bottom + 2); });
     $('#save-state').addEventListener('click', () => UI.saveProject());
     $('#btn-theme').addEventListener('click', toggleTheme);
-    $('#btn-export').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); const noQ = !Store.query(); UI.menu([{ label: 'Excel workbook (.xlsx)', icon: 'fa-file-excel', disabled: noQ, run: () => exportAs('xlsx') }, { label: 'CSV', icon: 'fa-file-csv', disabled: noQ, run: () => exportAs('csv') }, { label: 'Copy to clipboard (TSV)', icon: 'fa-clipboard', disabled: noQ, run: () => exportAs('tsv') }, '-', { label: 'Python script…', icon: 'fa-brands fa-python', disabled: !Store.project.queries.length, run: () => UI.pythonDialog(Store.ui.activeQid) }, { label: 'Project file (.floe)', icon: 'fa-file-code', run: () => UI.saveProject(true) }], Math.min(r.left, innerWidth - 240), r.bottom + 2); });
+    $('#btn-export').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); const noQ = !Store.query(); UI.menu([{ label: 'Excel workbook (.xlsx)', icon: 'fa-file-excel', disabled: noQ, run: () => exportAs('xlsx') }, { label: 'CSV', icon: 'fa-file-csv', disabled: noQ, run: () => exportAs('csv') }, { label: 'Parquet', icon: 'fa-cubes', disabled: noQ, run: () => exportAs('parquet') }, { label: 'Arrow IPC / Feather', icon: 'fa-cube', disabled: noQ, run: () => exportAs('arrow') }, { label: 'Copy to clipboard (TSV)', icon: 'fa-clipboard', disabled: noQ, run: () => exportAs('tsv') }, '-', { label: 'Python script…', icon: 'fa-brands fa-python', disabled: !Store.project.queries.length, run: () => UI.pythonDialog(Store.ui.activeQid) }, { label: 'Project file (.floe)', icon: 'fa-file-code', run: () => UI.saveProject(true) }], Math.min(r.left, innerWidth - 240), r.bottom + 2); });
     UI.$$('#right-tabs button').forEach((b) => b.addEventListener('click', () => { Store.setUI({ rightTab: b.dataset.tab }); if (b.dataset.tab === 'profile') loadProfile(); }));
     UI.$$('[data-action]').forEach((b) => b.addEventListener('click', () => ({ getData: App.getData, samples: App.loadSamples, folder: UI.folderDialog, enter: enterData, paste: pasteFromClipboard, open: () => UI.openProject() })[b.dataset.action]()));
     UI.$$('#pane-tabs button').forEach((b) => b.addEventListener('click', () => setPane(b.dataset.pane)));
@@ -911,7 +933,7 @@
     addEventListener('dragleave', (e) => { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) document.body.classList.remove('dragging'); });
     addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
     addEventListener('drop', async (e) => {
-      if (PQ.Platform.native) { e.preventDefault(); return; }
+      if (PQ.Platform.native) { e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging'); return; }
       if (!hasFiles(e)) return;
       e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
       if (UI.anyModal()) return UI.toast('Close the dialog first, then drop the files again', 'warn');
@@ -933,6 +955,7 @@
       const mod = e.ctrlKey || e.metaKey;
       const k = (e.key || '').toLowerCase();
       if (e.key === 'Escape' && !UI.anyModal() && UI.Engine.state === 'busy') { UI.Engine.cancel(); return; }
+      if (mod && k === 'k' && !UI.anyModal()) { e.preventDefault(); if (UI.palette) UI.palette(); return; }
       if (UI.anyModal()) return;
       if (PQ.Platform.menuOwns(e)) return;
       if (mod && k === 'z' && !inField) { e.preventDefault(); e.shiftKey ? Store.redoOne() : Store.undoOne(); }
@@ -941,7 +964,9 @@
       else if (((mod && PQ.Platform.native) || (e.altKey && !mod)) && (k === 'n' || e.code === 'KeyN') && !inField) { e.preventDefault(); newProject(); }
       else if (mod && k === 'o') { e.preventDefault(); UI.openProject(); }
       else if (mod && e.shiftKey && k === 'f') { e.preventDefault(); App.runFull(); }
-      else if (e.key === 'F5' && !mod && !PQ.Platform.native && Store.query()) { e.preventDefault(); App.reload(); }
+      else if (e.key === 'F5' && !mod) { e.preventDefault(); if (Store.query()) App.reload(); }
+      else if (PQ.Platform.native && mod && k === 'e' && !e.shiftKey) { e.preventDefault(); if (Store.query()) exportAs('xlsx'); }
+      else if (PQ.Platform.native && mod && e.key === ',') { e.preventDefault(); UI.settingsDialog(); }
       else if (e.key === 'Delete' && !inField && Store.ui.selCols.length && document.activeElement.closest('#center, body') && !document.activeElement.closest('#step-list')) { removeSelected(); }
       else if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && Store.query()) { e.preventDefault(); const i = Store.activeIndex() + (e.key === 'ArrowUp' ? -1 : 1); if (i >= 0 && i < Store.query().steps.length) selectStep(i); }
       else if (e.key === '?' && !inField) UI.shortcutsDialog();
