@@ -15,7 +15,7 @@
     "build:debug": "node scripts/ensure-icons.mjs && tauri build --debug",
     "dev:polars": "node scripts/ensure-icons.mjs && tauri dev --features polars-engine",
     "build:polars": "node scripts/ensure-icons.mjs && tauri build --features polars-engine",
-    "test:engine": "cargo test --manifest-path src-tauri/engine/Cargo.toml",
+    "test:engine": "node ../scripts/gen-fixtures.mjs && cargo test --manifest-path src-tauri/engine/Cargo.toml -- --nocapture",
     "check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri"
   },

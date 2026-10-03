@@ -47,7 +47,7 @@
       "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
     },
     {
-      "source": "/(index|demo|tests|tests-ui|404).html",
+      "source": "/(index|demo|tests|tests-ui|bench|404).html",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }]
     }
   ]

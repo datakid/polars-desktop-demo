@@ -487,15 +487,45 @@
     const cols = index.map((k) => ({ name: k, type: t.type(k) }));
     const data = index.map((k) => { const a = t.get(k), o = new Array(ng); for (let g = 0; g < ng; g++) o[g] = a[first[g]]; return o; });
     const nc = newCols.length;
-    const cells = new Map();
-    for (let r = 0; r < n; r++) {
-      const id = codes[r] * nc + colIx[r];
-      let b = cells.get(id);
-      if (!b) cells.set(id, (b = []));
-      b.push(valArr ? valArr[r] : 1);
-    }
     const outCols = newCols.map(() => new Array(ng).fill(null));
-    cells.forEach((vs, id) => { const g = Math.floor(id / nc); outCols[id - g * nc][g] = agg.fn(vs); });
+    const fnName = s.agg || 'sum';
+    const STREAM = { sum: 1, mean: 1, count_rows: 1, count: 1, min: 1, max: 1, first: 1, last: 1 };
+    if (STREAM[fnName] && ng * nc <= 5e7) {
+      const size = ng * nc;
+      const seen = new Uint8Array(size);
+      const acc = fnName === 'sum' || fnName === 'mean' ? new Float64Array(size) : null;
+      const cnt = fnName === 'mean' || fnName === 'count' || fnName === 'count_rows' ? new Int32Array(size) : null;
+      const val = acc || cnt ? null : new Array(size).fill(null);
+      const any = fnName === 'sum' || fnName === 'mean' ? new Uint8Array(size) : null;
+      const hit = fnName === 'first' ? new Uint8Array(size) : null;
+      for (let r = 0; r < n; r++) {
+        const id = codes[r] * nc + colIx[r];
+        seen[id] = 1;
+        const v = valArr ? valArr[r] : 1;
+        switch (fnName) {
+          case 'sum': case 'mean': if (typeof v === 'number') { acc[id] += v; any[id] = 1; if (cnt) cnt[id]++; } break;
+          case 'count_rows': cnt[id]++; break;
+          case 'count': if (v !== null && !isErr(v)) cnt[id]++; break;
+          case 'first': if (!hit[id]) { hit[id] = 1; val[id] = v; } break;
+          case 'last': val[id] = v; break;
+          default: if (v !== null && !isErr(v)) { const m = val[id]; if (m === null || (typeof v === 'number' && typeof m === 'number' ? (fnName === 'min' ? v < m : v > m) : compareValues(v, m) * (fnName === 'min' ? -1 : 1) > 0)) val[id] = v; }
+        }
+      }
+      for (let id = 0; id < size; id++) {
+        if (!seen[id]) continue;
+        const g = (id / nc) | 0, c = id - g * nc;
+        outCols[c][g] = acc ? (any[id] ? (fnName === 'mean' ? acc[id] / cnt[id] : acc[id]) : null) : cnt ? cnt[id] : val[id];
+      }
+    } else {
+      const cells = new Map();
+      for (let r = 0; r < n; r++) {
+        const id = codes[r] * nc + colIx[r];
+        let b = cells.get(id);
+        if (!b) cells.set(id, (b = []));
+        b.push(valArr ? valArr[r] : 1);
+      }
+      cells.forEach((vs, id) => { const g = Math.floor(id / nc); outCols[id - g * nc][g] = agg.fn(vs); });
+    }
     const idxNames = new Set(index);
     const valType = valArr ? agg.type(t.type(s.values)) : 'int';
     newCols.forEach((name0, c) => {

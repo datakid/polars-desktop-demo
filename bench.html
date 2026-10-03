@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Floe — engine benchmark</title>
+  <style>
+    body { font: 13px/1.5 system-ui, sans-serif; margin: 24px; color: #2b2926; background: #f2efe8; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    table { border-collapse: collapse; margin-top: 12px; background: #faf8f4; }
+    th, td { padding: 6px 12px; border-bottom: 1px solid #e5e0d6; text-align: right; font-variant-numeric: tabular-nums; }
+    th:first-child, td:first-child { text-align: left; }
+    .bar { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
+    #status { color: #6e6a62; }
+  </style>
+</head>
+<body>
+  <h1>Floe built-in engine benchmark</h1>
+  <p>Six fixed pipelines on generated data. Preview = first 1,000 rows. Cold = first run (includes decoding), warm = step cache cleared, decoded text reused.</p>
+  <div class="bar">
+    <label>Input rows <select id="size"><option value="100000" selected>100,000</option><option value="250000">250,000</option><option value="1000000">1,000,000</option></select></label>
+    <button id="run" type="button">Run</button>
+    <button id="copy" type="button">Copy JSON</button>
+    <span id="status"></span>
+  </div>
+  <table>
+    <thead><tr><th>Pipeline</th><th>Preview cold</th><th>Preview warm</th><th>Full cold</th><th>Full warm</th><th>Rows out</th></tr></thead>
+    <tbody id="rows-out"></tbody>
+  </table>
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/expr.js"></script>
+  <script src="js/io.js"></script>
+  <script src="js/steps.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/engine-ext.js"></script>
+  <script src="js/bench.js"></script>
+</body>
+</html>

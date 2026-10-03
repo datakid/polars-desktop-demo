@@ -8,7 +8,15 @@
   - Pages come back as Arrow IPC. Exports are written straight to the chosen path.
   - Anything Polars can't run falls back to the built-in engine automatically, and the indicator shows `Built-in ↺` with the reason.
 - **Web ships no native-engine code.** `native-engine.js` is loaded only inside Tauri and is excluded from the web build.
-- Engine tests: 86 (8 new plan-lowering tests). Rust tests are in `desktop/src-tauri/engine/tests/plan.rs`.
+- Engine tests: 86 (8 new plan-lowering tests).
+  - Rust: `engine/tests/plan.rs` (unit tests).
+  - `engine/tests/parity.rs` runs 22 shared cases generated from the built-in engine by `scripts/gen-fixtures.mjs` and requires Polars to give the same schema and rows.
+- **Faster built-in engine:**
+  - CSV parsing writes straight into columns (about −30%).
+  - Pivot uses streaming accumulators (−60%).
+  - Previews of large CSVs decode only the first 4 MB.
+  - Benchmark with `bench.html`; results go in `docs/BENCH.md`.
+- **Signing:** opt-in through the repository variable `SIGNING=on` plus secrets; see `docs/SIGNING.md`.
 
 Clean and reshape messy spreadsheets with replayable steps. Excel, CSV, JSON, Parquet and Arrow IPC in; Excel, CSV, Parquet, Arrow or a Polars Python script out. Everything runs locally — files are never uploaded.
 
@@ -105,6 +113,7 @@ Events emitted to the UI: `floe://menu` (macOS menu), `floe://files-dropped`, `f
 | `share-target` (POST) | Web Share Target endpoint (service worker) |
 | `version.json` | Deployed build info |
 | `tests.html`, `tests-ui.html` | Test pages (web build only) |
+| `bench.html` | Engine benchmark, 100k–1M rows (web build only) |
 
 ## Data model
 - **Project (`.floe`)**: stable-key JSON `{format_version, name, settings:{previewRows, locale}, params[], queries[{id, name, load:{target}, steps[{id, name, kind, note?, disabled?}]}]}`.
@@ -160,10 +169,9 @@ CI builds both variants for every OS: `Floe_*` uses the built-in engine and `Flo
 The full step-by-step plan for web, desktop and the optional Polars engine is in `docs/PLAN.md`.
 
 ## Next steps
-1. Add code signing + notarisation secrets to `desktop.yml`, then `tauri-plugin-updater` with a signed `latest.json`.
-2. Polars sidecar (`floe-engine`) implementing `engine_status` / `engine_call` / `engine_page`, plus the `floe` CLI.
-3. Row-group streaming and column projection for Parquet.
-4. Optional DuckDB-WASM engine for very large files on the web.
+1. Fix the first CI compile errors in `floe-engine` / the Tauri shell, then add signing secrets (see `docs/SIGNING.md`).
+2. Row-group streaming and column projection for Parquet on the web.
+3. `floe` CLI built on `floe-engine`.
 
 ## License
 MIT. Bundled: SheetJS CE (Apache-2.0), AlaSQL (MIT), apache-arrow (Apache-2.0), hyparquet / hyparquet-writer / hyparquet-compressors (MIT), Font Awesome Free (icons CC BY 4.0, fonts OFL, code MIT), Instrument Sans, Source Serif 4 and JetBrains Mono (OFL).

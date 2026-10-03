@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /tests.html
 Disallow: /tests-ui.html
+Disallow: /bench.html

@@ -483,6 +483,7 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
             need(&s, &ids)?;
             need(&s, &values)?;
             let dts: HashSet<String> = values.iter().map(|v| format!("{:?}", s.get(v.as_str()).unwrap())).collect();
+            let all_num = values.iter().all(|v| crate::is_num(s.get(v.as_str()).unwrap()));
             let same = dts.len() <= 1;
             let (var, val) = (st(op, "var"), st(op, "val"));
             let base = drop_errs(lf, &s).with_row_index("__r", None);
@@ -490,7 +491,7 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
                 .iter()
                 .enumerate()
                 .map(|(j, v)| {
-                    let ve = if same { col(v.as_str()) } else { text_of(col(v.as_str()), kind_of(s.get(v.as_str()).unwrap())) };
+                    let ve = if same { col(v.as_str()) } else if all_num { col(v.as_str()).cast(DataType::Float64) } else { text_of(col(v.as_str()), kind_of(s.get(v.as_str()).unwrap())) };
                     let mut ex: Vec<Expr> = vec![col("__r"), lit(j as i64).alias("__j")];
                     ex.extend(ids.iter().map(|i| col(i.as_str())));
                     ex.push(lit(v.as_str()).alias(var.as_str()));

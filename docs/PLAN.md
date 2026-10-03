@@ -1,6 +1,7 @@
 # Floe — build plan (web + desktop)
 
-> **Status (1.1):** W1, W2, W3, P0, P1, P2, P3, P6 implemented. Remaining: W0/W5 deploy checks, W4 performance pass, D0/D1 CI compile + smoke test, D2 signing, P5 shared fixtures, P7 benchmarks.
+> **Status (1.1):** all code steps are done: W1–W4, D2 (opt-in signing, `docs/SIGNING.md`), P0–P6, P7 tooling (`bench.html`, `docs/BENCH.md`).
+> Steps that need you: W0/W5 (deploy and check the live URL), D0 (first CI compile; send me the errors), D1 (manual smoke test on an installed build), P7 numbers on your machine.
 
 This plan lists the steps in order. Each step names the files it touches, what to change, and when it counts as done. Work through it top to bottom. Each track ships on its own:
 
@@ -16,10 +17,7 @@ The rule that keeps this safe: **tracks W and D never depend on P.** P sits behi
 
 ## 0. Decisions already made
 
-1. **The web uses only the built-in JavaScript engine.** No Polars, no DuckDB-WASM in 1.0.
-   - Polars has no supported browser build. The WASM experiments are large (tens of MB), need special headers for threads, and break the strict CSP.
-   - DuckDB-WASM would be a second engine with different semantics: no per-cell errors, different casts and sort order. That means a second parity test suite. It doesn't pass the "zero problems" bar.
-   - The web gets faster through targeted work on the existing engine (step W4) instead.
+1. **The web uses only the built-in JavaScript engine.** Polars has no supported browser build; the web gets faster through targeted work on the existing engine (W4). Very large files are out of scope for Floe.
 2. **"Export to Python (Polars script)" stays on both platforms.** It generates code. It isn't an engine and works everywhere.
 3. **The desktop runs the built-in engine by default.** If the Polars engine is present (track P), each query uses Polars when it can and the built-in engine otherwise. The user can always see which one ran.
 4. **Formula semantics live in one place: JavaScript.** If track P happens, JS lowers each query into a small JSON plan (with formula ASTs already parsed), and Rust only executes that plan. Rust never parses formulas or re-implements step logic it doesn't need. This cuts the Rust code to roughly 1,500 lines and keeps behaviour consistent.

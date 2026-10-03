@@ -63,6 +63,58 @@
     return { rows, truncated: false };
   };
 
+  /** Same grammar as parseCSV, but writes straight into column arrays (no per-row arrays, no transpose). */
+  IO.parseCSVColumns = function (text, delim, maxRows, skipRows) {
+    const n = text.length, limit = maxRows === undefined || maxRows === null ? Infinity : maxRows;
+    const D = (delim || ',').charCodeAt(0), Q = 34, CR = 13, LF = 10;
+    const cols = [];
+    let rows = 0, skipped = 0, c = 0, i = 0;
+    skipRows = skipRows || 0;
+    const put = (v) => {
+      if (skipped < skipRows) return;
+      let col = cols[c];
+      if (!col) { col = cols[c] = new Array(rows); }
+      col[rows] = v;
+    };
+    const endRow = () => {
+      if (skipped < skipRows) { skipped++; c = 0; return; }
+      if (c === 1 && (cols[0][rows] === '' || cols[0][rows] === undefined)) { cols[0][rows] = undefined; c = 0; return; }
+      rows++; c = 0;
+    };
+    while (i < n) {
+      let ch = text.charCodeAt(i);
+      if (ch === Q) {
+        let j = i + 1, s = '', from = j;
+        for (;;) {
+          const k = text.indexOf('"', j);
+          if (k < 0) { s += text.slice(from); j = n; break; }
+          if (text.charCodeAt(k + 1) === Q) { s += text.slice(from, k + 1); j = k + 2; from = j; continue; }
+          s += text.slice(from, k); j = k + 1; break;
+        }
+        let e = j;
+        while (e < n) { const x = text.charCodeAt(e); if (x === D || x === CR || x === LF) break; e++; }
+        if (e > j) s += text.slice(j, e);
+        put(s); c++;
+        i = e;
+      } else {
+        let e = i;
+        while (e < n) { ch = text.charCodeAt(e); if (ch === D || ch === CR || ch === LF) break; e++; }
+        put(e > i ? text.slice(i, e) : ''); c++;
+        i = e;
+      }
+      if (i >= n) break;
+      ch = text.charCodeAt(i);
+      if (ch === D) { i++; if (i >= n) { put(''); c++; } continue; }
+      i++;
+      if (ch === CR && text.charCodeAt(i) === LF) i++;
+      endRow();
+      if (rows >= limit) { for (const col of cols) col.length = rows; return { cols, n: rows, truncated: i < n }; }
+    }
+    if (c) endRow();
+    for (const col of cols) col.length = rows;
+    return { cols, n: rows, truncated: false };
+  };
+
   /** Sniff delimiter (consistency of field counts), header presence and decimal separator. */
   IO.sniffCSV = function (text) {
     const sample = text.slice(0, 64 * 1024);
@@ -89,23 +141,39 @@
     return { delimiter: best.delim, locale, header };
   };
 
+  const PREFIX = 4 * 1048576;
+  function decodePrefix(rec, encoding, maxRows) {
+    if (maxRows === Infinity || maxRows === undefined || rec.size <= PREFIX * 2) return decodeCached(rec, encoding);
+    const k = rec.id + ':' + rec.mtime + ':' + rec.size + ':' + (encoding || 'auto');
+    if (textCache.has(k)) return decodeCached(rec, encoding);
+    let cut = PREFIX;
+    const u8 = new Uint8Array(rec.buf, 0, Math.min(rec.buf.byteLength, cut + 4));
+    while (cut > 0 && (u8[cut] & 0xc0) === 0x80) cut--;
+    const d = IO.decode(rec.buf.slice(0, cut), encoding);
+    const nl = d.text.lastIndexOf('\n');
+    const lines = nl > 0 ? (d.text.slice(0, nl).match(/\n/g) || []).length : 0;
+    if (lines < maxRows + 10 || /utf-16/.test(d.encoding)) return decodeCached(rec, encoding);
+    return { text: d.text.slice(0, nl + 1), encoding: d.encoding, partial: true };
+  }
+
   function csvTable(rec, opts, maxRows) {
-    const { text, encoding } = decodeCached(rec, opts.encoding);
+    const { text, encoding, partial } = decodePrefix(rec, opts.encoding, maxRows);
     const delim = opts.delimiter || IO.sniffCSV(text).delimiter;
-    const want = maxRows === Infinity || maxRows === undefined ? undefined : maxRows + (opts.header ? 1 : 0);
-    const { rows, truncated } = IO.parseCSV(text, delim, want, opts.skipRows || 0);
-    let names;
-    let body = rows;
-    const width = rows.reduce((m, r) => Math.max(m, r.length), 0);
-    if (opts.header !== false && rows.length) { names = PQ.uniquify(rows[0].concat(Array(Math.max(0, width - rows[0].length)).fill(null))); body = rows.slice(1); }
-    else names = PQ.uniquify(Array.from({ length: width }, (_, i) => 'Column' + (i + 1)));
-    const data = names.map(() => new Array(body.length));
-    for (let r = 0; r < body.length; r++) {
-      const row = body[r];
-      for (let c = 0; c < names.length; c++) { const v = row[c]; data[c][r] = v === undefined || v === '' ? null : v; }
+    const want = maxRows === Infinity || maxRows === undefined ? undefined : maxRows + (opts.header !== false ? 1 : 0);
+    const { cols, n, truncated } = IO.parseCSVColumns(text, delim, want, opts.skipRows || 0);
+    const width = cols.length;
+    let names, data, rows;
+    if (opts.header !== false && n) {
+      names = PQ.uniquify(cols.map((c) => (c[0] === undefined ? null : c[0])));
+      data = cols.map((c) => { const a = new Array(n - 1); for (let r = 1; r < n; r++) { const v = c[r]; a[r - 1] = v === undefined || v === '' ? null : v; } return a; });
+      rows = n - 1;
+    } else {
+      names = PQ.uniquify(Array.from({ length: width }, (_, i) => 'Column' + (i + 1)));
+      data = cols.map((c) => { const a = new Array(n); for (let r = 0; r < n; r++) { const v = c[r]; a[r] = v === undefined || v === '' ? null : v; } return a; });
+      rows = n;
     }
-    const t = new Table(names.map((n) => ({ name: n, type: 'text' })), data, body.length);
-    t.meta = { truncated, encoding, delimiter: delim };
+    const t = new Table(names.map((nm) => ({ name: nm, type: 'text' })), data, rows);
+    t.meta = { truncated: truncated || !!partial, encoding, delimiter: delim };
     return t;
   }
 

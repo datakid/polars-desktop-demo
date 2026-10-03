@@ -246,6 +246,27 @@ fn date_wrap(v: Value, ty: &str) -> Value {
     }
 }
 
+pub fn rows(id: &str, limit: usize) -> R<Vec<Vec<Value>>> {
+    let df = get(id)?;
+    let names = visible(&df);
+    let n = df.height().min(limit);
+    let mut out = vec![Vec::with_capacity(names.len()); n];
+    for name in &names {
+        let c = df.column(name).s()?;
+        let ty = floe_type(c.dtype());
+        let err = df.column(&format!("{ERR_PREFIX}{name}")).ok().and_then(|e| e.bool().ok().cloned());
+        for (r, row) in out.iter_mut().enumerate() {
+            if err.as_ref().and_then(|e| e.get(r)).unwrap_or(false) {
+                row.push(json!("#ERR"));
+                continue;
+            }
+            let v = wire(c.get(r).unwrap_or(AnyValue::Null));
+            row.push(if (ty == "date" || ty == "datetime") && v.is_number() { json!({ "d": v }) } else { v });
+        }
+    }
+    Ok(out)
+}
+
 pub fn profile(id: &str, name: &str) -> R<Value> {
     let df = get(id)?;
     let c = df.column(name).s()?.as_materialized_series().clone();
