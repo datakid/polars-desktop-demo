@@ -1,4 +1,4 @@
-/* PQX golden tests (browser). Mirrors the planned Rust test suite: every step kind × edge cases. */
+/* Engine golden tests (browser): every step kind and edge cases, plus Polars plan lowering. */
 (async function () {
   const PQ = self.PQ, E = PQ.Engine, T = PQ.Table;
   const out = document.getElementById('out');
@@ -30,6 +30,36 @@
   test('formula: date functions', () => { const t = T.fromRows(['d'], [[new Date(Date.UTC(2026, 8, 26))]], ['date']); assertEq(PQ.Formula.evaluate('Date.Year([d]) * 100 + Date.Month([d])', t).values, [202609]); assertEq(PQ.Formula.evaluate('Date.DayOfWeekName([d])', t).values, ['Saturday']); });
   test('formula: Number.Round is banker\'s rounding', () => assertEq(PQ.Formula.evaluate('Number.Round(2.5) + Number.Round(3.5)', tbl()).values[0], 6));
   test('formula → python', () => assertEq(PQ.Formula.toPython('if [a] > 1 then "x" else "y"'), 'pl.when((pl.col("a") > pl.lit(1))).then(pl.lit("x")).otherwise(pl.lit("y"))'));
+
+  /* ---------- Polars plan lowering ---------- */
+  if (PQ.Plan) {
+    const proj = (steps, extra) => Object.assign({ settings: { previewRows: 1000, locale: 'en-US' }, params: [{ name: 'Min', type: 'number', value: '10' }], queries: [{ id: 'q1', name: 'Orders', steps: steps.map((k, i) => ({ id: 's' + i, name: i ? PQ.Steps.label(k.type) : 'Source', kind: k })) }] }, extra || {});
+    const src = { type: 'Source', source: { kind: 'file', fileId: 'f1', fileName: 'orders.csv', csv: { delimiter: ',' } } };
+    const files = { files: { f1: '/data/orders.csv' } };
+    test('plan: csv source + filter + groupBy lowers', () => {
+      const r = PQ.Plan.lower(proj([src, { type: 'Filter', mode: 'advanced', formula: '[qty] > @Min' }, { type: 'GroupBy', keys: ['region'], aggs: [{ fn: 'sum', col: 'qty' }] }]), 'q1', files);
+      assert(r.ok, r.reason);
+      assertEq(r.plan.source, { kind: 'csv', path: '/data/orders.csv', delimiter: ',', header: true, skipRows: 0 });
+      assertEq(r.plan.ops[0].expr, { k: 'bin', op: '>', a: { k: 'col', name: 'qty' }, b: { k: 'lit', v: 10 } });
+      assertEq(r.plan.ops[1].aggs[0].name, 'Sum of qty');
+    });
+    test('plan: file without a disk path is refused', () => { const r = PQ.Plan.lower(proj([src]), 'q1', {}); assert(!r.ok && /isn’t linked to a file on disk/.test(r.reason), r.reason); });
+    test('plan: unsupported step names the step', () => { const r = PQ.Plan.lower(proj([src, { type: 'Sample', mode: 'n', n: 5 }]), 'q1', files); assert(!r.ok && /^Step 2 “Sampled Rows”: isn’t supported/.test(r.reason), r.reason); });
+    test('plan: unsupported formula function is refused', () => { const r = PQ.Plan.lower(proj([src, { type: 'AddColumn', name: 'x', formula: 'Text.Similarity([a], [b])' }]), 'q1', files); assert(!r.ok && /Text\.Similarity/.test(r.reason), r.reason); });
+    test('plan: upto stops lowering before unsupported steps', () => { const r = PQ.Plan.lower(proj([src, { type: 'Distinct' }, { type: 'Sample', mode: 'n', n: 5 }]), 'q1', Object.assign({ upto: 1 }, files)); assert(r.ok && r.plan.ops.length === 1, r.reason); });
+    test('plan: merge lowers the right query', () => {
+      const p = proj([src, { type: 'Merge', right: 'q2', how: 'left', on: [['cid', 'cid']] }]);
+      p.queries.push({ id: 'q2', name: 'Customers', steps: [{ id: 'x', name: 'Source', kind: { type: 'Source', source: { kind: 'blank', columns: ['cid', 'n'], rows: [['1', 'a']] } } }] });
+      const r = PQ.Plan.lower(p, 'q1', files);
+      assert(r.ok && r.plan.ops[0].right.source.kind === 'blank', r.reason);
+    });
+    test('plan: excel table refused, sheet ok', () => {
+      const x = (item) => ({ type: 'Source', source: { kind: 'file', fileId: 'f1', fileName: 'r.xlsx', item } });
+      assert(!PQ.Plan.lower(proj([x({ type: 'table', name: 'T' })]), 'q1', files).ok);
+      assert(PQ.Plan.lower(proj([x({ type: 'sheet', name: 'Daily' })]), 'q1', files).ok);
+    });
+    test('plan: dates in formulas become epoch literals', () => { const r = PQ.Plan.lower(proj([src, { type: 'Filter', mode: 'advanced', formula: '[d] >= #date(2026, 1, 2)' }]), 'q1', files); assertEq(r.plan.ops[0].expr.b, { k: 'call', fn: '#date', args: [{ k: 'lit', v: 2026 }, { k: 'lit', v: 1 }, { k: 'lit', v: 2 }] }); });
+  }
 
   /* ---------- parsing & types ---------- */
   test('parseNumber: accounting, %, thousands, currency', () => assertEq(['(1,234.50)', '12%', '$1,000', '1e3', 'abc'].map((s) => PQ.parseNumber(s)), [-1234.5, 0.12, 1000, 1000, null]));

@@ -9,6 +9,18 @@ f.addEventListener('load', async () => {
   try {
     await until(() => UI().App.result && UI().App.result.fp);
     console.log('E2E fp ok', UI().App.result.n);
+    const chip = w.document.getElementById('engine-chip');
+    await until(() => /Built-in/.test(chip.querySelector('.engine-name').textContent) && /ms|s ·/.test(chip.querySelector('.engine-meta').textContent));
+    console.log('E2E chip', chip.querySelector('.engine-name').textContent, '|', chip.querySelector('.engine-meta').textContent, '| aria:', chip.getAttribute('aria-label'));
+    chip.click();
+    await until(() => w.document.querySelector('.engine-kv'));
+    console.log('E2E engine dialog', /Last run/.test(w.document.querySelector('.engine-kv').textContent) ? 'has Last run' : 'MISSING');
+    w.document.querySelector('.modal .close').click();
+    await UI().App.runFull();
+    await until(() => /Full/.test(chip.querySelector('.engine-meta').textContent), 30000);
+    console.log('E2E chip full', chip.querySelector('.engine-meta').textContent);
+    UI().App.setMode('preview');
+    await until(() => /Sample|All rows/.test(chip.querySelector('.engine-meta').textContent), 30000);
     UI().palette();
     const inp = w.document.querySelector('.palette-input');
     inp.value = 'clus'; inp.dispatchEvent(new w.Event('input'));

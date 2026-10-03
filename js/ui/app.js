@@ -737,20 +737,50 @@
   function renderStatus() {
     const r = App.result;
     $('#st-rows').textContent = r ? PQ.fmtInt(r.n) + ' × ' + r.schema.length : '—';
-    $('#st-time').textContent = App.lastRun ? UI.fmtMs(App.lastRun.ms) : '';
     const hits = App.states.filter((s) => s && s.cached).length;
     $('#st-cache').textContent = App.states.length && hits ? hits + '/' + App.states.length + ' cached' : '';
-    $('#st-mode').textContent = App.lastRun ? (App.lastRun.mode === 'full' ? 'Full' : 'Sample ' + PQ.fmtInt(Store.project.settings.previewRows)) : '';
     renderEngineState(UI.Engine.state);
     renderRibbonState();
   }
+  const engineLabel = (e) => (e === 'polars' ? 'Polars' : 'Built-in');
+  function runData(lr) { return lr.mode === 'full' ? 'Full' : lr.truncated ? 'Sample ' + PQ.fmtInt(Store.project.settings.previewRows) : 'All rows'; }
   function renderEngineState(state) {
-    const dot = $('#engine-dot'), lbl = $('#engine-label');
-    dot.className = 'engine-dot' + (state === 'busy' ? ' busy' : state === 'restarting' || state === 'starting' ? ' dead' : '');
-    lbl.textContent = { idle: 'Ready', busy: 'Working', starting: 'Starting', restarting: 'Restarting' }[state] || state;
-    const eng = UI.Engine.lastEngine === 'polars' ? 'Polars' : UI.NativeEngine.available() ? 'Built-in' : null;
-    if (eng && state === 'idle') lbl.textContent += ' · ' + eng;
+    const chip = $('#engine-chip'); if (!chip) return;
+    const lr = UI.Engine.lastRun;
+    const dot = chip.querySelector('.engine-dot'), name = chip.querySelector('.engine-name'), meta = chip.querySelector('.engine-meta');
+    const busy = state === 'busy', dead = state === 'starting' || state === 'restarting';
+    dot.className = 'engine-dot' + (busy ? ' busy' : dead ? ' dead' : lr && lr.failed ? ' err' : '');
+    if (dead) { name.textContent = state === 'starting' ? 'Starting' : 'Restarting'; meta.textContent = ''; }
+    else if (busy) { name.textContent = lr ? engineLabel(lr.engine) : 'Working'; meta.textContent = 'Working…'; }
+    else if (lr) { name.textContent = engineLabel(lr.engine) + (lr.fellBack ? ' ↺' : ''); meta.textContent = (lr.failed ? 'Error' : UI.fmtMs(lr.ms)) + ' · ' + runData(lr); }
+    else { name.textContent = UI.NativeEngine.available() ? 'Polars' : 'Built-in'; meta.textContent = 'Ready'; }
+    chip.setAttribute('aria-label', 'Engine: ' + name.textContent.replace(' ↺', ', fell back to built-in') + (meta.textContent ? ', ' + meta.textContent : '') + '. Show details');
+    chip.title = lr && lr.fellBack && lr.reason ? lr.reason : 'Engine details';
   }
+  function engineDetails() {
+    const lr = UI.Engine.lastRun, N = UI.NativeEngine, native = PQ.Platform.native;
+    const q = lr && Store.query(lr.qid);
+    const row = (k, v) => [h('dt', k), h('dd', v)];
+    const eng = lr ? lr.engine : N.available() ? 'polars' : 'built-in';
+    const engName = eng === 'polars' ? 'Polars ' + ((N.info && N.info.polars) || '') : 'Built-in (JavaScript)';
+    const where = native ? (eng === 'polars' ? 'Natively on this computer. Files are read straight from disk.' : 'On this computer, in a background worker. Files are read from disk.') : 'On this device, in a background worker. Files never leave your browser.';
+    const kv = [row('Engine', engName), row('Runs', where)];
+    if (lr) {
+      kv.push(row('Last run', (q ? q.name + ' · ' : '') + 'step ' + (lr.upto + 1) + ' of ' + lr.total));
+      kv.push(row('Data', lr.mode === 'full' ? 'Full data' : lr.truncated ? 'Sample: first ' + PQ.fmtInt(Store.project.settings.previewRows) + ' rows' : 'All rows (fits in the preview)'));
+      kv.push(row('Result', lr.failed ? 'Error: ' + (lr.error || 'failed') : PQ.fmtInt(lr.n) + ' rows × ' + lr.cols + ' columns'));
+      kv.push(row('Time', UI.fmtMs(lr.ms) + (lr.engine === 'built-in' && lr.cached ? ' · ' + lr.cached + ' of ' + lr.total + ' steps reused' : '')));
+      if (lr.note) kv.push(row('Note', lr.note));
+    }
+    if (native && N.ready) kv.push(row('Why', !lr ? '—' : lr.engine === 'polars' ? 'Every step in this query is supported by Polars.' : N.disabled ? 'Polars is turned off.' : lr.reason || 'Built-in engine.'));
+    const prefer = native && N.ready ? h('label.check', h('input', { type: 'checkbox', checked: !N.disabled, on: { change: (e) => { N.setEnabled(e.target.checked); App.refresh({ keepScroll: true }); } } }), 'Prefer Polars when the query supports it') : null;
+    const m = UI.modal({
+      title: 'Engine', icon: 'fa-microchip',
+      body: h('div.col', h('dl.kv.engine-kv', kv.flat()), prefer, !native ? h('p.faint', { style: { margin: 0, fontSize: '12px' } }, 'The desktop app can also run queries on Polars, a native engine for large files.') : null),
+      footer: Store.query() ? [h('button.btn', { on: { click: () => { m.close(true); if (lr && lr.mode === 'full') App.setMode('preview'); else App.runFull(); } } }, lr && lr.mode === 'full' ? 'Back to sample' : 'Run on full data')] : null,
+    });
+  }
+  App.engineDetails = engineDetails;
 
   /* ================================ column menus ================================ */
   function filteredCols() {
@@ -878,7 +908,8 @@
     try {
       const r = await UI.Engine.call('exportQuery', { qid: q.id, format: fmt, limit: fmt === 'tsv' ? 100000 : undefined }, (p) => App.progress(p));
       if (fmt === 'tsv') { await UI.copy(r.data, 'Copied ' + PQ.fmtInt(Math.min(r.rows, 100000)) + ' rows — paste straight into Excel or Sheets.'); }
-      else { UI.download(PQ.snake(q.name) + '.' + fmt, r.data, r.mime); UI.toast('Exported ' + PQ.fmtInt(r.rows) + ' rows (full data) to ' + PQ.snake(q.name) + '.' + fmt, 'ok'); }
+      else if (r.written) UI.toast('Exported ' + PQ.fmtInt(r.rows) + ' rows with Polars to ' + String(r.path).split(/[\\/]/).pop(), 'ok');
+      else { const where = await UI.download(PQ.snake(q.name) + '.' + fmt, r.data, r.mime); if (where) UI.toast('Exported ' + PQ.fmtInt(r.rows) + ' rows (full data) to ' + String(where).split(/[\\/]/).pop(), 'ok'); }
     } catch (e) { if (!e.cancelled) UI.toast('Export failed: ' + e.message, 'err'); }
     finally { App.busy(null); }
   }
@@ -911,6 +942,7 @@
     ], x, y);
     $('#btn-file-menu').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); fileMenu(r.left, r.bottom + 2); });
     $('#save-state').addEventListener('click', () => UI.saveProject());
+    $('#engine-chip').addEventListener('click', engineDetails);
     $('#btn-theme').addEventListener('click', toggleTheme);
     $('#btn-export').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); const noQ = !Store.query(); UI.menu([{ label: 'Excel workbook (.xlsx)', icon: 'fa-file-excel', disabled: noQ, run: () => exportAs('xlsx') }, { label: 'CSV', icon: 'fa-file-csv', disabled: noQ, run: () => exportAs('csv') }, { label: 'Parquet', icon: 'fa-cubes', disabled: noQ, run: () => exportAs('parquet') }, { label: 'Arrow IPC / Feather', icon: 'fa-cube', disabled: noQ, run: () => exportAs('arrow') }, { label: 'Copy to clipboard (TSV)', icon: 'fa-clipboard', disabled: noQ, run: () => exportAs('tsv') }, '-', { label: 'Python script…', icon: 'fa-brands fa-python', disabled: !Store.project.queries.length, run: () => UI.pythonDialog(Store.ui.activeQid) }, { label: 'Project file (.floe)', icon: 'fa-file-code', run: () => UI.saveProject(true) }], Math.min(r.left, innerWidth - 240), r.bottom + 2); });
     UI.$$('#right-tabs button').forEach((b) => b.addEventListener('click', () => { Store.setUI({ rightTab: b.dataset.tab }); if (b.dataset.tab === 'profile') loadProfile(); }));

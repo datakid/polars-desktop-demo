@@ -1,4 +1,4 @@
-/* PQX formula language (mirrors crate pq-expr).
+/* Floe formula language.
  *   if [Sales] > 1000 and [Region] = "EU" then "Key" else "Other"
  *   Text.Upper([Name]) & " (" & Text.From(Date.Year([OrderDate])) & ")"
  *   try Number.From([Amount]) otherwise 0

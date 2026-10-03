@@ -115,10 +115,8 @@
     </main>
 
     <footer id="status-bar">
-      <span><span class="engine-dot" id="engine-dot"></span><span id="engine-label">Starting</span></span>
+      <button type="button" id="engine-chip" class="engine-chip" aria-haspopup="dialog" aria-label="Engine status"><span class="engine-dot dead" aria-hidden="true"></span><span class="engine-name">Starting</span><span class="engine-meta"></span></button>
       <span class="sep"></span><span id="st-rows">—</span>
-      <span class="sep"></span><span id="st-mode"></span>
-      <span class="sep"></span><span id="st-time"></span>
       <span class="sep"></span><span id="st-cache"></span>
       <span class="grow"></span>
       <span class="env-badge" id="env-badge">Web</span>
@@ -136,7 +134,6 @@
   <script src="js/engine-ext.js"></script>
   <script src="js/platform.js"></script>
   <script src="js/ui/core.js"></script>
-  <script src="js/native-engine.js"></script>
   <script src="js/ui/grid.js"></script>
   <script src="js/ui/formula-editor.js"></script>
   <script src="js/ui/step-dialogs.js"></script>

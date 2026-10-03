@@ -1,7 +1,7 @@
 {
   "name": "floe-desktop",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Floe desktop (Tauri 2 shell around the Floe web app)",
   "type": "module",
   "scripts": {
@@ -13,6 +13,9 @@
     "prebuild": "node scripts/ensure-icons.mjs",
     "build": "tauri build",
     "build:debug": "node scripts/ensure-icons.mjs && tauri build --debug",
+    "dev:polars": "node scripts/ensure-icons.mjs && tauri dev --features polars-engine",
+    "build:polars": "node scripts/ensure-icons.mjs && tauri build --features polars-engine",
+    "test:engine": "cargo test --manifest-path src-tauri/engine/Cargo.toml",
     "check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri"
   },

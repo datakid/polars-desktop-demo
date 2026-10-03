@@ -1,5 +1,4 @@
-/* PQX UI core: DOM helpers, toasts, menus, modals, engine supervisor, project store with undo/redo.
- * In the Tauri build: the engine client talks to src-tauri commands; the supervisor lives in Rust. */
+/* UI core: DOM helpers, toasts, menus, modals, engine supervisor and router, project store with undo/redo. */
 (function () {
   const PQ = self.PQ;
   const UI = (PQ.UI = {});
@@ -176,7 +175,7 @@
       if (e.key === 'Escape' && !e.target.closest('.ac')) { e.stopPropagation(); close(); }
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doOk(); }
     });
-    setTimeout(() => { const f = m.querySelector('[autofocus]') || m.querySelector('.modal-b input, .modal-b select, .modal-b textarea'); if (f) f.focus(); }, 30);
+    setTimeout(() => { const f = m.querySelector('[autofocus]') || m.querySelector('.modal-b input, .modal-b select, .modal-b textarea') || m.querySelector('.modal-h .close'); if (f) f.focus(); }, 30);
     return api;
   };
   UI.anyModal = () => modalStack.length > 0;
@@ -188,7 +187,15 @@
   });
 
   /* ================================ Engine supervisor ================================ */
-  const Engine = (UI.Engine = { worker: null, pending: new Map(), seq: 0, restarts: 0, state: 'starting', listeners: new Set(), lastProject: null });
+  if (!UI.NativeEngine) UI.NativeEngine = { ready: false, info: null, available: () => false, status: () => ({ ready: false }), shouldRun: () => false, call: () => Promise.reject(new Error('No native engine')), cancel() {}, init: async () => false, setEnabled() {} };
+  const Engine = (UI.Engine = { worker: null, pending: new Map(), seq: 0, restarts: 0, state: 'starting', listeners: new Set(), lastProject: null, lastRun: null, nativeReason: null });
+  function noteRun(msg, r, engine, fellBack) {
+    if (!r || msg.draft) return r;
+    const st = r.states || [];
+    const last = st[st.length - 1] || {};
+    Engine.lastRun = { engine, fellBack: !!fellBack, reason: fellBack ? Engine.nativeReason : null, qid: msg.qid, upto: st.length - 1, total: st.length, mode: msg.mode || 'preview', ms: r.ms || 0, n: r.n || 0, cols: (r.schema || []).length, truncated: !!r.truncated, cached: st.filter((s) => s && s.cached).length, failed: r.failedAt >= 0 && !r.resultId, error: r.failedAt >= 0 && st[r.failedAt] ? st[r.failedAt].error : null, note: r.note || null };
+    return r;
+  }
   Engine.start = function () {
     Engine.state = 'starting'; notify();
     const w = new Worker('js/worker.js');
@@ -230,16 +237,25 @@
   /** Router: native Polars engine when eligible, built-in engine otherwise (and as fallback). */
   Engine.call = function (op, msg, onProgress, transfer) {
     const N = UI.NativeEngine;
-    if (N && Engine.lastProject && N.shouldRun(op, msg || {}, Engine.lastProject)) {
+    msg = msg || {};
+    const isEval = op === 'evaluate';
+    if (N.available() && Engine.lastProject && N.shouldRun(op, msg, Engine.lastProject)) {
       Engine.state = 'busy'; notify();
       Engine.nativeInFlight = (Engine.nativeInFlight || 0) + 1;
-      return N.call(op, msg).then((r) => { Engine.lastEngine = op === 'evaluate' ? 'polars' : Engine.lastEngine; return r; }, (e) => {
-        if (op === 'evaluate') { if (!e.fallback) console.warn('native engine fell back:', e); Engine.lastEngine = 'built-in'; return Engine.callWorker(op, msg, onProgress, transfer); }
+      return N.call(op, msg, onProgress).then((r) => { if (isEval) { Engine.lastEngine = 'polars'; noteRun(msg, r, 'polars', false); } return r; }, (e) => {
+        if (e && e.cancelled) throw e;
+        if (isEval || op === 'exportQuery' || op === 'refreshAll') {
+          if (!e.fallback) { console.warn('Polars engine fell back:', e); Engine.nativeReason = 'Polars error: ' + (e.message || e); }
+          Engine.lastEngine = 'built-in';
+          return Engine.callWorker(op, msg, onProgress, transfer).then((r) => (isEval ? noteRun(msg, r, 'built-in', true) : r));
+        }
         throw e;
       }).finally(() => { Engine.nativeInFlight--; if (!Engine.pending.size && !Engine.nativeInFlight) { Engine.state = 'idle'; notify(); } });
     }
-    if (op === 'evaluate') Engine.lastEngine = 'built-in';
-    return Engine.callWorker(op, msg, onProgress, transfer);
+    if (!isEval) return Engine.callWorker(op, msg, onProgress, transfer);
+    Engine.lastEngine = 'built-in';
+    const fellBack = N.available() && !msg.draft;
+    return Engine.callWorker(op, msg, onProgress, transfer).then((r) => noteRun(msg, r, 'built-in', fellBack), (e) => { if (!msg.draft) Engine.lastRun = Object.assign({}, Engine.lastRun || {}, { failed: true, error: e.message, engine: 'built-in' }); throw e; });
   };
   Engine.callWorker = function (op, msg, onProgress, transfer) {
     const id = ++Engine.seq;

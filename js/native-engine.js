@@ -1,35 +1,25 @@
-/* Native Polars engine adapter (desktop only).
- * Talks to the Tauri shell's `engine_*` commands, which supervise the `floe-engine` process.
- * Pages arrive as Arrow IPC bytes and are decoded with apache-arrow into the same row shape the
- * built-in engine produces, so the grid, profile and filter UI don't know which engine ran.
- *
- * Routing (UI.Engine.call):
- *   evaluate  → native when the engine is installed, the query and its references use only supported
- *               steps, every file source has a real path, and no draft step is being previewed.
- *   page / profile / distinct → the engine that produced the resultId.
- *   everything else → built-in engine.
- * Any native failure falls back to the built-in engine for that call. */
 (function () {
   const PQ = self.PQ, UI = PQ.UI;
   const T = self.__TAURI__;
   const inv = (c, a) => T.core.invoke(c, a);
-  const N = (UI.NativeEngine = { ready: false, info: null, supported: new Set(), results: new Set(), projectSent: null, disabled: false });
+  const N = (UI.NativeEngine = { ready: false, info: null, results: new Set(), disabled: false, gen: 0 });
+  const schemas = new Map();
 
   N.available = () => N.ready && !N.disabled;
   N.status = () => ({ ready: N.available(), polars: N.info && N.info.polars, version: N.info && N.info.version });
 
-  const loadArrow = () => (self.Arrow ? Promise.resolve() : new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'vendor/arrow.es2015.min.js'; s.onload = res; s.onerror = () => rej(new Error('arrow failed to load')); document.head.appendChild(s); }));
+  const loadScript = (src, test) => (test() ? Promise.resolve() : new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error(src + ' failed to load')); document.head.appendChild(s); }));
+
   N.init = async function () {
     if (!PQ.Platform.native) return false;
     try {
       const s = await inv('engine_status');
       if (!s || !s.available || !s.info) return false;
-      await loadArrow();
+      await Promise.all([loadScript('vendor/arrow.es2015.min.js', () => !!self.Arrow), loadScript('js/plan.js', () => !!PQ.Plan)]);
       N.info = s.info;
-      N.supported = new Set(s.info.supported || []);
       N.ready = true;
       N.disabled = localStorage.getItem('floe.nativeEngine') === 'off';
-    } catch (e) { console.warn('native engine unavailable', e); }
+    } catch (e) { console.warn('Polars engine unavailable', e); }
     return N.ready;
   };
 
@@ -38,66 +28,47 @@
     (UI.App.files || []).forEach((f) => { if (f.path) m[f.id] = f.path; });
     return m;
   }
-  async function sync(project) {
-    const key = PQ.hash(JSON.stringify(project) + JSON.stringify(filesMap()));
-    if (N.projectSent === key) return;
-    await inv('engine_call', { op: 'setProject', args: { project, files: filesMap() } });
-    N.projectSent = key;
+  function lower(project, qid, upto) {
+    const r = PQ.Plan.lower(project, qid, { upto, files: filesMap() });
+    UI.Engine.nativeReason = r.ok ? null : r.reason;
+    return r;
   }
-
-  /** Cheap client-side check first; the engine confirms with canRun (covers referenced queries). */
-  function clientEligible(project, qid) {
-    const byId = new Map(project.queries.map((q) => [q.id, q]));
-    const files = filesMap();
-    const seen = new Set();
-    const ok = (id) => {
-      if (seen.has(id)) return true;
-      seen.add(id);
-      const q = byId.get(id); if (!q) return false;
-      for (const s of q.steps) {
-        if (s.disabled) continue;
-        const k = s.kind;
-        if (!N.supported.has(k.type)) return false;
-        if (k.type === 'Source') {
-          const src = k.source || {};
-          if (src.kind === 'folder' || src.kind === 'database') return false;
-          if (src.kind === 'file' && !files[src.fileId]) return false;
-          if (src.kind === 'file' && src.item && (src.item.type === 'sheets' || src.item.type === 'name')) return false;
-          if (src.kind === 'query' && !ok(src.query)) return false;
-        }
-        if (k.type === 'Merge' && !ok(k.right)) return false;
-        if (k.type === 'Append' && !(k.others || []).every(ok)) return false;
-      }
-      return true;
-    };
-    return ok(qid);
-  }
+  const pending = new Map();
 
   N.shouldRun = function (op, msg, project) {
-    if (!N.available()) return false;
+    if (!N.available()) { UI.Engine.nativeReason = N.disabled ? 'Polars is turned off' : null; return false; }
     if (op === 'page' || op === 'profile' || op === 'distinct') return N.results.has(msg.resultId);
-    if (op === 'evaluate') return !msg.draft && clientEligible(project, msg.qid);
+    if (op === 'evaluate') {
+      if (msg.draft) return false;
+      const r = lower(project, msg.qid, msg.upto);
+      if (r.ok) pending.set(msg, r.plan);
+      return r.ok;
+    }
+    if (op === 'exportQuery') {
+      if (!['csv', 'xlsx', 'parquet', 'arrow'].includes(msg.format)) return false;
+      const r = lower(project, msg.qid);
+      if (r.ok) pending.set(msg, r.plan);
+      return r.ok;
+    }
     return false;
   };
 
-  /* ---------- Arrow → rows in the built-in engine's wire shape ---------- */
   const ERR = '__err_';
   function decodePage(buf, schema) {
     const table = Arrow.tableFromIPC(new Uint8Array(buf));
-    const names = schema.map((c) => c.name);
-    const cols = names.map((n) => table.getChild(n));
-    const errCols = names.map((n) => table.getChild(ERR + n));
+    const cols = schema.map((c) => table.getChild(c.name));
+    const errCols = schema.map((c) => table.getChild(ERR + c.name));
     const rows = new Array(table.numRows);
     for (let r = 0; r < table.numRows; r++) {
-      const row = new Array(names.length);
-      for (let c = 0; c < names.length; c++) {
+      const row = new Array(schema.length);
+      for (let c = 0; c < schema.length; c++) {
         const t = schema[c].type;
         if (errCols[c] && errCols[c].get(r)) { row[c] = { __err: 'Cannot convert to ' + (PQ.TYPES[t] || PQ.TYPES.any).label }; continue; }
         let v = cols[c] ? cols[c].get(r) : null;
         if (v === undefined) v = null;
         if (v !== null) {
           if (typeof v === 'bigint') v = Number(v);
-          if (t === 'date' || t === 'datetime') v = new Date(Number(v));
+          if (t === 'date' || t === 'datetime') v = new Date(typeof v === 'number' ? v : Number(v));
           else if (typeof v === 'object' && !(v instanceof Date)) v = String(v);
         }
         row[c] = v;
@@ -106,40 +77,48 @@
     }
     return rows;
   }
-  const schemas = new Map(); // resultId → schema
+
+  function page(resultId, offset, count) {
+    return inv('engine_page', { resultId, offset, count }).then((buf) => decodePage(buf, schemas.get(resultId) || []));
+  }
+
+  function guard(gen, v) {
+    if (gen !== N.gen) { const e = new Error('Cancelled by user'); e.cancelled = true; throw e; }
+    return v;
+  }
 
   N.call = async function (op, msg) {
-    const project = UI.Engine.lastProject;
+    const gen = N.gen;
     if (op === 'evaluate') {
-      await sync(project);
-      const can = await inv('engine_call', { op: 'canRun', args: { qid: msg.qid } });
-      if (!can.ok) { const e = new Error('fallback'); e.fallback = true; throw e; }
-      const r = await inv('engine_call', { op: 'evaluate', args: { qid: msg.qid, upto: msg.upto, mode: msg.mode } });
-      // Map native step states onto the UI's shape.
-      r.states = (r.states || []).map((s) => ({ ok: s.ok, error: s.error, rows: s.rows, cols: s.cols, ms: s.ms, cached: false }));
-      if (r.failedAt === -1) r.failedAt = -1;
-      if (r.resultId) {
-        N.results.add(r.resultId);
-        schemas.set(r.resultId, r.schema);
-        r.firstPage = await N.call('page', { resultId: r.resultId, offset: 0, count: 200 }).then((p) => p.rows);
-        // Suggestions come from the built-in engine's heuristics on the preview sample (cached, cheap).
-        r.suggestions = msg.mode === 'full' ? [] : await UI.Engine.callWorker('evaluate', { qid: msg.qid, upto: msg.upto, mode: 'preview' }).then((x) => x.suggestions || [], () => []);
-        // Keep every state's schema for the Schema tab on the selected step.
-        const last = r.states[r.states.length - 1];
-        if (last) last.schema = r.schema;
-      }
-      r.engine = 'polars';
-      return r;
+      const plan = pending.get(msg); pending.delete(msg);
+      const project = UI.Engine.lastProject;
+      const r = guard(gen, await inv('engine_call', { op: 'evaluate', args: { plan, mode: msg.mode || 'preview', previewRows: project.settings.previewRows } }));
+      N.results.add(r.resultId);
+      schemas.set(r.resultId, r.schema);
+      while (N.results.size > 12) { const old = N.results.values().next().value; N.results.delete(old); schemas.delete(old); }
+      const q = project.queries.find((x) => x.id === msg.qid);
+      const upto = msg.upto === undefined || msg.upto === null ? q.steps.length - 1 : msg.upto;
+      const states = q.steps.slice(0, upto + 1).map((s, i) => (i === upto ? { ok: true, rows: r.n, cols: r.schema.length, schema: r.schema, ms: r.ms, cached: false, truncated: r.truncated } : { ok: true, rows: 0, cols: 0, ms: 0, cached: false, native: true }));
+      const out = { resultId: r.resultId, n: r.n, schema: r.schema, quality: r.quality, states, ms: r.ms, truncated: r.truncated, failedAt: -1, fp: null, engine: 'polars', note: 'Polars runs the whole query at once, so row counts are shown for the selected step only.' };
+      out.firstPage = guard(gen, await page(r.resultId, 0, 200));
+      out.suggestions = await UI.Engine.callWorker('evaluate', { qid: msg.qid, upto: msg.upto, mode: 'preview' }).then((x) => { out.fp = x.fp || null; return x.suggestions || []; }, () => []);
+      return out;
     }
-    if (op === 'page') {
-      const buf = await T.core.invoke('engine_page', { resultId: msg.resultId, offset: msg.offset, count: msg.count });
-      return { rows: decodePage(buf, schemas.get(msg.resultId) || []) };
+    if (op === 'exportQuery') {
+      const plan = pending.get(msg); pending.delete(msg);
+      const q = UI.Engine.lastProject.queries.find((x) => x.id === msg.qid);
+      const ext = msg.format === 'arrow' ? 'arrow' : msg.format;
+      const path = await inv('pick_save', { defaultName: PQ.snake(q.name) + '.' + ext });
+      if (!path) { const e = new Error('Cancelled'); e.cancelled = true; throw e; }
+      const r = guard(gen, await inv('engine_call', { op: 'export', args: { plan, format: msg.format, path, sheet: q.name } }));
+      return { rows: r.rows, path, written: true };
     }
+    if (op === 'page') return { rows: await page(msg.resultId, msg.offset, msg.count) };
     if (op === 'profile') return inv('engine_call', { op: 'profile', args: { resultId: msg.resultId, col: msg.col } });
     if (op === 'distinct') return inv('engine_call', { op: 'distinct', args: { resultId: msg.resultId, col: msg.col } });
-    throw new Error('native: unsupported op ' + op);
+    throw new Error('Polars: unsupported op ' + op);
   };
 
-  N.cancel = function () { if (N.ready) inv('engine_cancel').catch(() => {}); };
-  N.setEnabled = function (on) { N.disabled = !on; localStorage.setItem('floe.nativeEngine', on ? 'on' : 'off'); };
+  N.cancel = function () { N.gen++; if (N.ready) inv('engine_cancel').catch(() => {}); };
+  N.setEnabled = function (on) { N.disabled = !on; try { localStorage.setItem('floe.nativeEngine', on ? 'on' : 'off'); } catch (e) { } };
 })();

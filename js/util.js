@@ -1,11 +1,9 @@
-/* PQX — core utilities: Table, types, casting, locales, hashing, A1 ranges, IndexedDB file store.
- * In the Tauri build these responsibilities live in Rust crates (pq-model / pq-compiler / pq-cache).
- * The browser prototype mirrors the same contracts so the UI can be developed against it. */
+/* Core utilities: Table, types, casting, locales, hashing, A1 ranges, IndexedDB file store. */
 (function () {
   const PQ = (self.PQ = self.PQ || {}); // `self` works both on the page and inside the engine Web Worker
   /** Product identity — the only place the name lives. */
   PQ.BRAND = { name: 'Floe', tagline: 'Data preparation', full: 'Floe — data preparation', ext: 'floe', cli: 'floe', id: 'dev.floe.desktop' };
-  PQ.VERSION = '1.0.0';
+  PQ.VERSION = '1.1.0';
 
   /* ---------- Per-cell errors (Polars has none; we add them, like the plan's error mask) ---------- */
   class CellError {

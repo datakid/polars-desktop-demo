@@ -1,5 +1,5 @@
 /* Formula editor: syntax highlighting, schema-aware validation with positioned error underline,
- * autocomplete for [columns], Functions and @parameters. (Monaco in the Tauri build.) */
+ * autocomplete for [columns], Functions and @parameters. */
 (function () {
   const PQ = self.PQ, UI = PQ.UI, h = UI.h;
 

@@ -1,4 +1,4 @@
-const VERSION = 'floe-1.0.0-dev';
+const VERSION = 'floe-1.1.0-dev';
 const SHARE_CACHE = 'floe-share';
 const CORE = [
   './',
@@ -14,6 +14,7 @@ const CORE = [
   './vendor/hyparquet-compressors.min.js',
   './vendor/hyparquet-writer.min.js',
   './js/demo.js',
+  './js/plan.js',
   './js/util.js',
   './js/storage.js',
   './js/expr.js',
@@ -24,7 +25,6 @@ const CORE = [
   './js/host.js',
   './js/worker.js',
   './js/platform.js',
-  './js/native-engine.js',
   './js/ui/core.js',
   './js/ui/grid.js',
   './js/ui/formula-editor.js',

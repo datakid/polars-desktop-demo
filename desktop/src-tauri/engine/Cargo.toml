@@ -1,0 +1,23 @@
+[package]
+name = "floe-engine"
+version = "1.1.0"
+edition = "2021"
+license = "MIT"
+description = "Floe Polars engine: executes JSON query plans produced by js/plan.js"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+polars = { version = "=0.46.0", features = [
+  "lazy", "csv", "parquet", "ipc", "strings", "regex", "temporal",
+  "dtype-date", "dtype-datetime", "dtype-struct", "is_in", "cum_agg", "rank",
+  "round_series", "rolling_window", "concat_str", "diagonal_concat", "cross_join",
+  "semi_anti_join", "is_first_distinct", "is_unique", "abs"
+] }
+calamine = "0.26"
+rust_xlsxwriter = "0.79"
+serde_json = "1"
+
+[dev-dependencies]
+serde_json = "1"

@@ -1,6 +1,4 @@
-/* PQX I/O — CSV sniffing/parsing, Excel navigator + reader (mirrors crates pq-connectors / pq-excel),
- * sample-data generation and output writers. Runs inside the engine worker. Uses SheetJS (global XLSX)
- * as the stand-in for calamine / rust_xlsxwriter. */
+/* I/O: CSV sniffing/parsing, Excel navigator and reader (SheetJS), sample data, output writers. */
 (function () {
   const PQ = self.PQ;
   const { Table, CellError } = PQ;

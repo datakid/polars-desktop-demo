@@ -1,4 +1,4 @@
-/* PQX step catalog + code generation (mirrors crates pq-model and pq-codegen).
+/* Step catalog and Polars Python code generation.
  * Shared by the UI thread and the engine worker. Pure functions only. */
 (function () {
   const PQ = self.PQ;

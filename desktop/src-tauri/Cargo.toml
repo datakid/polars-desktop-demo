@@ -1,6 +1,9 @@
+[workspace]
+members = [".", "engine"]
+
 [package]
 name = "floe"
-version = "1.0.0"
+version = "1.1.0"
 description = "Floe — data preparation on your desktop"
 authors = ["Floe"]
 license = "MIT"
@@ -20,6 +23,12 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync"] }
+
+floe-engine = { path = "engine", optional = true }
+
+[features]
+default = []
+polars-engine = ["dep:floe-engine"]
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"

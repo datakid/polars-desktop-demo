@@ -1,6 +1,4 @@
-/* PQX engine — step executors + query compiler with fingerprint cache (mirrors crate pq-compiler).
- * Runs inside the engine Web Worker (the browser stand-in for the separate engine process):
- * cancelling = terminating the worker, a crash never takes down the UI. */
+/* Built-in engine: step executors and the query evaluator with a fingerprint cache. Runs in the engine Web Worker. */
 (function () {
   const PQ = self.PQ;
   const { Table, CellError, isErr, StepError, MissingColumnError, Formula } = PQ;

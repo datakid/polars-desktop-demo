@@ -1,6 +1,4 @@
-/* PQX engine host — the message protocol of the engine process (mirrors crate pq-worker).
- * Control messages are plain objects (MessagePack in the Rust build); pages of rows are sent on demand
- * (Arrow IPC slices in the Rust build). The UI never receives whole tables. */
+/* Engine message protocol. Pages of rows are sent on demand; the UI never receives whole tables. */
 (function () {
   const PQ = self.PQ;
   const E = PQ.Engine;

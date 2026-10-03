@@ -274,7 +274,7 @@ fn app_info(app: AppHandle) -> Value {
         "tauri": tauri::VERSION,
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
-        "nativeEngine": false
+        "nativeEngine": cfg!(feature = "polars-engine")
     })
 }
 
@@ -430,13 +430,72 @@ fn take_launch_files(launch: State<'_, Launch>) -> LaunchFiles {
     std::mem::take(&mut *launch.pending.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
-#[tauri::command]
-fn engine_status() -> Value {
-    json!({ "available": false })
+#[cfg(not(feature = "polars-engine"))]
+mod engine_cmds {
+    use super::*;
+    #[tauri::command]
+    pub fn engine_status() -> Value {
+        json!({ "available": false })
+    }
+    #[tauri::command]
+    pub fn engine_cancel() {}
+    #[tauri::command]
+    pub async fn engine_call(_op: String, _args: Value) -> Result<Value, String> {
+        Err("This build has no Polars engine".into())
+    }
+    #[tauri::command]
+    pub async fn engine_page(_result_id: String, _offset: usize, _count: usize) -> Result<Response, String> {
+        Err("This build has no Polars engine".into())
+    }
 }
 
-#[tauri::command]
-fn engine_cancel() {}
+#[cfg(feature = "polars-engine")]
+mod engine_cmds {
+    use super::*;
+    fn allowed_paths(v: &Value, grants: &Grants) -> Result<(), String> {
+        match v {
+            Value::Object(o) => {
+                if let Some(Value::String(p)) = o.get("path") {
+                    if !grants.allowed(Path::new(p)) {
+                        return Err(format!("Floe has no permission to read {p}. Open it again from the file picker."));
+                    }
+                }
+                o.values().try_for_each(|x| allowed_paths(x, grants))
+            }
+            Value::Array(a) => a.iter().try_for_each(|x| allowed_paths(x, grants)),
+            _ => Ok(()),
+        }
+    }
+    #[tauri::command]
+    pub fn engine_status() -> Value {
+        floe_engine::status()
+    }
+    #[tauri::command]
+    pub fn engine_cancel() {
+        floe_engine::cancel()
+    }
+    #[tauri::command]
+    pub async fn engine_call(grants: State<'_, Grants>, op: String, args: Value) -> Result<Value, String> {
+        if let Some(plan) = args.get("plan") {
+            allowed_paths(plan, &grants)?;
+        }
+        if op == "export" {
+            let p = args["path"].as_str().unwrap_or("");
+            if !grants.allowed(Path::new(p)) {
+                return Err(format!("Floe has no permission to write {p}. Use Save As."));
+            }
+        }
+        tauri::async_runtime::spawn_blocking(move || std::panic::catch_unwind(|| floe_engine::call(&op, &args)).unwrap_or_else(|_| Err("Polars engine crashed on this query".into())))
+            .await
+            .map_err(|e| e.to_string())?
+    }
+    #[tauri::command]
+    pub async fn engine_page(result_id: String, offset: usize, count: usize) -> Result<Response, String> {
+        let bytes = tauri::async_runtime::spawn_blocking(move || floe_engine::page(&result_id, offset, count)).await.map_err(|e| e.to_string())??;
+        Ok(Response::new(bytes))
+    }
+}
+use engine_cmds::{engine_call, engine_cancel, engine_page, engine_status};
 
 #[cfg(target_os = "macos")]
 fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
@@ -605,7 +664,9 @@ pub fn run() {
             file_stat,
             take_launch_files,
             engine_status,
-            engine_cancel
+            engine_cancel,
+            engine_call,
+            engine_page
         ])
         .build(tauri::generate_context!())
         .expect("error while building Floe")

@@ -32,8 +32,9 @@ if (target === 'desktop') {
 }
 
 const COMMON = ['index.html', 'demo.html', 'manifest.webmanifest', 'css', 'js', 'vendor', 'fonts', 'images'];
-const WEB_ONLY = ['sw.js', 'tests.html', 'tests-ui.html', '404.html', 'robots.txt'];
-const DESKTOP_SKIP = new Set(['js/tests.js']);
+const WEB_ONLY = ['sw.js', 'tests.html', 'tests-ui.html', 'bench.html', '404.html', 'robots.txt'];
+const DESKTOP_SKIP = new Set(['js/tests.js', 'js/bench.js']);
+const WEB_SKIP = new Set(['js/native-engine.js']);
 const REQUIRED = [
   'index.html', 'css/app.css', 'js/util.js', 'js/worker.js', 'js/ui/app.js',
   'vendor/xlsx.full.min.js', 'vendor/alasql.min.js', 'vendor/arrow.es2015.min.js',
@@ -58,6 +59,7 @@ for (const e of entries) {
       const r = rel(s);
       if (/(^|\/)\.[^/]+$/.test(r) && r !== '.') return false;
       if (target === 'desktop' && DESKTOP_SKIP.has(r)) return false;
+      if (target === 'web' && WEB_SKIP.has(r)) return false;
       return true;
     },
   });

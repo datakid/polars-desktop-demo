@@ -1,4 +1,14 @@
-# Floe 1.0 — data preparation, web and desktop
+# Floe 1.1 — data preparation, web and desktop
+
+## What's new in 1.1
+- **Engine indicator** in the status bar: `● Built-in · 42 ms · Sample 1,000`. Click it (or press Enter on it) for engine, location, last run, data scope and, on desktop, why that engine ran. The dot shows idle, busy, starting or error. On phones it shrinks to the dot and engine name.
+- **Polars engine for desktop** (optional build, `--features polars-engine`):
+  - `js/plan.js` lowers a query into a JSON plan, or refuses with a reason naming the step.
+  - `desktop/src-tauri/engine` (crate `floe-engine`, Polars 0.46, calamine, rust_xlsxwriter) executes the plan.
+  - Pages come back as Arrow IPC. Exports are written straight to the chosen path.
+  - Anything Polars can't run falls back to the built-in engine automatically, and the indicator shows `Built-in ↺` with the reason.
+- **Web ships no native-engine code.** `native-engine.js` is loaded only inside Tauri and is excluded from the web build.
+- Engine tests: 86 (8 new plan-lowering tests). Rust tests are in `desktop/src-tauri/engine/tests/plan.rs`.
 
 Clean and reshape messy spreadsheets with replayable steps. Excel, CSV, JSON, Parquet and Arrow IPC in; Excel, CSV, Parquet, Arrow or a Polars Python script out. Everything runs locally — files are never uploaded.
 
@@ -6,7 +16,7 @@ One codebase ships two ways:
 
 | | Web (Vercel / any static host) | Desktop (Tauri 2) |
 |---|---|---|
-| Engine | Built-in columnar JS engine in a Web Worker | Same built-in engine (no Polars sidecar in 1.0) |
+| Engine | Built-in columnar JS engine in a Web Worker | Built-in engine; Polars in the `polars` build for supported queries |
 | Files | File System Access API on Chromium, copies elsewhere | Native open/save dialogs, real paths, files stay linked |
 | Save | In-place on Chromium, download elsewhere | In-place atomic write to the `.floe` file |
 | Refresh | Re-reads linked files that changed | Re-reads files whose size/mtime changed on disk |
@@ -111,13 +121,43 @@ Events emitted to the UI: `floe://menu` (macOS menu), `floe://files-dropped`, `f
 - UI no longer advertises Polars or a `floe` CLI when they are not installed: Settings hides the engine toggle, *Automate…* exports a Polars script, About shows "Built-in engine".
 - `demo.html` uses an external script (works under the strict desktop CSP).
 
+## Polars engine (desktop)
+```
+cd desktop && npm install
+npm run dev:polars        # or: npm run build:polars
+npm run test:engine       # cargo tests for floe-engine
+```
+CI builds both variants for every OS: `Floe_*` uses the built-in engine and `Floe-polars_*` adds Polars. The `polars` variant is about 30 MB larger.
+
+**Polars covers:**
+- Sources: CSV (UTF-8), Parquet, Arrow IPC, Excel sheets and ranges, entered data, query references.
+- Columns: choose/remove/reorder, rename, change type (locale-aware, with per-cell error flags), split (delimiter, first, last, into rows), merge columns, custom and conditional columns, index, duplicate.
+- Rows: filter, sort, distinct, keep duplicates, keep rows, promote headers, fill down/up.
+- Values: replace values, replace/remove/keep errors, text transforms (except Proper), round.
+- Reshaping and combining: group by, unpivot, pivot, merge (all join types), append, window columns.
+- Formula functions: the text, number, date and logic functions listed in `PQ.Plan.FUNCS`.
+
+**Runs on built-in (with the reason shown):**
+- Sources: JSON, folders, Excel tables, named ranges, multi-sheet sources, merged-cell fill, non-UTF-8 CSV, pasted files.
+- Steps: Sample, ClusterValues, Validate, ExpandJson, Transpose, DemoteHeaders, Custom SQL, Proper case, split by positions.
+- Formula functions without a Polars mapping, such as `Text.Similarity`. Dialog previews also stay on built-in.
+
+**Known differences:**
+- Polars sorts text in plain character order, while the built-in engine uses natural, accent-insensitive order.
+- With Polars, per-step row counts show only for the selected step.
+- Division by zero gives null instead of a cell error.
+
 ## Not implemented / known limits
-- No native Polars engine or `floe` CLI in 1.0. `js/native-engine.js` stays as a ready adapter: once a shell reports `engine_status → {available:true, info}`, eligible queries route to it automatically.
+- No `floe` CLI yet. *Automate…* exports a Polars Python script instead.
+- The Rust code (`floe-engine` and the Tauri shell) has not been compiled yet. The first CI run may report API-signature errors, especially against Polars 0.46.
 - Builds are unsigned; macOS Gatekeeper and Windows SmartScreen will warn until signing is configured.
 - No auto-updater yet.
 - Parquet is decoded fully in memory; practical limit about 250 MB per file on the web, 500 MB on desktop.
 - `Text.Similarity` has no Polars equivalent; codegen emits a placeholder.
 - Database sources.
+
+## Roadmap
+The full step-by-step plan for web, desktop and the optional Polars engine is in `docs/PLAN.md`.
 
 ## Next steps
 1. Add code signing + notarisation secrets to `desktop.yml`, then `tauri-plugin-updater` with a signed `latest.json`.

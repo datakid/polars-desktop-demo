@@ -335,6 +335,13 @@
     if (P.touch) document.body.classList.add('touch');
     if (native) {
       try { P.info = Object.assign(P.info, await inv('app_info')); } catch (e) { }
+      await new Promise((res) => {
+        const s = document.createElement('script');
+        s.src = 'js/native-engine.js';
+        s.onload = res;
+        s.onerror = res;
+        document.head.appendChild(s);
+      });
       const pt = document.getElementById('privacy-text');
       if (pt) pt.textContent = 'Everything runs on this computer. Files are read from disk, never uploaded.';
       return;
