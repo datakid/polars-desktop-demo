@@ -65,7 +65,7 @@
       if (['queries', 'data', 'steps'].includes(qs.get('pane'))) setPane(qs.get('pane'));
       const open = qs.get('open');
       if (open) setTimeout(() => ({
-        python: () => UI.pythonDialog(Store.ui.activeQid), deps: UI.dependencyDialog, files: UI.projectFilesDialog, params: UI.paramsDialog,
+        python: () => UI.pythonDialog(Store.ui.activeQid), deps: UI.dependencyDialog, files: UI.projectFilesDialog, params: UI.paramsDialog, cli: UI.cliDialog,
         merge: () => UI.editStep({ qid: Store.ui.activeQid, index: Store.query().steps.findIndex((s) => s.kind.type === 'Merge') }),
         custom: () => stepDialog('AddColumn', { formula: 'if [revenue] > 500 and [region] = "EU" then "Key" else Text.Uper([segment])' }),
         nav: () => { const f = App.files.find((x) => x.name === 'regional_report.xlsx'); if (f) UI.navigator(f.id); },

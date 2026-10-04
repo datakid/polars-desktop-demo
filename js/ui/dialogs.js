@@ -387,7 +387,7 @@
     }, () => ({ name: '', type: 'text', value: '' }), 'Add parameter');
     UI.modal({
       title: 'Parameters', icon: 'fa-sliders', size: 'wide',
-      body: h('div.col', h('p.muted', { style: { margin: 0 } }, 'Typed values you can use in any formula as ', h('code', '@Name'), ' — e.g. ', h('code', '[Region] = @Region'), ' or ', h('code', '[Date] >= @StartDate'), '. The CLI can override them: ', h('code', 'floe run project.floe --param Region=EU')), W.field('Name · Type · Value', rows)),
+      body: h('div.col', h('p.muted', { style: { margin: 0 } }, 'Typed values you can use in any formula as ', h('code', '@Name'), ' — e.g. ', h('code', '[Region] = @Region'), ' or ', h('code', '[Date] >= @StartDate'), '. The floe CLI can override them: ', h('code', 'floe run project.floe --param Region=EU')), W.field('Name · Type · Value', rows)),
       okLabel: 'Save',
       onOk: () => {
         const ps = rows.get().filter((p) => p.name);
@@ -443,19 +443,34 @@
 
   /* ================================ CLI dialog ================================ */
   UI.cliDialog = function () {
-    if (!PQ.Platform.native || !(UI.NativeEngine.ready && UI.NativeEngine.info && UI.NativeEngine.info.cli)) return UI.modal({
-      title: 'Automate', icon: 'fa-terminal', size: 'wide',
-      body: h('div.col', h('p', { style: { margin: 0 } }, 'Export the project as a standalone Polars script. It runs anywhere Python runs — cron, CI or a notebook.'), h('pre.code', 'pip install polars fastexcel xlsxwriter\npython ' + PQ.snake(Store.project.name) + '.py')),
-      okLabel: 'Export Python…', onOk: () => { setTimeout(() => UI.pythonDialog(Store.ui.activeQid), 30); },
-    });
+    // Commands match scripts/floe.mjs (Node 18+, same built-in engine as the app).
     const p = Store.project;
-    const params = (p.params || []).map((x) => ' --param ' + x.name + '=' + (String(x.value).includes(' ') ? '"' + x.value + '"' : x.value)).join('');
+    const q = (s) => (/[\s"]/.test(s) ? '"' + String(s).replace(/"/g, '\\"') + '"' : s);
+    const params = (p.params || []).map((x) => ' --param ' + q(x.name + '=' + x.value)).join('');
     const f = PQ.snake(p.name) + '.floe';
-    const cmd = 'floe run ' + f + params + ' --output ./out';
+    const first = (p.queries || [])[0];
+    const firstSrc = first && first.steps[0] && first.steps[0].kind.source;
+    const dataFile = (firstSrc && firstSrc.fileName) || 'data.parquet';
+    const cli = [
+      '# refresh every loaded query, one file per query',
+      'floe run ' + f + params + ' --data ./data --out ./out',
+      '',
+      '# one query, as Excel',
+      'floe run ' + f + ' --query ' + q((first && first.name) || 'Query') + ' --format xlsx --out ./out',
+      '',
+      '# rows, columns and types of a data file (Parquet: row groups too)',
+      'floe inspect ' + q(dataFile),
+      '',
+      '# crontab: every weekday at 06:00',
+      '0 6 * * 1-5  cd /reports && floe run ' + f + ' --out ./out',
+    ].join('\n');
     UI.modal({
-      title: 'Run headless (CLI)', icon: 'fa-terminal', size: 'wide',
-      body: h('div.col', h('p', { style: { margin: 0 } }, 'The desktop app ships a ', h('code', 'floe'), ' command-line binary built from the same engine crates. It refreshes every output without a UI — schedule it with cron, Task Scheduler or CI.'),
-        h('pre.code', cmd + '\n\n# list queries and outputs\nfloe inspect ' + f + '\n\n# only one query\nfloe run ' + f + ' --query "' + ((p.queries[0] || {}).name || 'Query') + '" --output ./out\n\n# crontab: every weekday at 06:00\n0 6 * * 1-5  cd /reports && floe run ' + f + ' --output ./out')),
+      title: 'Automate', icon: 'fa-terminal', size: 'wide',
+      body: h('div.col', { style: { minWidth: 0 } },
+        h('p', { style: { margin: 0 } }, 'Save the project, then run it without the UI using the ', h('code', 'floe'), ' command (Node 18+, same engine as this app). Files are looked up by name in ', h('code', '--data'), '. Exit code is 0 on success and 1 if a query failed.'),
+        h('pre.code', cli),
+        h('p.muted', { style: { margin: 0 } }, 'Install from the repository with ', h('code', 'npm link'), ', or run ', h('code', 'node scripts/floe.mjs …'), '. Prefer Python? Export a standalone Polars script instead.')),
+      okLabel: 'Export Python…', onOk: () => { setTimeout(() => UI.pythonDialog(Store.ui.activeQid), 30); },
     });
   };
 

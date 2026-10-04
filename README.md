@@ -188,6 +188,7 @@ CI builds both variants for every OS: `Floe_*` uses the built-in engine and `Flo
 - Division by zero gives null instead of a cell error.
 
 ## Not implemented / known limits
+- On phones, mobile screenshots show dialog footers (Cancel / OK) below the bottom edge of the sheet. This happens in Parameters and Automate, so it isn't one dialog. Not yet measured on a real device. The CSS to check is `.modal` / `.modal-back` in the `max-width: 760px` block.
 - The `floe` CLI runs on the built-in JS engine (Node). A native Rust CLI on `floe-engine` is not built yet.
 - The Rust code (`floe-engine` and the Tauri shell) has not been compiled yet. The first CI run may report API-signature errors, especially against Polars 0.46.
 - Builds are unsigned; macOS Gatekeeper and Windows SmartScreen will warn until signing is configured.

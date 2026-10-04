@@ -541,6 +541,9 @@ button.save-state.dirty { color: var(--accent-ink); }
 .noscript { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); font-size: 15px; z-index: 200; }
 body.dragging::after { content: 'Drop files to add them'; position: fixed; inset: 10px; border: 2px dashed var(--accent); border-radius: 20px; background: rgba(181, 100, 63, .06); display: grid; place-items: center; font-family: var(--serif); font-size: 22px; color: var(--accent-ink); pointer-events: none; z-index: 90; }
 .menu { overscroll-behavior: contain; }
+/* Long code lines must scroll inside the modal body instead of widening it (grid items default to min-width: auto). */
+.modal-b > * { min-width: 0; }
+.modal-b pre { max-width: 100%; overflow-x: auto; }
 
 @media (hover: none) {
   .f-item .f-actions { display: flex; }
