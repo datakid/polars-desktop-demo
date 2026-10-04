@@ -302,6 +302,78 @@
     assert(info.rows === 800 && info.meta.rowGroups === 8 && info.meta.lazy, JSON.stringify(info.meta));
     PQ.Files.delete(rec.id);
   });
+  const fullRun = async (steps, recId) => {
+    PQ.IO.parquetForget(recId);
+    E.setProject(pqProj(steps, recId)); E.clearCache();
+    const r = await PQ.Host.handle({ op: 'evaluate', qid: 'p', mode: 'full' });
+    const t = E.evaluate('p', undefined, 'full').table;
+    return { r, t, lr: PQ.IO.parquetLastRead, rows: t.toRows().map((row) => row.map((v) => (v instanceof Date ? PQ.fmtDate(v) : v))) };
+  };
+  await atest('Parquet pushdown: filter skips row groups by min/max, result identical to a plain filter', async () => {
+    const buf = bigParquet(1000, 10); // id 0..999, 100 rows per group, amt = id * 1.5
+    const rec = { id: 'pqp1', name: 'pqp1.parquet', mtime: 1, size: buf.byteLength, buf };
+    PQ.Files.set(rec.id, rec);
+    const cases = [
+      ['[id] >= 850', 8], ['[id] > 899', 9], ['[id] < 100', 9], ['[id] <= 99', 9], ['[id] = 512', 9],
+      ['[id] in {5, 950}', 8], ['[id] >= 300 and [id] < 400', 9], ['[id] < 100 or [id] >= 900', 8],
+      ['[amt] > 1490', 9], ['900 <= [id]', 9], ['[id] > @Cut', 9], ['[id] >= 400 + 500', 9],
+    ];
+    for (const [f, skipped] of cases) {
+      const steps = [{ type: 'SelectColumns', cols: ['id', 'amt'] }, { type: 'Filter', mode: 'advanced', formula: f }];
+      const p = pqProj(steps, rec.id); p.params = [{ name: 'Cut', type: 'number', value: '900' }];
+      PQ.IO.parquetForget(rec.id);
+      E.setProject(p); E.clearCache();
+      const res = await PQ.Host.handle({ op: 'evaluate', qid: 'p', mode: 'full' });
+      const t = E.evaluate('p', undefined, 'full').table;
+      const lr = PQ.IO.parquetLastRead;
+      assert(lr, f + ': ' + JSON.stringify(res.states.map((s) => s.error)));
+      assert(lr.skippedRowGroups === skipped, f + ' → skipped ' + lr.skippedRowGroups + ', expected ' + skipped);
+      // reference: same filter on the full table, computed in JS
+      const ids = Array.from({ length: 1000 }, (_, i) => i);
+      const ref = PQ.Formula.evaluate(f, T.fromRows(['id', 'amt'], ids.map((i) => [i, i * 1.5]), ['int', 'number']), p.params).values;
+      assertEq(t.get('id'), ids.filter((i) => ref[i] === true), f);
+    }
+    PQ.Files.delete(rec.id);
+  });
+  await atest('Parquet pushdown: never prunes when it could change the answer', async () => {
+    const buf = bigParquet(1000, 10);
+    const rec = { id: 'pqp2', name: 'pqp2.parquet', mtime: 1, size: buf.byteLength, buf };
+    PQ.Files.set(rec.id, rec);
+    const none = [
+      [{ type: 'Filter', mode: 'advanced', formula: '[id] <> 5' }],                       // <> keeps almost every group
+      [{ type: 'Filter', mode: 'advanced', formula: 'not ([id] < 900)' }],                // negation not analysed
+      [{ type: 'Filter', mode: 'advanced', formula: '[id] * 2 > 1900' }],                 // expression over a column
+      [{ type: 'Filter', mode: 'advanced', formula: '[id] > "900"' }],                    // kind mismatch
+      [{ type: 'Filter', mode: 'advanced', formula: '[id] >= 900 or [name] = "n1"' }],    // one side unprunable
+      [{ type: 'IndexColumn', name: 'ix' }, { type: 'Filter', mode: 'advanced', formula: '[id] >= 900' }], // row-sensitive step first
+      [{ type: 'Filter', mode: 'advanced', formula: '[id] >= 900 and [day] > #date(2026, 1, 20)' }], // timestamp column read: type comes from values
+    ];
+    for (const st of none) {
+      const steps = st[st.length - 1].formula.includes('[day]') ? st : [{ type: 'SelectColumns', cols: ['id', 'name'] }].concat(st);
+      const { lr } = await fullRun(steps, rec.id);
+      assert(!lr.skippedRowGroups, JSON.stringify(steps) + ' skipped ' + lr.skippedRowGroups);
+    }
+    // pruning still applies through column-only steps; preview mode never prunes
+    const { lr, t } = await fullRun([{ type: 'SelectColumns', cols: ['id', 'name'] }, { type: 'Filter', mode: 'builder', builder: { join: 'and', conds: [{ col: 'id', op: 'ge', value: '950' }] } }], rec.id);
+    assert(lr.skippedRowGroups === 9 && t.n === 50, JSON.stringify(lr) + ' n=' + t.n);
+    PQ.IO.parquetForget(rec.id);
+    E.setProject(pqProj([{ type: 'SelectColumns', cols: ['id'] }, { type: 'Filter', mode: 'advanced', formula: '[id] >= 950' }], rec.id)); E.clearCache();
+    await PQ.Host.handle({ op: 'evaluate', qid: 'p', mode: 'preview' });
+    assert(!PQ.IO.parquetLastRead.skippedRowGroups, 'preview pruned');
+    PQ.Files.delete(rec.id);
+  });
+  await atest('Parquet pushdown: text ranges and export use the pruned read', async () => {
+    const n = 600, key = [], v = [];
+    for (let i = 0; i < n; i++) { key.push('k' + String(i).padStart(4, '0')); v.push(i); }
+    const buf = hpw.parquetWriteBuffer({ rowGroupSize: 100, columnData: [{ name: 'key', data: key, type: 'STRING' }, { name: 'v', data: v, type: 'INT32' }] });
+    const rec = { id: 'pqp3', name: 'pqp3.parquet', mtime: 1, size: buf.byteLength, buf };
+    PQ.Files.set(rec.id, rec);
+    const { lr, t } = await fullRun([{ type: 'Filter', mode: 'advanced', formula: '[key] >= "k0550"' }], rec.id);
+    assert(lr.skippedRowGroups === 5 && t.n === 50 && t.get('key')[0] === 'k0550', JSON.stringify(lr) + ' n=' + t.n);
+    const ex = await PQ.Host.handle({ op: 'exportQuery', qid: 'p', format: 'csv' });
+    assert(ex.rows === 50 && PQ.IO.parquetLastRead.skippedRowGroups === 5, 'export rows ' + ex.rows);
+    PQ.Files.delete(rec.id);
+  });
   test('codegen: parquet source column list becomes a select', () => {
     const p = pqProj([], 'x', { columns: ['a', 'b'] });
     p.queries[0].steps[0].kind.source.fileName = 'x.parquet';

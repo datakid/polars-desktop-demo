@@ -103,55 +103,63 @@
     return null;
   }
 
-  async function readColumns(rec, m, cols, n, progress) {
+  /** Rows left after skipping pruned row groups. */
+  const keptRows = (m, skip) => { if (!skip || !skip.length) return m.numRows; let s = m.numRows; for (const g of skip) s -= m.groups[g] || 0; return s; };
+
+  async function readColumns(rec, m, cols, n, progress, skip) {
     await lib();
     const stats = { bytes: 0, groups: 0 };
+    const skipSet = new Set(skip || []);
     const data = new Map(cols.map((c) => [c, new Array(n)]));
     if (cols.length && n > 0) {
       const file = byteSource(rec, stats);
       const rawCols = cols.map((c) => m.rawOf.get(c));
       const byRaw = new Map(cols.map((c) => [m.rawOf.get(c), data.get(c)]));
-      const total = (() => { let s = 0, g = 0; for (const r of m.groups) { if (s >= n) break; s += r; g++; } return g; })();
-      let start = 0;
-      for (let g = 0; g < m.groups.length && start < n; g++) {
-        const gn = m.groups[g], end = Math.min(start + gn, n);
-        if (gn > 0) {
-          if (progress && total > 1) progress({ stage: 'Reading ' + rec.name + ' · row group ' + (g + 1) + ' of ' + total + (cols.length < m.disp.length ? ' · ' + cols.length + ' of ' + m.disp.length + ' columns' : '') });
-          const s0 = start;
-          await hp.parquetRead({
-            file, metadata: m.metadata, columns: rawCols, rowStart: s0, rowEnd: end, compressors: hpc.compressors,
-            onChunk: ({ columnName, columnData, rowStart }) => {
-              const dst = byRaw.get(columnName);
-              if (!dst) return;
-              const from = Math.max(0, s0 - rowStart), to = Math.min(columnData.length, end - rowStart);
-              for (let i = from; i < to; i++) dst[rowStart + i] = columnData[i];
-            },
-          });
-          stats.groups++;
-        }
-        start += gn;
+      // Plan: which row groups to read, where they start in the file and how many rows to take.
+      const plan = [];
+      let fileStart = 0, need = n;
+      for (let g = 0; g < m.groups.length && need > 0; g++) {
+        const gn = m.groups[g];
+        if (gn > 0 && !skipSet.has(g)) { const take = Math.min(gn, need); plan.push({ fileStart, take }); need -= take; }
+        fileStart += gn;
+      }
+      let out = 0;
+      for (let i = 0; i < plan.length; i++) {
+        const s0 = plan[i].fileStart, end = s0 + plan[i].take, base = out;
+        if (progress && plan.length > 1) progress({ stage: 'Reading ' + rec.name + ' · row group ' + (i + 1) + ' of ' + plan.length + (cols.length < m.disp.length ? ' · ' + cols.length + ' of ' + m.disp.length + ' columns' : '') });
+        await hp.parquetRead({
+          file, metadata: m.metadata, columns: rawCols, rowStart: s0, rowEnd: end, compressors: hpc.compressors,
+          onChunk: ({ columnName, columnData, rowStart }) => {
+            const dst = byRaw.get(columnName);
+            if (!dst) return;
+            const from = Math.max(0, s0 - rowStart), to = Math.min(columnData.length, end - rowStart);
+            const off = base + rowStart - s0;
+            for (let j = from; j < to; j++) dst[off + j] = columnData[j];
+          },
+        });
+        stats.groups++;
+        out += plan[i].take;
       }
     }
     const types = new Map();
     data.forEach((arr, c) => { normColumn(arr, n); types.set(c, typeOf(m.el.get(c), arr)); });
-    IO.parquetLastRead = { file: rec.name, columns: cols.slice(), totalColumns: m.disp.length, rows: n, rowGroups: stats.groups, totalRowGroups: m.groups.length, bytes: stats.bytes, size: rec.size };
+    IO.parquetLastRead = { file: rec.name, columns: cols.slice(), totalColumns: m.disp.length, rows: n, rowGroups: stats.groups, totalRowGroups: m.groups.length, skippedRowGroups: skipSet.size, bytes: stats.bytes, size: rec.size };
     return { data, types };
   }
 
-  async function ensure(rec, cols, rows, progress) {
-    const k = dkey(rec);
-    const m = await meta(rec);
-    const n = Math.min(rows, m.numRows);
+  async function ensure(rec, pl, rows, progress) {
+    const k = pl.key, m = pl.m, cols = pl.cols;
+    const n = Math.min(rows, keptRows(m, pl.skip));
     if (covering(k, cols, n)) { touch(covering(k, cols, n)); return; }
     const same = entries.filter((e) => e.k === k && e.rows === n).pop();
     if (same) {
       const missing = cols.filter((c) => !same.data.has(c));
-      const r = await readColumns(rec, m, missing, n, progress);
+      const r = await readColumns(rec, m, missing, n, progress, pl.skip);
       r.data.forEach((v, c) => same.data.set(c, v));
       r.types.forEach((v, c) => same.types.set(c, v));
       touch(same);
     } else {
-      const r = await readColumns(rec, m, cols, n, progress);
+      const r = await readColumns(rec, m, cols, n, progress, pl.skip);
       const e = { k, rows: n, data: r.data, types: r.types };
       entries = entries.filter((x) => !(x.k === k && x.rows <= n && [...x.data.keys()].every((c) => e.data.has(c))));
       entries.push(e);
@@ -259,12 +267,125 @@
   }
   IO.parquetProjection = projection;
 
-  function planFor(rec, spec, q, upto) {
+  /* ---------- Row-group pruning from Filter steps (full runs only) ----------
+   * A row group is skipped only when its column-chunk min/max statistics prove that no row can make
+   * a leading Filter return true. Only Filters preceded by column-only steps (select/remove/reorder) count,
+   * so the filtered result is identical to an unpruned run. Supported: = <> < <= > >= and `in` between a
+   * column and a constant (literal, parameter or constant expression), combined with and/or, on int,
+   * number, ASCII text and date columns. Anything else simply isn't used for pruning. */
+  const PRUNE_PASS = new Set(['SelectColumns', 'RemoveColumns', 'ReorderColumns', 'RemoveOtherColumns']);
+  const ascii = (s) => typeof s === 'string' && /^[\x00-\x7f]*$/.test(s);
+  const statVal = (v) => (typeof v === 'bigint' ? Number(v) : typeof v === 'number' ? (Number.isNaN(v) ? undefined : v) : typeof v === 'string' || v instanceof Date ? v : undefined);
+
+  function colRange(m, g, raw) {
+    const rg = m.metadata.row_groups[g];
+    const ch = rg && rg.columns.find((c) => c.meta_data && c.meta_data.path_in_schema.length === 1 && c.meta_data.path_in_schema[0] === raw);
+    const st = ch && ch.meta_data.statistics;
+    if (!st) return null;
+    const bytes = ch.meta_data.type === 'BYTE_ARRAY' || ch.meta_data.type === 'FIXED_LEN_BYTE_ARRAY';
+    let lo = st.min_value, hi = st.max_value;
+    if (!bytes) { if (lo === undefined) lo = st.min; if (hi === undefined) hi = st.max; }
+    lo = statVal(lo); hi = statVal(hi);
+    const nulls = st.null_count === undefined ? undefined : Number(st.null_count);
+    return lo === undefined || hi === undefined ? null : { lo, hi, nulls, exact: !bytes, float: ch.meta_data.type === 'FLOAT' || ch.meta_data.type === 'DOUBLE' };
+  }
+
+  /** Compare a constant with a statistic of the same kind; undefined when kinds don't match. */
+  function kindCmp(t, a, b) {
+    if (t === 'int' || t === 'number') return typeof a === 'number' && typeof b === 'number' && isFinite(a) ? a - b : undefined;
+    if (t === 'text') return ascii(a) && ascii(b) ? (a < b ? -1 : a > b ? 1 : 0) : undefined;
+    if (t === 'date') return a instanceof Date && b instanceof Date && !isNaN(a) ? a.getTime() - b.getTime() : undefined;
+    return undefined;
+  }
+
+  function pruning(q, upto, ns, m, cols) {
+    const last = lastIndex(q, upto);
+    const forms = [];
+    for (let i = 1; i <= last; i++) {
+      const s = q.steps[i];
+      if (!s || s.disabled) continue;
+      const k = s.kind || {};
+      if (k.type === 'Filter') { const f = E.filterFormula(k); if (f && f.trim() !== 'true') forms.push(f); continue; }
+      if (PRUNE_PASS.has(k.type)) continue;
+      break;
+    }
+    if (!forms.length || m.groups.length < 2) return null;
+    // Timestamp / nested / untyped columns get their type from the values read; skipping rows could change it.
+    for (const c of cols) {
+      const el = m.el.get(c), t = floeType(el);
+      if (!el || el.num_children || t === 'datetime' || t === 'any') return null;
+    }
+    const nsSet = new Set(ns);
+    const project = E.getProject && E.getProject();
+    const params = (project && project.params) || [];
+    const one = Table.fromRows(['__c'], [[null]], ['any']);
+    const asts = [];
+    for (const f of forms) { try { asts.push({ src: f, ast: PQ.Formula.parse(f) }); } catch (e) { /* unparseable: no pruning from it */ } }
+    const ranges = new Map();
+    const rangeOf = (name, g) => {
+      const key = name + '\u0001' + g;
+      if (!ranges.has(key)) ranges.set(key, nsSet.has(name) && m.rawOf.has(name) ? colRange(m, g, m.rawOf.get(name)) : null);
+      return ranges.get(key);
+    };
+    const hasCol = (n) => { let found = false; (function walk(x) { if (!x || typeof x !== 'object' || found) return; if (x.k === 'col') { found = true; return; } Object.values(x).forEach((v) => (Array.isArray(v) ? v.forEach(walk) : typeof v === 'object' && walk(v))); })(n); return found; };
+    const constOf = (src, n) => {
+      if (n.k === 'lit') return n.v;
+      if (hasCol(n)) return undefined;
+      try { const v = PQ.Formula.evaluate(src.slice(n.s, n.e), one, params).values[0]; return PQ.isErr(v) ? undefined : v; } catch (e) { return undefined; }
+    };
+    const FLIP = { '<': '>', '>': '<', '<=': '>=', '>=': '<=', '=': '=', '<>': '<>' };
+    function skips(src, n, g) {
+      if (!n || n.k !== 'bin') return false;
+      if (n.op === 'and') return skips(src, n.a, g) || skips(src, n.b, g);
+      if (n.op === 'or') return skips(src, n.a, g) && skips(src, n.b, g);
+      if (n.op === 'in') {
+        if (n.a.k !== 'col' || n.b.k !== 'list' || !n.b.items.length) return false;
+        const r = rangeOf(n.a.name, g), t = floeType(m.el.get(n.a.name));
+        if (!r) return false;
+        return n.b.items.every((it) => {
+          const v = constOf(src, it);
+          const lo = kindCmp(t, v, r.lo), hi = kindCmp(t, v, r.hi);
+          return lo !== undefined && hi !== undefined && (lo < 0 || hi > 0);
+        });
+      }
+      if (!FLIP[n.op]) return false;
+      let col, other, op = n.op;
+      if (n.a.k === 'col') { col = n.a; other = n.b; }
+      else if (n.b.k === 'col') { col = n.b; other = n.a; op = FLIP[op]; }
+      else return false;
+      const r = rangeOf(col.name, g);
+      if (!r) return false;
+      const t = floeType(m.el.get(col.name));
+      const v = constOf(src, other);
+      const cLo = kindCmp(t, v, r.lo), cHi = kindCmp(t, v, r.hi);
+      if (cLo === undefined || cHi === undefined) return false;
+      switch (op) {
+        case '=': return cLo < 0 || cHi > 0;
+        case '<>': return cLo === 0 && cHi === 0 && r.nulls === 0 && r.exact && !r.float; // nulls (and NaN) pass <>
+        case '<': return cLo <= 0;   // every value >= min >= v
+        case '<=': return cLo < 0;   // every value >= min > v
+        case '>': return cHi >= 0;   // every value <= max <= v
+        case '>=': return cHi > 0;   // every value <= max < v
+      }
+      return false;
+    }
+    const skip = [];
+    for (let g = 0; g < m.groups.length; g++) {
+      if (!m.groups[g]) continue;
+      if (asts.some((a) => skips(a.src, a.ast, g))) skip.push(g);
+    }
+    return skip.length ? skip : null;
+  }
+  IO.parquetPruning = pruning;
+
+  function planFor(rec, spec, q, upto, full) {
     const m = metas.get(dkey(rec));
     if (!m) return null;
     const ns = namespace(m, spec);
     const p = q ? projection(q, upto, ns) : null;
-    return { m, ns, cols: p ? p.cols : ns, stubs: p ? p.stubs : [], projected: !!p };
+    const cols = p ? p.cols : ns;
+    const skip = full && q ? pruning(q, upto, ns, m, cols) : null;
+    return { m, ns, cols, stubs: p ? p.stubs : [], projected: !!p, skip, key: dkey(rec) + (skip ? '|skip:' + skip.join(',') : '') };
   }
 
   const baseRead = IO.readFile;
@@ -273,12 +394,13 @@
     if (kind !== 'parquet') return baseRead(rec, spec || {}, maxRows, ctx);
     const k = dkey(rec);
     if (errors.has(k)) throw new StepError('Could not read Parquet file "' + rec.name + '": ' + errors.get(k));
-    const pl = planFor(rec, spec, ctx && ctx.query, ctx && ctx.upto);
+    const want = maxRows === undefined || maxRows === null ? Infinity : maxRows;
+    const pl = planFor(rec, spec, ctx && ctx.query, ctx && ctx.upto, !!(ctx && ctx.mode === 'full') && want === Infinity);
     if (!pl) throw new StepError('Parquet file "' + rec.name + '" is still being read. Refresh in a moment.');
     const { m, ns } = pl;
-    const want = maxRows === undefined || maxRows === null ? Infinity : maxRows;
-    const n = Math.min(want, m.numRows);
-    const e = covering(k, pl.cols, n);
+    const total = keptRows(m, pl.skip);
+    const n = Math.min(want, total);
+    const e = covering(pl.key, pl.cols, n);
     if (!e) throw new StepError('Parquet file "' + rec.name + '" is still being read. Refresh in a moment.');
     touch(e);
     const valueSet = new Set(pl.cols), stubSet = new Set(pl.stubs);
@@ -296,19 +418,20 @@
       }
     }
     const t = new Table(cols, data, n);
-    t.meta = { format: 'parquet', rowGroups: m.groups.length, createdBy: m.metadata.created_by || null, truncated: n < m.numRows };
+    t.meta = { format: 'parquet', rowGroups: m.groups.length, createdBy: m.metadata.created_by || null, truncated: n < total };
     if (pl.projected) t.meta.projected = { read: pl.cols.length, of: m.disp.length };
+    if (pl.skip) t.meta.skippedRowGroups = pl.skip.length;
     return t;
   };
 
-  E.sourceVariant = function (src, q, upto) {
+  E.sourceVariant = function (src, q, upto, mode) {
     if (!src) return '';
     const one = (rec) => {
       if (!rec || !isParquet(rec) || (src.format && src.format !== 'parquet')) return '';
       let pl;
-      try { pl = planFor(rec, src, q, upto); } catch (e) { return '|pq!'; }
+      try { pl = planFor(rec, src, q, upto, mode === 'full'); } catch (e) { return '|pq!'; }
       if (!pl) return '|pq?';
-      return pl.projected ? '|pq:' + pl.cols.join('\u0001') + '/' + pl.stubs.join('\u0001') : '';
+      return (pl.projected ? '|pq:' + pl.cols.join('\u0001') + '/' + pl.stubs.join('\u0001') : '') + (pl.skip ? '|skip:' + pl.skip.join(',') : '');
     };
     if (src.kind === 'file') return one(PQ.Files.get(src.fileId));
     if (src.kind === 'folder') {
@@ -320,7 +443,7 @@
 
   IO.decodeParquet = async function (rec) {
     const m = await meta(rec);
-    await ensure(rec, m.disp, m.numRows);
+    await ensure(rec, { m, cols: m.disp, key: dkey(rec), skip: null }, m.numRows);
     return IO.readFile(rec, { format: 'parquet' }, Infinity);
   };
 
@@ -415,8 +538,8 @@
         const project = msg && msg.draft && PQ.Host && PQ.Host.withDraft ? PQ.Host.withDraft(E.getProject(), msg.draft) : null;
         let q = tg.q;
         if (q && project) q = project.queries.find((x) => x.id === q.id) || q;
-        const pl = planFor(tg.rec, tg.spec, q, tg.upto);
-        await ensure(tg.rec, pl.cols, tg.rows, progress);
+        const pl = planFor(tg.rec, tg.spec, q, tg.upto, tg.rows === Infinity && !!q);
+        await ensure(tg.rec, pl, tg.rows, progress);
       } catch (e) {
         if (e instanceof StepError && /no longer in this Parquet file/.test(e.message)) continue;
         errors.set(k, e.message || String(e));
@@ -431,7 +554,7 @@
       const out = await inner(msg, progress);
       if (msg.op === 'evaluate' && out && IO.parquetLastRead && !msg.draft) {
         const r = IO.parquetLastRead;
-        out.note = 'Parquet ' + r.file + ': read ' + r.columns.length + ' of ' + r.totalColumns + ' columns, ' + r.rowGroups + ' of ' + r.totalRowGroups + ' row group' + (r.totalRowGroups === 1 ? '' : 's') + ', ' + fmtMB(r.bytes) + ' of ' + fmtMB(r.size);
+        out.note = 'Parquet ' + r.file + ': read ' + r.columns.length + ' of ' + r.totalColumns + ' columns, ' + r.rowGroups + ' of ' + r.totalRowGroups + ' row group' + (r.totalRowGroups === 1 ? '' : 's') + (r.skippedRowGroups ? ' (' + r.skippedRowGroups + ' skipped by filter statistics)' : '') + ', ' + fmtMB(r.bytes) + ' of ' + fmtMB(r.size);
         out.parquet = r;
       }
       return out;

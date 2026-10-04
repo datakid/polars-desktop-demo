@@ -8,6 +8,12 @@
   - Large files stay as a lazy `Blob` (or OPFS file) and are read in byte slices, so the whole file is never copied into memory.
   - Decoded columns are cached in an LRU with a budget of about 30M cells.
   - Progress shows "row group i of n · k of m columns".
+  - **Filter pushdown:** full runs and exports skip row groups whose min/max statistics show that a leading `Filter` can't match.
+    - Operators: `= <> < <= > >= in`, combined with `and` / `or`.
+    - Columns: int, number, ASCII text and date.
+    - Constants: literals, parameters or constant expressions.
+    - Only Filters reached through column-only steps (select/remove/reorder) are used, so results are identical to an unpruned run.
+    - The status note reports "N skipped by filter statistics".
 - **Column projection in the UI:**
   - The Parquet navigator has column checkboxes.
   - The Source step has a column picker.
@@ -21,7 +27,7 @@
   node scripts/floe.mjs plan project.floe --query <name>
   ```
   Exit codes: 0 ok · 1 query failed · 2 usage · 3 input missing. `npm link` installs it as `floe`.
-- Engine tests: 93 (7 new Parquet planning/projection and CLI tests).
+- Engine tests: 96. That includes the Parquet planning, projection and CLI tests, plus 3 pushdown tests that check every case against an unpruned filter.
 
 ## What's new in 1.1
 - **Engine indicator** in the status bar: `● Built-in · 42 ms · Sample 1,000`. Click it (or press Enter on it) for engine, location, last run, data scope and, on desktop, why that engine ran. The dot shows idle, busy, starting or error. On phones it shrinks to the dot and engine name.
@@ -57,7 +63,7 @@ One codebase ships two ways:
 ## Repository layout
 ```
 index.html, demo.html, 404.html     app pages
-tests.html, tests-ui.html           engine golden tests (93) · UI end-to-end smoke test (web build only)
+tests.html, tests-ui.html           engine golden tests (96) · UI end-to-end smoke test (web build only)
 css/app.css                         "Clay" design system
 js/                                 engine (worker), platform layer, UI
 js/native-engine.js                 optional Polars adapter; idle unless a desktop engine reports itself available
@@ -186,7 +192,7 @@ CI builds both variants for every OS: `Floe_*` uses the built-in engine and `Flo
 - The Rust code (`floe-engine` and the Tauri shell) has not been compiled yet. The first CI run may report API-signature errors, especially against Polars 0.46.
 - Builds are unsigned; macOS Gatekeeper and Windows SmartScreen will warn until signing is configured.
 - No auto-updater yet.
-- No Parquet filter pushdown yet. Row groups are not skipped using min/max statistics, page indexes or bloom filters. A full refresh of a filtered query still decodes every row group of the projected columns.
+- Parquet filter pushdown uses row-group min/max statistics only. It doesn't use page indexes or bloom filters, and it is off when a timestamp or nested column is read, because those types are inferred from the values. Previews don't prune either. They already stop after the first row groups.
 - On desktop, Parquet files that fall back to the built-in engine are still read whole by the shell.
 - `Text.Similarity` has no Polars equivalent; codegen emits a placeholder.
 - Database sources.
@@ -198,7 +204,7 @@ The full step-by-step plan for web, desktop and the optional Polars engine is in
 1. Fix the first CI compile errors in `floe-engine` / the Tauri shell, then add signing secrets (see `docs/SIGNING.md`).
 2. Native `floe` CLI binary on `floe-engine` (Polars), reusing the `scripts/floe.mjs` command surface.
 3. Ranged reads from the Tauri shell (`read_file_range`) so desktop built-in fallbacks also stream Parquet.
-4. Filter pushdown in `js/parquet.js`: skip row groups using column-chunk min/max statistics for simple `Filter` steps, then use page indexes.
+4. Page-index and bloom-filter pushdown in `js/parquet.js`, plus pruning for previews.
 
 ## License
 MIT. Bundled: SheetJS CE (Apache-2.0), AlaSQL (MIT), apache-arrow (Apache-2.0), hyparquet / hyparquet-writer / hyparquet-compressors (MIT), Font Awesome Free (icons CC BY 4.0, fonts OFL, code MIT), Instrument Sans, Source Serif 4 and JetBrains Mono (OFL).

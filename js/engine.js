@@ -839,7 +839,7 @@
     let prev = PQ.hash(base);
     for (const step of q.steps) {
       let extra = '';
-      if (step.kind.type === 'Source') extra = sourceFingerprint(step.kind.source) + E.sourceVariant(step.kind.source, q, upto);
+      if (step.kind.type === 'Source') extra = sourceFingerprint(step.kind.source) + E.sourceVariant(step.kind.source, q, upto, mode);
       for (const r of refsOf(step)) { const f = fingerprints(r, mode, st); extra += '|' + f[f.length - 1]; }
       prev = PQ.hash(prev + '|' + PQ.stableStringify(step.kind) + '|' + extra);
       out.push(prev);
