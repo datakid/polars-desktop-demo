@@ -9,7 +9,7 @@
 
   /** label, icon, describe(kind), lazy: false when the step forces materialization (Pivot/Transpose… in Polars). */
   S.CATALOG = {
-    Source: { label: 'Source', icon: 'fa-database', describe: (k) => { const s = k.source || {}; if (s.kind === 'file') return (s.fileName || 'file') + (s.item ? ' › ' + (s.item.type === 'sheets' ? 'sheets "' + s.item.pattern + '"' : s.item.name || s.item.sheet || '') + (s.item.range ? '!' + s.item.range : '') : ''); if (s.kind === 'folder') return 'Folder ' + s.folder + '/' + (s.pattern || '*'); if (s.kind === 'query') return 'Reference to ' + (PQ.queryName ? PQ.queryName(s.query) : s.query); return 'Entered data'; } },
+    Source: { label: 'Source', icon: 'fa-database', describe: (k) => { const s = k.source || {}; if (s.kind === 'file') return (s.fileName || 'file') + (s.columns && s.columns.length ? ' · ' + s.columns.length + ' column' + (s.columns.length === 1 ? '' : 's') : '') + (s.item ? ' › ' + (s.item.type === 'sheets' ? 'sheets "' + s.item.pattern + '"' : s.item.name || s.item.sheet || '') + (s.item.range ? '!' + s.item.range : '') : ''); if (s.kind === 'folder') return 'Folder ' + s.folder + '/' + (s.pattern || '*'); if (s.kind === 'query') return 'Reference to ' + (PQ.queryName ? PQ.queryName(s.query) : s.query); return 'Entered data'; } },
     SelectColumns: { label: 'Choose Columns', icon: 'fa-table-columns', describe: (k) => 'Keep ' + short(k.cols) },
     ReorderColumns: { label: 'Reordered Columns', icon: 'fa-arrows-left-right', describe: (k) => 'Move ' + short(k.cols) + ' to the front' },
     RemoveColumns: { label: 'Removed Columns', icon: 'fa-delete-left', describe: (k) => 'Remove ' + short(k.cols) },
@@ -123,7 +123,7 @@
       }
       return `pl.read_excel(${pathOf(src.fileName)}, sheet_name=${py(sheet)}, engine="calamine", read_options={${opts.join(', ')}}).lazy()`;
     }
-    if (kind === 'parquet') return `pl.scan_parquet(${pathOf(src.fileName)})`;
+    if (kind === 'parquet') return `pl.scan_parquet(${pathOf(src.fileName)})` + (src.columns && src.columns.length ? `.select(${pyList(src.columns)})` : '');
     if (kind === 'arrow') return `pl.scan_ipc(${pathOf(src.fileName)})`;
     if (kind === 'json') return /ndjson|jsonl/i.test(src.fileName) ? `pl.scan_ndjson(${pathOf(src.fileName)})` : `pl.read_json(${pathOf(src.fileName)}).lazy()`;
     const c = src.csv || {};

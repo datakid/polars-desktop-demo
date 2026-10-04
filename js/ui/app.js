@@ -152,16 +152,20 @@
   App.folders = () => [...new Set(App.files.filter((f) => f.folder).map((f) => f.folder))].sort();
   /** Accepts browser File objects or platform records {name, size, buf, path?, folder?}. */
   const MAX_FILE = PQ.Platform.native ? 500 * 1048576 : 250 * 1048576;
+  const MAX_LAZY = 4096 * 1048576;
   App.addFiles = async function (fileList, folder) {
     const added = [];
     const list = [...fileList];
     if (list.length > 3) App.busy('Adding ' + list.length + ' files', false);
     try {
       for (const file of list) {
-        if (file.size > MAX_FILE) { UI.toast(file.name + ': ' + UI.fmtBytes(file.size) + ' is too large for the browser engine (limit ' + UI.fmtBytes(MAX_FILE) + ')', 'warn', { ms: 8000 }); continue; }
+        const isLazy = PQ.Platform.lazyFile(file.name);
+        const limit = isLazy ? MAX_LAZY : MAX_FILE;
+        if (file.size > limit) { UI.toast(file.name + ': ' + UI.fmtBytes(file.size) + ' is too large for the browser engine (limit ' + UI.fmtBytes(limit) + ')', 'warn', { ms: 8000 }); continue; }
         try {
-          const buf = file.buf || (await file.arrayBuffer());
-          const r = await UI.Engine.call('addFile', { name: file.name, buf, folder: folder || file.folder || '', path: file.path || null, mtime: file.mtime || file.lastModified || null }, null, [buf]);
+          const blob = isLazy && !file.buf ? file.blob || (typeof file.slice === 'function' ? file : null) : null;
+          const buf = blob ? null : file.buf || (await file.arrayBuffer());
+          const r = await UI.Engine.call('addFile', { name: file.name, buf, blob, folder: folder || file.folder || '', path: file.path || null, mtime: file.mtime || file.lastModified || null }, null, buf ? [buf] : []);
           if (file.handle) PQ.Platform.fileHandles.set(r.file.id, file.handle);
           added.push(r.file);
         } catch (e) { UI.toast(file.name + ': ' + (e.message || e), 'err'); }
@@ -189,7 +193,7 @@
             upd = await P.readIfChanged(hnd, f, ask);
           }
           if (!upd) continue;
-          await UI.Engine.call('updateFile', { id: f.id, buf: upd.buf, mtime: upd.mtime }, null, [upd.buf]);
+          await UI.Engine.call('updateFile', { id: f.id, buf: upd.buf || null, blob: upd.blob || null, mtime: upd.mtime }, null, upd.buf ? [upd.buf] : []);
           n++;
         } catch (e) { if (e && e.name === 'NotFoundError') { if (!P.native) P.fileHandles.del(f.id); UI.toast(f.name + ' was moved or deleted on disk; using the last copy.', 'warn'); } }
       }

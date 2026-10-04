@@ -436,6 +436,7 @@
     _db: null,
     open() {
       if (this._db) return this._db;
+      if (typeof indexedDB === 'undefined' || !indexedDB) return Promise.reject(new Error('IndexedDB unavailable'));
       this._db = new Promise((res, rej) => {
         const r = indexedDB.open('pqx-files', 1);
         r.onupgradeneeded = () => r.result.createObjectStore('files', { keyPath: 'id' });
@@ -462,10 +463,13 @@
 
   /** In-memory mirror of stored files, so the engine can stay synchronous. */
   PQ.Files = new Map();
+  PQ.isLazyFile = (name) => /\.(parquet|pq)$/i.test(String(name || ''));
   PQ.addFile = async function (name, buf, extra) {
-    const rec = Object.assign({ id: PQ.uid('file'), name, size: buf.byteLength, mtime: Date.now(), buf }, extra || {});
+    const blob = extra && extra.blob;
+    const rec = Object.assign({ id: PQ.uid('file'), name, size: buf ? buf.byteLength : blob ? blob.size : 0, mtime: Date.now(), buf: buf || null }, extra || {});
     PQ.Files.set(rec.id, rec);
-    try { await IDB.put(rec); } catch (e) { console.warn('IndexedDB unavailable, file kept in memory only', e); }
+    const store = IDB.put(rec).catch((e) => console.warn('IndexedDB unavailable, file kept in memory only', e));
+    if (!rec.blob) await store;
     return rec;
   };
   PQ.loadFiles = async function () {

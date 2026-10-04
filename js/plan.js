@@ -59,7 +59,7 @@
       if (c.encoding && !/^utf-?8/i.test(c.encoding)) refuse('Non-UTF-8 CSV files run on the built-in engine');
       return { kind: 'csv', path, delimiter: c.delimiter || null, header: c.header !== false, skipRows: +c.skipRows || 0 };
     }
-    if (kind === 'parquet') return { kind: 'parquet', path };
+    if (kind === 'parquet') return src.columns && src.columns.length ? { kind: 'parquet', path, columns: src.columns.slice() } : { kind: 'parquet', path };
     if (kind === 'arrow') return { kind: 'ipc', path };
     if (kind === 'excel') {
       const it = src.item || { type: 'sheet', name: 0 };

@@ -239,6 +239,27 @@
     const isExcel = /\.(xlsx|xlsm|xlsb|xls|ods)$/i.test(s.fileName || '');
     const parts = [W.field('File', file)];
     let get;
+    const isParquet = s.format === 'parquet' || /\.(parquet|pq)$/i.test(s.fileName || '');
+    const isArrow = s.format === 'arrow' || /\.(arrow|feather|ipc)$/i.test(s.fileName || '');
+    if (isParquet || isArrow) {
+      const fileName = () => { const f = UI.App.files.find((x) => x.id === file.value); return f ? f.name : s.fileName; };
+      const base = () => ({ kind: 'file', fileId: file.value, fileName: fileName(), format: isParquet ? 'parquet' : 'arrow' });
+      if (!isParquet) return { el: h('div.col', parts), get: () => ({ type: 'Source', source: base() }) };
+      const box = h('div', h('div.muted', { style: { fontSize: '12px' } }, 'Reading columns…'));
+      parts.push(box, h('p.faint', { style: { margin: 0, fontSize: '12px' } }, 'Later steps that never use a column skip reading it automatically. This list sets the hard limit.'));
+      let picker = null, all = [];
+      const load = async () => {
+        try {
+          const info = (await UI.Engine.callWorker('inspectFile', { fileId: file.value })).info;
+          all = info.schema.map((c) => c.name);
+          picker = W.colMulti(info.schema, s.columns && s.columns.length ? s.columns : all, ctx.changed);
+          UI.clear(box).appendChild(W.field('Columns to load', picker));
+        } catch (e) { picker = null; UI.clear(box).appendChild(h('div.callout.err', UI.icon('fa-circle-exclamation'), h('div', e.message))); }
+      };
+      file.addEventListener('change', () => { s.columns = null; load(); });
+      load();
+      return { el: h('div.col', parts), get: () => { const src = base(); const cols = picker ? picker.get() : s.columns; if (cols && cols.length && cols.length < (all.length || Infinity)) src.columns = cols; return { type: 'Source', source: src }; } };
+    }
     if (isExcel) {
       const it = s.item || { type: 'sheet', name: '' };
       const t = onAny(W.select([['table', 'Excel Table'], ['sheet', 'Whole sheet'], ['range', 'Sheet range (A1)'], ['name', 'Named range'], ['sheets', 'Combine sheets matching a pattern']], it.type), ctx.changed);

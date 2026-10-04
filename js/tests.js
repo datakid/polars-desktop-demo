@@ -215,6 +215,98 @@
     assert(t2.n === 2 && t2.meta.truncated, 'rows ' + t2.n);
     PQ.Files.delete(rec.id);
   });
+  const hpw = await import('../vendor/hyparquet-writer.min.js');
+  const bigParquet = (n, groups) => {
+    const id = [], name = [], amt = [], day = [], flag = [];
+    for (let i = 0; i < n; i++) { id.push(BigInt(i)); name.push('n' + (i % 7)); amt.push(i * 1.5); day.push(new Date(Date.UTC(2026, 0, 1 + (i % 28)))); flag.push(i % 3 === 0 ? null : i % 2 === 0); }
+    return hpw.parquetWriteBuffer({ rowGroupSize: Math.ceil(n / groups), columnData: [{ name: 'id', data: id, type: 'INT64' }, { name: 'name', data: name, type: 'STRING' }, { name: 'amt', data: amt, type: 'DOUBLE' }, { name: 'day', data: day, type: 'TIMESTAMP' }, { name: 'flag', data: flag, type: 'BOOLEAN' }] });
+  };
+  const pqProj = (steps, recId, extraSrc) => ({ settings: { previewRows: 100, locale: 'en-US' }, params: [], queries: [{ id: 'p', name: 'P', steps: [{ id: 's', name: 'Source', kind: { type: 'Source', source: Object.assign({ kind: 'file', fileId: recId, fileName: recId + '.parquet', format: 'parquet' }, extraSrc || {}) } }].concat(steps.map((k, i) => ({ id: 'k' + i, name: k.type, kind: k }))) }] });
+  await atest('Parquet streaming: preview reads only the first row group', async () => {
+    const buf = bigParquet(1000, 10);
+    const rec = { id: 'pqs1', name: 'pqs1.parquet', mtime: 1, size: buf.byteLength, buf };
+    PQ.Files.set(rec.id, rec);
+    E.setProject(pqProj([], rec.id)); E.clearCache();
+    const r = await PQ.Host.handle({ op: 'evaluate', qid: 'p', mode: 'preview' });
+    assert(r.n === 100 && r.truncated, 'rows ' + r.n);
+    const lr = PQ.IO.parquetLastRead;
+    assert(lr.rowGroups === 1 && lr.totalRowGroups === 10, JSON.stringify(lr));
+    assert(lr.bytes < buf.byteLength / 2, 'bytes ' + lr.bytes + ' of ' + buf.byteLength);
+    assert(/1 of 10 row groups/.test(r.note), r.note);
+    PQ.Files.delete(rec.id);
+  });
+  await atest('Parquet streaming: full run reads all groups, values intact across boundaries', async () => {
+    const buf = bigParquet(1000, 10);
+    const rec = { id: 'pqs2', name: 'pqs2.parquet', mtime: 1, size: buf.byteLength, buf };
+    PQ.Files.set(rec.id, rec);
+    E.setProject(pqProj([], rec.id)); E.clearCache();
+    await PQ.Host.handle({ op: 'evaluate', qid: 'p', mode: 'full' });
+    const t = E.evaluate('p', undefined, 'full').table;
+    assert(t.n === 1000, 'n ' + t.n);
+    assertEq([t.get('id')[99], t.get('id')[100], t.get('id')[999]], [99, 100, 999]);
+    assertEq(t.cols.map((c) => c.type), ['int', 'text', 'number', 'date', 'bool']);
+    assertEq([t.get('flag')[0], t.get('flag')[2], t.get('flag')[1]], [null, true, false]);
+    assert(PQ.IO.parquetLastRead.rowGroups === 10, 'groups');
+    PQ.Files.delete(rec.id);
+  });
+  await atest('Parquet projection: unused columns are never read, schema stays in place', async () => {
+    const buf = bigParquet(500, 5);
+    const rec = { id: 'pqs3', name: 'pqs3.parquet', mtime: 1, size: buf.byteLength, buf };
+    PQ.Files.set(rec.id, rec);
+    E.setProject(pqProj([{ type: 'Filter', mode: 'advanced', formula: '[amt] > 10' }, { type: 'SelectColumns', cols: ['name', 'amt'] }], rec.id)); E.clearCache();
+    const r = await PQ.Host.handle({ op: 'evaluate', qid: 'p', mode: 'full' });
+    assertEq(r.schema.map((c) => c.name), ['name', 'amt']);
+    assertEq(PQ.IO.parquetLastRead.columns, ['name', 'amt']);
+    assert(r.n === 493, 'n ' + r.n);
+    const r0 = await PQ.Host.handle({ op: 'evaluate', qid: 'p', upto: 0, mode: 'full' });
+    assertEq(r0.schema.map((c) => c.name), ['id', 'name', 'amt', 'day', 'flag']);
+    PQ.Files.delete(rec.id);
+  });
+  test('Parquet projection planner: renames, formulas, group by, removes, unknown steps', () => {
+    const ns = ['a', 'b', 'c', 'd', 'e'];
+    const q = (steps) => ({ steps: [{ kind: { type: 'Source' } }].concat(steps.map((k) => ({ kind: k }))) });
+    const P = PQ.IO.parquetProjection;
+    assertEq(P(q([{ type: 'RemoveColumns', cols: ['d', 'e'] }]), undefined, ns).cols, ['a', 'b', 'c']);
+    assertEq(P(q([{ type: 'Rename', map: [['a', 'x']] }, { type: 'SelectColumns', cols: ['x', 'c'] }]), undefined, ns).cols, ['a', 'c']);
+    assertEq(P(q([{ type: 'AddColumn', name: 'z', formula: '[b] * 2' }, { type: 'SelectColumns', cols: ['z', 'a'] }]), undefined, ns).cols, ['a', 'b']);
+    assertEq(P(q([{ type: 'GroupBy', keys: ['c'], aggs: [{ fn: 'sum', col: 'd' }, { fn: 'count_rows' }] }]), undefined, ns).cols, ['c', 'd']);
+    assert(P(q([{ type: 'Filter', mode: 'advanced', formula: '[e] > 1' }, { type: 'RemoveColumns', cols: ['e'] }]), undefined, ns) === null, 'a column used before removal must be read');
+    assertEq(P(q([{ type: 'Filter', mode: 'advanced', formula: '[e] > 1' }, { type: 'SelectColumns', cols: ['a'] }]), undefined, ns).cols, ['a', 'e']);
+    assert(P(q([{ type: 'CustomSql', sql: 'SELECT a FROM self' }, { type: 'SelectColumns', cols: ['a'] }]), undefined, ns) === null, 'unknown step must disable projection');
+    assert(P(q([{ type: 'Distinct' }, { type: 'SelectColumns', cols: ['a'] }]), undefined, ns) === null, 'distinct over all columns keeps every column');
+    assertEq(P(q([{ type: 'SelectColumns', cols: ['a', 'b'] }, { type: 'Filter', mode: 'advanced', formula: '[c] > 1' }]), 0, ns), null);
+  });
+  await atest('Parquet projection: source column list limits reading and the schema', async () => {
+    const buf = bigParquet(300, 3);
+    const rec = { id: 'pqs4', name: 'pqs4.parquet', mtime: 1, size: buf.byteLength, buf };
+    PQ.Files.set(rec.id, rec);
+    E.setProject(pqProj([], rec.id, { columns: ['amt', 'id'] })); E.clearCache();
+    const r = await PQ.Host.handle({ op: 'evaluate', qid: 'p', mode: 'preview' });
+    assertEq(r.schema.map((c) => c.name), ['amt', 'id']);
+    E.setProject(pqProj([], rec.id, { columns: ['nope'] })); E.clearCache();
+    const r2 = await PQ.Host.handle({ op: 'evaluate', qid: 'p', mode: 'preview' });
+    assert(/no longer in this Parquet file/.test(r2.states[0].error), r2.states[0].error);
+    PQ.Files.delete(rec.id);
+  });
+  await atest('Parquet lazy: Blob-backed file (no ArrayBuffer) reads by byte range', async () => {
+    const buf = bigParquet(800, 8);
+    const blob = new Blob([buf]);
+    const rec = { id: 'pqs5', name: 'pqs5.parquet', mtime: 1, size: blob.size, buf: null, blob };
+    PQ.Files.set(rec.id, rec);
+    E.setProject(pqProj([{ type: 'SelectColumns', cols: ['id'] }], rec.id)); E.clearCache();
+    const r = await PQ.Host.handle({ op: 'evaluate', qid: 'p', mode: 'preview' });
+    assert(r.n === 100, 'n ' + r.n);
+    const lr = PQ.IO.parquetLastRead;
+    assert(lr.rowGroups === 1 && lr.columns.length === 1 && lr.bytes < blob.size / 4, JSON.stringify(lr));
+    const info = (await PQ.Host.handle({ op: 'inspectFile', fileId: rec.id })).info;
+    assert(info.rows === 800 && info.meta.rowGroups === 8 && info.meta.lazy, JSON.stringify(info.meta));
+    PQ.Files.delete(rec.id);
+  });
+  test('codegen: parquet source column list becomes a select', () => {
+    const p = pqProj([], 'x', { columns: ['a', 'b'] });
+    p.queries[0].steps[0].kind.source.fileName = 'x.parquet';
+    assert(PQ.Steps.toPython(p).includes('pl.scan_parquet(DATA_DIR / "x.parquet").select(["a", "b"])'), 'select missing');
+  });
   test('Arrow IPC: write → read round-trip', () => {
     const buf = PQ.IO.toArrow(typed());
     const t2 = PQ.IO.decodeArrow({ id: 'ar1', name: 'x.arrow', mtime: 1, size: buf.byteLength, buf });

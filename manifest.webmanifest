@@ -1,48 +1,37 @@
 {
-  "id": "./",
   "name": "Floe — data preparation",
   "short_name": "Floe",
-  "description": "Clean and reshape messy spreadsheets with replayable steps. Runs locally; files are never uploaded.",
+  "description": "Clean and reshape messy spreadsheets with replayable steps. Runs locally in your browser.",
+  "id": "./",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone"],
   "background_color": "#f2efe8",
-  "theme_color": "#2b2926",
-  "categories": ["productivity", "business", "utilities"],
+  "theme_color": "#f2efe8",
   "icons": [
     { "src": "images/floe-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "images/floe-icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" },
-    { "src": "images/floe-icon.jpg", "sizes": "1024x1024", "type": "image/jpeg", "purpose": "any" }
-  ],
-  "shortcuts": [
-    { "name": "Sample project", "short_name": "Demo", "url": "./demo.html", "icons": [{ "src": "images/floe-icon.svg", "sizes": "any", "type": "image/svg+xml" }] },
-    { "name": "Command palette", "short_name": "Commands", "url": "./index.html?open=palette", "icons": [{ "src": "images/floe-icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
+    { "src": "images/floe-icon.jpg", "sizes": "1024x1024", "type": "image/jpeg", "purpose": "any" },
+    { "src": "images/floe-icon-maskable.jpg", "sizes": "150x150", "type": "image/jpeg", "purpose": "maskable" }
   ],
   "file_handlers": [
     {
       "action": "./index.html",
       "accept": {
-        "application/x-floe+json": [".floe"],
-        "text/csv": [".csv", ".tsv"],
+        "text/csv": [".csv", ".tsv", ".txt"],
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx", ".xlsm"],
         "application/vnd.ms-excel": [".xls"],
-        "application/json": [".json", ".ndjson", ".jsonl"],
-        "application/vnd.apache.parquet": [".parquet"],
-        "application/vnd.apache.arrow.file": [".arrow", ".feather"]
-      },
-      "launch_type": "single-client"
+        "application/json": [".json", ".ndjson", ".jsonl", ".floe"],
+        "application/vnd.apache.parquet": [".parquet", ".pq"],
+        "application/vnd.apache.arrow.file": [".arrow", ".feather", ".ipc"]
+      }
     }
   ],
-  "launch_handler": { "client_mode": ["navigate-existing", "auto"] },
   "share_target": {
     "action": "./share-target",
     "method": "POST",
     "enctype": "multipart/form-data",
-    "params": {
-      "title": "title",
-      "text": "text",
-      "files": [{ "name": "files", "accept": [".csv", ".tsv", ".txt", ".xlsx", ".xls", ".json", ".parquet", ".arrow", "text/csv", "text/plain", "application/json", "application/octet-stream"] }]
-    }
+    "params": { "title": "title", "text": "text", "files": [{ "name": "files", "accept": [".csv", ".tsv", ".txt", ".xlsx", ".xls", ".json", ".parquet", ".arrow", "text/csv", "application/json"] }] }
   }
 }

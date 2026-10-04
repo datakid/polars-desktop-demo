@@ -36,7 +36,7 @@ const WEB_ONLY = ['sw.js', 'tests.html', 'tests-ui.html', 'bench.html', '404.htm
 const DESKTOP_SKIP = new Set(['js/tests.js', 'js/bench.js']);
 const WEB_SKIP = new Set(['js/native-engine.js']);
 const REQUIRED = [
-  'index.html', 'css/app.css', 'js/util.js', 'js/worker.js', 'js/ui/app.js',
+  'index.html', 'css/app.css', 'js/util.js', 'js/worker.js', 'js/parquet.js', 'js/ui/app.js', 'manifest.webmanifest',
   'vendor/xlsx.full.min.js', 'vendor/alasql.min.js', 'vendor/arrow.es2015.min.js',
   'vendor/hyparquet.min.js', 'vendor/hyparquet-compressors.min.js', 'vendor/hyparquet-writer.min.js',
   'vendor/fontawesome/css/all.min.css', 'vendor/fontawesome/webfonts/fa-solid-900.woff2',

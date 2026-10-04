@@ -136,15 +136,33 @@
   }
 
   function columnarNavigator(f, info, opts) {
-    const label = info.kind === 'parquet' ? 'Parquet' : 'Arrow IPC';
+    const pq = info.kind === 'parquet';
+    const label = pq ? 'Parquet' : 'Arrow IPC';
     const rows = (info.preview || []).slice(1, 31);
-    const body = h('div.col',
-      h('div.callout.ok', UI.icon('fa-check'), h('div', h('b', label), ' · ', h('b', PQ.fmtInt(info.rows)), ' rows · ', h('b', info.cols), ' typed columns', info.meta && info.meta.rowGroups ? ' · ' + info.meta.rowGroups + ' row group' + (info.meta.rowGroups > 1 ? 's' : '') : '', '. Types come from the file, no inference needed.')),
-      UI.miniTable(info.schema, rows, { maxHeight: '360px' }));
+    const m = info.meta || {};
+    const facts = [h('b', label), ' · ', h('b', PQ.fmtInt(info.rows)), ' rows · ', h('b', info.cols), ' typed columns'];
+    if (m.rowGroups) facts.push(' · ' + m.rowGroups + ' row group' + (m.rowGroups > 1 ? 's' : ''));
+    if (m.codec && m.codec !== 'UNCOMPRESSED') facts.push(' · ' + m.codec.toLowerCase());
+    facts.push('. Types come from the file, no inference needed.');
+    const parts = [h('div.callout.ok', UI.icon('fa-check'), h('div', facts))];
+    let picker = null;
+    if (pq) {
+      parts.push(h('p.faint', { style: { margin: 0, fontSize: '12px' } }, m.lazy ? 'Read on demand: only the row groups and columns a query needs are loaded, so large files stay light.' : 'Only the row groups and columns a query needs are decoded.'));
+      if (info.cols > 1) {
+        picker = W.colMulti(info.schema, info.schema.map((c) => c.name));
+        parts.push(W.field('Columns to load (unchecked columns are never read)', picker));
+      }
+    }
+    parts.push(UI.miniTable(info.schema, rows, { maxHeight: '320px' }));
     UI.modal({
-      title: f.name, icon: info.kind === 'parquet' ? 'fa-cubes' : 'fa-cube', size: 'wide', body, okLabel: opts.replaceSourceOf ? 'Replace source' : 'Load',
+      title: f.name, icon: pq ? 'fa-cubes' : 'fa-cube', size: 'wide', body: h('div.col', parts), okLabel: opts.replaceSourceOf ? 'Replace source' : 'Load',
       onOk: async () => {
         const source = { kind: 'file', fileId: f.id, fileName: f.name, format: info.kind };
+        if (picker) {
+          const cols = picker.get();
+          if (!cols.length) { UI.toast('Choose at least one column', 'warn'); return false; }
+          if (cols.length < info.cols) source.columns = cols;
+        }
         await UI.App.createQueryFromSource(source, f.name.replace(/\.\w+$/, ''), null, opts.replaceSourceOf);
       },
     });

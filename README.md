@@ -1,5 +1,28 @@
 # Floe 1.1 — data preparation, web and desktop
 
+## What's new since 1.1
+- **Parquet streaming on the web** (`js/parquet.js`):
+  - Reads only the footer metadata first.
+  - Decodes row group by row group, and only the columns the query needs. Projection is worked out from the steps: Select, Remove, Group by, formulas, and so on.
+  - Previews stop after the row groups that cover the preview row count.
+  - Large files stay as a lazy `Blob` (or OPFS file) and are read in byte slices, so the whole file is never copied into memory.
+  - Decoded columns are cached in an LRU with a budget of about 30M cells.
+  - Progress shows "row group i of n · k of m columns".
+- **Column projection in the UI:**
+  - The Parquet navigator has column checkboxes.
+  - The Source step has a column picker.
+  - The Python export adds `.select([...])` after `pl.scan_parquet`.
+  - The Polars JSON plan carries the projection.
+- **`floe` CLI** (`scripts/floe.mjs`, Node 18+, no dependencies). It runs the same built-in JS engine headlessly:
+  ```
+  node scripts/floe.mjs run project.floe [--query <name>] [--format csv|tsv|xlsx|parquet|arrow] [--data <dir>] [--out <dir>] [--param k=v]
+  node scripts/floe.mjs inspect data.parquet [--rows 20] [--json]
+  node scripts/floe.mjs python project.floe [--query <name>] [--out script.py]
+  node scripts/floe.mjs plan project.floe --query <name>
+  ```
+  Exit codes: 0 ok · 1 query failed · 2 usage · 3 input missing. `npm link` installs it as `floe`.
+- Engine tests: 93 (7 new Parquet planning/projection and CLI tests).
+
 ## What's new in 1.1
 - **Engine indicator** in the status bar: `● Built-in · 42 ms · Sample 1,000`. Click it (or press Enter on it) for engine, location, last run, data scope and, on desktop, why that engine ran. The dot shows idle, busy, starting or error. On phones it shrinks to the dot and engine name.
 - **Polars engine for desktop** (optional build, `--features polars-engine`):
@@ -34,7 +57,7 @@ One codebase ships two ways:
 ## Repository layout
 ```
 index.html, demo.html, 404.html     app pages
-tests.html, tests-ui.html           engine golden tests (78) · UI end-to-end smoke test (web build only)
+tests.html, tests-ui.html           engine golden tests (93) · UI end-to-end smoke test (web build only)
 css/app.css                         "Clay" design system
 js/                                 engine (worker), platform layer, UI
 js/native-engine.js                 optional Polars adapter; idle unless a desktop engine reports itself available
@@ -43,6 +66,8 @@ fonts/                              Instrument Sans, Source Serif 4, JetBrains M
 images/                             floe-icon.svg (app icon source), floe-icon-maskable.svg, floe-mark.svg, raster jpgs
 manifest.webmanifest, sw.js         PWA
 scripts/build-web.mjs               single build script for both targets
+scripts/floe.mjs                    headless `floe` CLI (built-in engine under Node)
+js/parquet.js                       Parquet metadata, row-group/range planner, projected column scan
 package.json                        root version (source of truth) + build scripts
 vercel.json, .vercelignore          web deploy
 desktop/                            Tauri 2 shell (never uploaded to Vercel)
@@ -157,11 +182,12 @@ CI builds both variants for every OS: `Floe_*` uses the built-in engine and `Flo
 - Division by zero gives null instead of a cell error.
 
 ## Not implemented / known limits
-- No `floe` CLI yet. *Automate…* exports a Polars Python script instead.
+- The `floe` CLI runs on the built-in JS engine (Node). A native Rust CLI on `floe-engine` is not built yet.
 - The Rust code (`floe-engine` and the Tauri shell) has not been compiled yet. The first CI run may report API-signature errors, especially against Polars 0.46.
 - Builds are unsigned; macOS Gatekeeper and Windows SmartScreen will warn until signing is configured.
 - No auto-updater yet.
-- Parquet is decoded fully in memory; practical limit about 250 MB per file on the web, 500 MB on desktop.
+- No Parquet filter pushdown yet. Row groups are not skipped using min/max statistics, page indexes or bloom filters. A full refresh of a filtered query still decodes every row group of the projected columns.
+- On desktop, Parquet files that fall back to the built-in engine are still read whole by the shell.
 - `Text.Similarity` has no Polars equivalent; codegen emits a placeholder.
 - Database sources.
 
@@ -170,8 +196,9 @@ The full step-by-step plan for web, desktop and the optional Polars engine is in
 
 ## Next steps
 1. Fix the first CI compile errors in `floe-engine` / the Tauri shell, then add signing secrets (see `docs/SIGNING.md`).
-2. Row-group streaming and column projection for Parquet on the web.
-3. `floe` CLI built on `floe-engine`.
+2. Native `floe` CLI binary on `floe-engine` (Polars), reusing the `scripts/floe.mjs` command surface.
+3. Ranged reads from the Tauri shell (`read_file_range`) so desktop built-in fallbacks also stream Parquet.
+4. Filter pushdown in `js/parquet.js`: skip row groups using column-chunk min/max statistics for simple `Filter` steps, then use page indexes.
 
 ## License
 MIT. Bundled: SheetJS CE (Apache-2.0), AlaSQL (MIT), apache-arrow (Apache-2.0), hyparquet / hyparquet-writer / hyparquet-compressors (MIT), Font Awesome Free (icons CC BY 4.0, fonts OFL, code MIT), Instrument Sans, Source Serif 4 and JetBrains Mono (OFL).

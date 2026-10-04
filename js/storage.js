@@ -30,7 +30,8 @@
     }
     if (typeof fh.createSyncAccessHandle === 'function') {
       const ah = await fh.createSyncAccessHandle();
-      try { ah.truncate(0); ah.write(new Uint8Array(buf), { at: 0 }); ah.flush(); } finally { ah.close(); }
+      const bytes = buf instanceof Blob ? new Uint8Array(await buf.arrayBuffer()) : new Uint8Array(buf);
+      try { ah.truncate(0); ah.write(bytes, { at: 0 }); ah.flush(); } finally { ah.close(); }
       return;
     }
     throw new Error('OPFS writes are not supported here');
@@ -39,10 +40,11 @@
 
   IDB.put = async function (rec) {
     const dir = await opfs();
-    if (!dir || !rec.buf) return raw.put(rec);
+    const data = rec.buf || rec.blob;
+    if (!dir || !data) return raw.put(rec);
     try {
-      await writeHandle(await dir.getFileHandle(fname(rec.id), { create: true }), rec.buf);
-      return raw.put(Object.assign({}, rec, { buf: null, opfs: true }));
+      await writeHandle(await dir.getFileHandle(fname(rec.id), { create: true }), data);
+      return raw.put(Object.assign({}, rec, { buf: null, blob: null, opfs: true, lazy: !rec.buf }));
     } catch (e) { return raw.put(rec); }
   };
   IDB.all = async function () {
@@ -52,12 +54,15 @@
     for (const rec of list) {
       if (rec.opfs) {
         if (!dir) continue;
-        try { out.push(Object.assign({}, rec, { buf: await (await (await dir.getFileHandle(fname(rec.id))).getFile()).arrayBuffer() })); }
+        try {
+          const file = await (await dir.getFileHandle(fname(rec.id))).getFile();
+          out.push(Object.assign({}, rec, rec.lazy ? { buf: null, blob: file } : { buf: await file.arrayBuffer() }));
+        }
         catch (e) { console.warn('Missing OPFS data for ' + rec.name); }
         continue;
       }
       out.push(rec);
-      if (dir && rec.buf) IDB.put(rec).catch(() => {});
+      if (dir && (rec.buf || rec.blob)) IDB.put(rec).catch(() => {});
     }
     return out;
   };

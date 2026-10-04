@@ -30,7 +30,6 @@
   };
 
   const decoded = new Map();
-  const decodeErrors = new Map();
   const dkey = (rec) => rec.id + ':' + rec.mtime + ':' + rec.size;
   function remember(k, t) {
     decoded.delete(k);
@@ -38,11 +37,7 @@
     while (decoded.size > 6) decoded.delete(decoded.keys().next().value);
     return t;
   }
-  let hp = null, hpc = null, hpw = null;
-  async function parquetLib() {
-    if (!hp) [hp, hpc] = await Promise.all([import('../vendor/hyparquet.min.js'), import('../vendor/hyparquet-compressors.min.js')]);
-    return hp;
-  }
+  let hpw = null;
   function arrowLib() {
     if (!self.Arrow && typeof importScripts === 'function') importScripts('../vendor/arrow.es2015.min.js');
     if (!self.Arrow) throw new StepError('Arrow library failed to load');
@@ -71,32 +66,11 @@
     return new Table(PQ.uniquify(names).map((nm, i) => ({ name: nm, type: PQ.valuesType(data[i]) })), data, n);
   }
 
-  IO.decodeParquet = async function (rec) {
-    const k = dkey(rec);
-    if (decoded.has(k)) return decoded.get(k);
-    await parquetLib();
-    const file = rec.buf;
-    const metadata = hp.parquetMetadata(file);
-    const names = hp.parquetSchema(metadata).children.map((c) => c.element.name);
-    const n = Number(metadata.num_rows);
-    const cols = new Map(names.map((nm) => [nm, new Array(n)]));
-    await hp.parquetRead({
-      file, metadata, compressors: hpc.compressors,
-      onChunk: ({ columnName, columnData, rowStart }) => {
-        const dst = cols.get(columnName);
-        if (!dst) return;
-        for (let i = 0, L = columnData.length; i < L; i++) dst[rowStart + i] = columnData[i];
-      },
-    });
-    const t = fromColumns(names, names.map((nm) => cols.get(nm)), n);
-    t.meta = { format: 'parquet', rowGroups: metadata.row_groups.length, createdBy: metadata.created_by || null };
-    decodeErrors.delete(k);
-    return remember(k, t);
-  };
   IO.decodeArrow = function (rec) {
     const k = dkey(rec);
     if (decoded.has(k)) return decoded.get(k);
     const A = arrowLib();
+    if (!rec.buf) throw new StepError('Arrow file "' + rec.name + '" has no data. Re-add it.');
     const at = A.tableFromIPC(new Uint8Array(rec.buf));
     const n = at.numRows;
     const fields = at.schema.fields;
@@ -116,28 +90,12 @@
     t.meta = { format: 'arrow' };
     return remember(k, t);
   };
-  IO.prepare = async function (only) {
-    for (const rec of PQ.Files.values()) {
-      if (!rec.buf || IO.fileKind(rec.name) !== 'parquet') continue;
-      if (only && !only.has(rec.id)) continue;
-      const k = dkey(rec);
-      if (decoded.has(k) || decodeErrors.has(k)) continue;
-      try { await IO.decodeParquet(rec); } catch (e) { decodeErrors.set(k, e.message || String(e)); }
-    }
-  };
-  function columnar(rec) {
-    const kind = IO.fileKind(rec.name);
-    if (kind === 'arrow') return IO.decodeArrow(rec);
-    const k = dkey(rec);
-    if (decodeErrors.has(k)) throw new StepError('Could not read Parquet file "' + rec.name + '": ' + decodeErrors.get(k));
-    const t = decoded.get(k);
-    if (!t) throw new StepError('Parquet file "' + rec.name + '" is still being decoded. Refresh in a moment.');
-    return t;
-  }
+  IO.prepare = async function () {};
+  const columnar = (rec) => IO.decodeArrow(rec);
   const baseRead = IO.readFile;
   IO.readFile = function (rec, spec, maxRows) {
     const kind = (spec && spec.format) || IO.fileKind(rec.name);
-    if (kind !== 'parquet' && kind !== 'arrow') return baseRead(rec, spec, maxRows);
+    if (kind !== 'arrow') return baseRead(rec, spec || {}, maxRows);
     const t = columnar(rec);
     if (maxRows !== undefined && maxRows !== Infinity && t.n > maxRows) { const s = t.slice(0, maxRows); s.meta = Object.assign({}, t.meta, { truncated: true }); return s; }
     return t;
@@ -145,14 +103,14 @@
   const baseInspect = IO.inspectFile;
   IO.inspectFile = function (rec) {
     const kind = IO.fileKind(rec.name);
-    if (kind !== 'parquet' && kind !== 'arrow') return baseInspect(rec);
+    if (kind !== 'arrow') return baseInspect(rec);
     const t = columnar(rec);
     return { kind, rows: t.n, cols: t.cols.length, schema: t.schema(), meta: t.meta, preview: [t.names].concat(t.toRows(39).map((r) => r.map((v) => (isErr(v) ? '#ERR' : PQ.fmtValue(v))))) };
   };
 
   const clean = (v) => (v === undefined || isErr(v) ? null : v);
   IO.toParquet = async function (t) {
-    if (!hpw) hpw = await import('../vendor/hyparquet-writer.min.js');
+    if (!hpw) hpw = self.__floeModules ? self.__floeModules.writer : await import('../vendor/hyparquet-writer.min.js');
     const columnData = t.cols.map((c, i) => {
       const src = t.data[i];
       let type, data;
@@ -575,7 +533,7 @@
     }
     PQ.Host.handle = async function (msg, progress) {
       progress = progress || (() => {});
-      if (NEED.has(msg.op)) await IO.prepare(usedFiles(msg));
+      if (NEED.has(msg.op)) await IO.prepare(usedFiles(msg), msg, progress);
       if (msg.op === 'suggestSteps' && msg.source && (msg.source.format === 'parquet' || msg.source.format === 'arrow')) return { steps: [], columns: [] };
       const x = H2[msg.op];
       if (x) { const r = await x(msg, progress); if (r !== null) return r; }

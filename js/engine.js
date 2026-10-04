@@ -748,7 +748,7 @@
     if (src.kind === 'file') {
       const rec = PQ.Files.get(src.fileId);
       if (!rec) throw new StepError('File "' + (src.fileName || src.fileId) + '" is not available. Re-add it with Get Data → File.', { fixes: [{ kind: 'relink', label: 'Pick a replacement file' }] });
-      const t = PQ.IO.readFile(rec, src, limit);
+      const t = PQ.IO.readFile(rec, src, limit, ctx);
       return trimLimit(t, limit);
     }
     if (src.kind === 'folder') {
@@ -759,7 +759,7 @@
       let remaining = limit;
       for (const f of files) {
         if (remaining <= 0) break;
-        let t = PQ.IO.readFile(f, src, remaining);
+        let t = PQ.IO.readFile(f, src, remaining, ctx);
         t = trimLimit(t, remaining);
         t = t.withColumn(src.fileColumn || 'Source.Name', 'text', new Array(t.n).fill(f.name), 0);
         parts.push(t);
@@ -821,9 +821,10 @@
     if (src.kind === 'folder') { const re = PQ.globToRegex(src.pattern || '*'); return 'folder:' + [...PQ.Files.values()].filter((f) => (f.folder || '') === src.folder && re.test(f.name)).map((f) => f.id + ':' + f.mtime).sort().join(','); }
     return src.kind;
   }
+  E.sourceVariant = () => '';
 
   /** Fingerprint per step (cheap, no execution). Detects dependency cycles with a readable path. */
-  function fingerprints(qid, mode, stack) {
+  function fingerprints(qid, mode, stack, upto) {
     stack = stack || [];
     const q = E.query(qid);
     if (!q) throw new StepError('Referenced query not found (' + qid + ')');
@@ -838,7 +839,7 @@
     let prev = PQ.hash(base);
     for (const step of q.steps) {
       let extra = '';
-      if (step.kind.type === 'Source') extra = sourceFingerprint(step.kind.source);
+      if (step.kind.type === 'Source') extra = sourceFingerprint(step.kind.source) + E.sourceVariant(step.kind.source, q, upto);
       for (const r of refsOf(step)) { const f = fingerprints(r, mode, st); extra += '|' + f[f.length - 1]; }
       prev = PQ.hash(prev + '|' + PQ.stableStringify(step.kind) + '|' + extra);
       out.push(prev);
@@ -871,7 +872,7 @@
     if (!q) throw new StepError('Query not found');
     if (upto === undefined || upto === null || upto >= q.steps.length) upto = q.steps.length - 1;
     const ctx = {
-      mode, previewRows: project.settings.previewRows, locale: project.settings.locale, params: project.params || [],
+      mode, previewRows: project.settings.previewRows, locale: project.settings.locale, params: project.params || [], query: q, upto,
       resolve: (ref) => {
         const rq = E.query(ref);
         if (!rq) throw new StepError('Referenced query not found');
@@ -884,7 +885,7 @@
     };
     let fps;
     const states = [];
-    try { fps = fingerprints(q.id, mode, stack); }
+    try { fps = fingerprints(q.id, mode, stack, upto); }
     catch (e) { return { table: Table.empty(), states: q.steps.map((s, i) => ({ ok: false, error: i === 0 || e.cycle ? e.message : 'Blocked', blocked: i > 0 && !e.cycle })) }; }
     let table = Table.empty(), truncated = false, failed = -1;
     for (let i = 0; i <= upto; i++) {

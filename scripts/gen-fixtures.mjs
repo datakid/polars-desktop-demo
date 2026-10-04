@@ -9,7 +9,7 @@ const out = resolve(root, process.argv[2] || 'desktop/src-tauri/engine/tests/fix
 const ctx = { console, TextDecoder, TextEncoder, performance, Intl, setTimeout, clearTimeout, structuredClone, indexedDB: undefined, navigator: {} };
 ctx.self = ctx;
 vm.createContext(ctx);
-for (const f of ['util', 'expr', 'io', 'steps', 'engine', 'engine-ext', 'plan']) {
+for (const f of ['util', 'expr', 'io', 'steps', 'engine', 'engine-ext', 'parquet', 'plan']) {
   vm.runInContext(readFileSync(join(root, 'js', f + '.js'), 'utf8'), ctx, { filename: f + '.js' });
 }
 const PQ = ctx.PQ, E = PQ.Engine;

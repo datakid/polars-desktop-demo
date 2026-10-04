@@ -28,6 +28,7 @@
     else if (draft.index !== undefined) q.steps[draft.index] = Object.assign({}, q.steps[draft.index], { kind: draft.kind });
     return p;
   }
+  Host.withDraft = withDraft;
 
   /* ---------------- smart suggestions (messy-file assistance) ---------------- */
   const derived = new Map();
@@ -114,15 +115,19 @@
     const extra = { folder: m.folder || '', path: m.path || null };
     if (m.mtime) extra.mtime = m.mtime;
     if (m.replaceId && PQ.Files.has(m.replaceId)) extra.id = m.replaceId;
-    const rec = await PQ.addFile(m.name, m.buf, extra);
+    if (!m.buf && m.blob) extra.blob = m.blob;
+    if (!m.buf && !m.blob) throw new Error('No file data for ' + m.name);
+    const rec = await PQ.addFile(m.name, m.buf || null, extra);
     if (extra.id) E.clearCache();
     return { file: { id: rec.id, name: rec.name, size: rec.size, mtime: rec.mtime, folder: rec.folder, kind: PQ.IO.fileKind(rec.name) } };
   };
   H.updateFile = async function (m) {
     const rec = PQ.Files.get(m.id);
     if (!rec) throw new Error('File not found');
-    const next = Object.assign({}, rec, { buf: m.buf, size: m.buf.byteLength, mtime: m.mtime || Date.now() });
+    const blob = !m.buf && m.blob ? m.blob : null;
+    const next = Object.assign({}, rec, { buf: m.buf || null, blob, size: m.buf ? m.buf.byteLength : blob ? blob.size : 0, mtime: m.mtime || Date.now() });
     PQ.Files.set(rec.id, next);
+    if (PQ.IO.parquetForget) PQ.IO.parquetForget(rec.id);
     try { await PQ.IDB.put(next); } catch (e) { }
     E.clearCache();
     results.clear();
@@ -133,7 +138,7 @@
     PQ.Files.forEach((f) => { bytes += f.size || 0; });
     return { files: PQ.Files.size, bytes };
   };
-  H.removeFile = async function (m) { PQ.Files.delete(m.id); await PQ.IDB.del(m.id); E.clearCache(); return { files: listFiles() }; };
+  H.removeFile = async function (m) { PQ.Files.delete(m.id); if (PQ.IO.parquetForget) PQ.IO.parquetForget(m.id); await PQ.IDB.del(m.id); E.clearCache(); return { files: listFiles() }; };
   H.loadSamples = async function () {
     const existing = new Set([...PQ.Files.values()].map((f) => f.name));
     for (const s of PQ.IO.makeSamples()) {
@@ -199,6 +204,7 @@
       try { const r = E.evaluate('tmp', 0, 'preview'); if (!r.table) throw new Error(r.states[0].error); t = r.table; } finally { E.setProject(base); }
     } else {
       const rec = PQ.Files.get(src.fileId);
+      if (!rec) throw new Error('File not found');
       t = PQ.IO.readFile(rec, src, 2000);
     }
     const steps = [];

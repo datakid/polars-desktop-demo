@@ -81,12 +81,15 @@
     }
     return out;
   }
+  const lazy = (name) => !native && PQ.isLazyFile(name);
+  P.lazyFile = lazy;
+  async function body(f) { return lazy(f.name) ? { buf: null, blob: f } : { buf: await f.arrayBuffer() }; }
   async function fromFileObjects(files, folder) {
-    return Promise.all([...files].map(async (f) => ({ name: f.name, size: f.size, mtime: f.lastModified || Date.now(), folder: folder || '', path: null, handle: null, buf: await f.arrayBuffer() })));
+    return Promise.all([...files].map(async (f) => Object.assign({ name: f.name, size: f.size, mtime: f.lastModified || Date.now(), folder: folder || '', path: null, handle: null }, await body(f))));
   }
   async function fromHandle(h, folder) {
     const f = await h.getFile();
-    return { name: f.name, size: f.size, mtime: f.lastModified || Date.now(), folder: folder || '', path: null, handle: h, buf: await f.arrayBuffer() };
+    return Object.assign({ name: f.name, size: f.size, mtime: f.lastModified || Date.now(), folder: folder || '', path: null, handle: h }, await body(f));
   }
   async function walk(dir, folder, out, depth) {
     for await (const [name, h] of dir.entries()) {
@@ -219,7 +222,7 @@
     if (!(await allow(handle, 'read', ask))) return null;
     const f = await handle.getFile();
     if (f.lastModified === rec.mtime && f.size === rec.size) return null;
-    return { buf: await f.arrayBuffer(), mtime: f.lastModified || Date.now(), size: f.size };
+    return Object.assign({ mtime: f.lastModified || Date.now(), size: f.size }, await body(f));
   };
 
   P.recent = {
@@ -259,7 +262,7 @@
         const fh = h && h.kind === 'file' ? h : null;
         if (P.isProject(file.name)) { out.project = { name: file.name, path: null, handle: fh, text: await file.text() }; continue; }
         if (!DATA_RE.test(file.name)) { out.skipped.push(file.name); continue; }
-        out.files.push({ name: file.name, size: file.size, mtime: file.lastModified || Date.now(), folder: '', path: null, handle: fh, buf: await file.arrayBuffer() });
+        out.files.push(Object.assign({ name: file.name, size: file.size, mtime: file.lastModified || Date.now(), folder: '', path: null, handle: fh }, await body(file)));
       } catch (e) { out.skipped.push((f && f.name) || 'item'); }
     }
     return out;

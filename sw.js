@@ -22,6 +22,7 @@ const CORE = [
   './js/steps.js',
   './js/engine.js',
   './js/engine-ext.js',
+  './js/parquet.js',
   './js/host.js',
   './js/worker.js',
   './js/platform.js',
