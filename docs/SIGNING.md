@@ -1,6 +1,6 @@
 # Signing the desktop builds
 
-Unsigned builds work, but macOS Gatekeeper and Windows SmartScreen warn users on first launch. Signing switches on automatically once the secrets below exist (the `SIGNING` repository variable must be set to `on`).
+Unsigned builds work, but macOS Gatekeeper and Windows SmartScreen warn users on first launch. Signing is not wired into the workflows yet: `release.yml` builds unsigned installers. The secrets below are what it will need once signing is added.
 
 ## macOS (Developer ID + notarisation)
 1. Join the Apple Developer Program. In Xcode or on developer.apple.com, create a **Developer ID Application** certificate.
@@ -24,7 +24,7 @@ Choose one:
 - **OV/EV certificate as a .pfx:** add the secrets `WINDOWS_CERTIFICATE` (base64 pfx) and `WINDOWS_CERTIFICATE_PASSWORD`, plus `bundle.windows.certificateThumbprint`. Import the certificate in a workflow step before tauri-action (`Import-PfxCertificate`).
 
 ## Turn it on
-Repository → Settings → Secrets and variables → Actions → **Variables** → add `SIGNING` = `on`. The `desktop.yml` workflow then passes the Apple secrets to tauri-action. Leave it unset to keep building unsigned.
+Not available yet. Once certificates exist, add the secrets above and extend the build step in `.github/workflows/release.yml` to pass them to the Tauri build.
 
 ## Check
 - macOS: `spctl -a -vv /Applications/Floe.app` should print `accepted, source=Notarized Developer ID`.

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+desktop/dist/
+desktop/target/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/icons/
+desktop/src-tauri/binaries/
+.vercel/
+*.key
+*.key.pub
+.DS_Store
+desktop/src-tauri/engine/tests/fixtures/

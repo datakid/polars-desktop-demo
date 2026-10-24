@@ -13,7 +13,8 @@ polars = { version = "=0.46.0", features = [
   "lazy", "csv", "parquet", "ipc", "strings", "regex", "temporal",
   "dtype-date", "dtype-datetime", "dtype-struct", "is_in", "cum_agg", "rank",
   "round_series", "rolling_window", "concat_str", "diagonal_concat", "cross_join",
-  "semi_anti_join", "is_first_distinct", "is_unique", "abs"
+  "semi_anti_join", "is_first_distinct", "is_unique", "abs",
+  "string_pad", "range", "ipc_streaming"
 ] }
 calamine = "0.26"
 rust_xlsxwriter = "0.79"

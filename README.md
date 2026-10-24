@@ -79,7 +79,7 @@ vercel.json, .vercelignore          web deploy
 desktop/                            Tauri 2 shell (never uploaded to Vercel)
   package.json, scripts/ensure-icons.mjs
   src-tauri/Cargo.toml, build.rs, tauri.conf.json, capabilities/default.json, src/main.rs, src/lib.rs
-.github/workflows/                  web-check.yml (build check) · desktop.yml (macOS/Windows/Linux installers)
+.github/workflows/                  ci.yml (web build + tests, engine tests, Windows installers) · release.yml (tagged pre-release)
 ```
 
 ## Build
@@ -113,7 +113,21 @@ npm run build      # installers in desktop/src-tauri/target/release/bundle/
 ```
 Icons are generated from `images/floe-icon.svg` into `desktop/src-tauri/icons/` on first dev/build (`npm run icons` to regenerate).
 
-CI: push a tag `v1.0.0` and `.github/workflows/desktop.yml` builds draft release installers for macOS (arm64 + x64), Windows (NSIS/MSI) and Linux (deb/AppImage/rpm). Code signing/notarisation is not configured — add Apple/Windows signing secrets to tauri-action when you have certificates.
+### CI and pre-alpha releases
+`.github/workflows/ci.yml` runs on every push to `main`, every pull request, and on demand:
+- **Web build and tests:** builds the web and desktop frontends, then runs `tests.html` (unit) and `tests-ui.html` (end-to-end) in headless Chromium.
+- **Polars engine tests:** `cargo test` on `floe-engine`, including the parity suite.
+- **Windows installers:** builds the NSIS installer for both variants (built-in engine and Polars) and uploads them as artifacts (kept 14 days).
+
+`.github/workflows/release.yml` builds both Windows installers and publishes them on the Releases page with SHA-256 files. Push a tag to start one:
+```
+git tag v1.1.0-alpha.1
+git push origin v1.1.0-alpha.1
+```
+- The version in the tag is written into `package.json`, `js/util.js`, `desktop/package.json` and `tauri.conf.json`, so the build's version check passes without hand edits.
+- A tag with a suffix (`-alpha.1`, `-beta.1`) is published as a **pre-release**. A plain tag such as `v1.1.0` is a normal release.
+- It can also be started from the Actions tab (**Run workflow**) with a tag name.
+- Builds are unsigned and have no auto-update. macOS and Linux builds are not part of the workflows yet.
 
 ### Desktop shell (src-tauri/src/lib.rs)
 Commands used by `js/platform.js`:
@@ -167,7 +181,7 @@ cd desktop && npm install
 npm run dev:polars        # or: npm run build:polars
 npm run test:engine       # cargo tests for floe-engine
 ```
-CI builds both variants for every OS: `Floe_*` uses the built-in engine and `Floe-polars_*` adds Polars. The `polars` variant is about 30 MB larger.
+CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe-polars_*` adds Polars. The `polars` variant is about 30 MB larger.
 
 **Polars covers:**
 - Sources: CSV (UTF-8), Parquet, Arrow IPC, Excel sheets and ranges, entered data, query references.
@@ -190,7 +204,7 @@ CI builds both variants for every OS: `Floe_*` uses the built-in engine and `Flo
 ## Not implemented / known limits
 - On phones, mobile screenshots show dialog footers (Cancel / OK) below the bottom edge of the sheet. This happens in Parameters and Automate, so it isn't one dialog. Not yet measured on a real device. The CSS to check is `.modal` / `.modal-back` in the `max-width: 760px` block.
 - The `floe` CLI runs on the built-in JS engine (Node). A native Rust CLI on `floe-engine` is not built yet.
-- The Rust code (`floe-engine` and the Tauri shell) has not been compiled yet. The first CI run may report API-signature errors, especially against Polars 0.46.
+- The Rust code (`floe-engine` and the Tauri shell) compiles and the engine tests run in CI, but the installers have not been tested by hand on a Windows PC yet.
 - Builds are unsigned; macOS Gatekeeper and Windows SmartScreen will warn until signing is configured.
 - No auto-updater yet.
 - Parquet filter pushdown uses row-group min/max statistics only. It doesn't use page indexes or bloom filters, and it is off when a timestamp or nested column is read, because those types are inferred from the values. Previews don't prune either. They already stop after the first row groups.
@@ -202,7 +216,7 @@ CI builds both variants for every OS: `Floe_*` uses the built-in engine and `Flo
 The full step-by-step plan for web, desktop and the optional Polars engine is in `docs/PLAN.md`.
 
 ## Next steps
-1. Fix the first CI compile errors in `floe-engine` / the Tauri shell, then add signing secrets (see `docs/SIGNING.md`).
+1. Test the pre-alpha installers by hand, then add signing (see `docs/SIGNING.md`).
 2. Native `floe` CLI binary on `floe-engine` (Polars), reusing the `scripts/floe.mjs` command surface.
 3. Ranged reads from the Tauri shell (`read_file_range`) so desktop built-in fallbacks also stream Parquet.
 4. Page-index and bloom-filter pushdown in `js/parquet.js`, plus pruning for previews.
