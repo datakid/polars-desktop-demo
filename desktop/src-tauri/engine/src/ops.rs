@@ -518,7 +518,8 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
             if op["strict"].as_bool().unwrap_or(false) {
                 let mut sets = Vec::new();
                 for l in lfs.iter_mut() {
-                    let mut n = visible(&schema(l)?);
+                    let sch = schema(l)?;
+                    let mut n = visible(&sch);
                     n.sort();
                     sets.push(n);
                 }
