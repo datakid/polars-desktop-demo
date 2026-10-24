@@ -59,11 +59,11 @@ jobs:
             features: '--features polars-engine'
             prefix: Floe-polars
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
@@ -104,7 +104,7 @@ jobs:
           done
           ls -la
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: floe-windows-${{ matrix.variant }}
           path: desktop/src-tauri/target/release/bundle/nsis/*.exe
@@ -120,9 +120,9 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: staged
           pattern: floe-windows-*
