@@ -1,5 +1,3 @@
-/* Floe application controller: layout, ribbon, queries, applied steps, grid wiring, column menus,
- * suggestions, profiling, status and keyboard. */
 (function () {
   const PQ = self.PQ, UI = PQ.UI, h = UI.h, Store = UI.Store, $ = UI.$;
   const App = (UI.App = { files: [], result: null, states: [], queryStatus: new Map(), evalSeq: 0, profile: null, dismissed: new Set() });
@@ -22,7 +20,6 @@
     box.append(h('div.field-label', 'Recent projects'), h('ul.recent-list', list.slice(0, 5).map((r, i) => h('li', h('button.link-btn', { on: { click: async () => { try { UI.openProject(await PQ.Platform.recent.open(r)); } catch (e) { UI.toast(e.message, 'err'); PQ.Platform.recent.remove(i).then(renderRecentOnWelcome); } } } }, UI.icon('fa-file-lines'), ' ', r.name)))));
   }
 
-  /* ================================ boot ================================ */
   App.boot = async function () {
     App.applyTheme();
     await PQ.Platform.init();
@@ -57,7 +54,6 @@
       await UI.Engine.setProject(Store.project);
       PQ.Platform.onOpenProject(async (f) => { if (await UI.guardUnsaved('open')) UI.openProject(f); }, async (files) => App.afterAdd(await App.addFiles(files)));
       if (/[?&]demo\b/.test(location.search) && !Store.project.queries.length) await App.loadSamples();
-      // deep links: ?q=<query name>&step=<n>&open=python|merge|deps|files|nav|params|custom
       const qs = new URLSearchParams(location.search);
       const want = qs.get('q') && Store.project.queries.find((x) => x.name === qs.get('q'));
       if (want) Store.setUI({ activeQid: want.id, activeStep: qs.get('step') ? +qs.get('step') - 1 : null });
@@ -81,7 +77,7 @@
     b.textContent = PQ.Platform.native ? 'Desktop' : off ? 'Offline' : 'Web';
     b.classList.toggle('native', PQ.Platform.native);
     b.classList.toggle('offline', off);
-    b.title = PQ.Platform.native ? '' : off ? 'You are offline. Everything still works; data is processed on this device.' : 'Runs in your browser. Data stays on this device.';
+    UI.tip(b, PQ.Platform.native ? '' : off ? 'You are offline. Everything still works; data is processed on this device.' : 'Runs in your browser. Data stays on this device.');
   }
   App.applyTheme = function () {
     const t = localStorage.getItem('floe.theme') || 'system';
@@ -93,7 +89,7 @@
     if (el) {
       el.textContent = t;
       el.classList.toggle('dirty', Store.dirty() && Store.linked());
-      el.title = Store.linked() ? (Store.dirty() ? 'Click to save to ' : 'Saved to ') + (Store.fileName || 'file') : 'Kept in this browser. Click to save a project file.';
+      UI.tip(el, Store.linked() ? (Store.dirty() ? 'Click to save to ' : 'Saved to ') + (Store.fileName || 'file') : 'Kept in this browser. Click to save a project file.');
     }
     updateTitle();
   };
@@ -101,7 +97,6 @@
     const file = Store.fileName || (Store.filePath ? String(Store.filePath).split(/[\\/]/).pop() : null);
     PQ.Platform.setTitle((Store.dirty() && file ? '● ' : '') + (file || Store.project.name) + ' — ' + PQ.BRAND.name);
   }
-  /** Native menu (desktop/src-tauri/src/menu.rs) → actions. */
   function onNativeMenu(id) {
     const map = {
       'file.new': () => newProject(), 'file.open': () => UI.openProject(), 'file.save': () => UI.saveProject(), 'file.save_as': () => UI.saveProject(true),
@@ -147,10 +142,8 @@
     if (tabS) tabS.textContent = q ? q.steps.length : '';
   }
 
-  /* ================================ files ================================ */
   App.reloadFiles = async function () { const r = await UI.Engine.call('listFiles'); App.files = r.files; renderFiles(); };
   App.folders = () => [...new Set(App.files.filter((f) => f.folder).map((f) => f.folder))].sort();
-  /** Accepts browser File objects or platform records {name, size, buf, path?, folder?}. */
   const MAX_FILE = PQ.Platform.native ? 500 * 1048576 : 250 * 1048576;
   const MAX_LAZY = 4096 * 1048576;
   App.addFiles = async function (fileList, folder) {
@@ -255,7 +248,6 @@
   };
   App.openNavigator = (fileId, opts) => UI.navigator(fileId, opts);
 
-  /** Create a query from a source spec: Source → PromoteHeaders (detected) → ChangeType (inferred). */
   App.createQueryFromSource = async function (source, name, headerRow, replaceQid) {
     let sug = { steps: [] };
     try { sug = await UI.Engine.call('suggestSteps', { source, headerRow }); }
@@ -311,7 +303,6 @@
     Store.setUI({ activeQid: qOrders.id, activeStep: null });
   }
 
-  /* ================================ evaluation ================================ */
   App.refresh = async function (opts) {
     opts = opts || {};
     const q = Store.query();
@@ -380,7 +371,6 @@
   function showGridMessage(node) { const g = $('#grid-msg'); UI.clear(g).appendChild(node); g.classList.remove('hidden'); }
   function hideGridMessage() { $('#grid-msg').classList.add('hidden'); }
 
-  /** A failed step shows a card that explains the error and offers one-click fixes. */
   function showStepError(q, idx, st) {
     const step = q.steps[idx];
     const fixes = (st.fixes || []).map((f) => h('button.btn.sm', { on: { click: () => applyFix(q, idx, f) } }, f.label));
@@ -403,7 +393,6 @@
     Store.edit('Relink source', (p) => { const s = p.queries.find((x) => x.id === q.id).steps[0].kind.source; s.fileId = rec.id; s.fileName = rec.name; });
   }
 
-  /* ================================ ribbon ================================ */
   const RB = [];
   function rb(icon, label, run, opts) { opts = opts || {}; const b = h('button.rb-btn', { title: opts.title || label, class: opts.danger ? 'danger' : '', on: { click: (e) => run(e) } }, UI.icon(icon), h('span', label)); b._need = opts.need; RB.push(b); return b; }
   function group(label, hue, ...btns) { return h('div.rb-group', { dataset: { label, hue } }, btns); }
@@ -498,7 +487,6 @@
     Store.edit('Reference ' + src.name, (p) => { p.queries.push(q); }, { activeQid: q.id, activeStep: null });
   }
 
-  /* ================================ left panel ================================ */
   function renderQueries() {
     const ul = UI.clear($('#query-list'));
     Store.project.queries.forEach((q) => {
@@ -566,7 +554,6 @@
     $('#drop-hint').classList.toggle('hidden', App.files.length > 3);
   }
 
-  /* ================================ right panel ================================ */
   function renderRight() {
     UI.$$('#right-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === Store.ui.rightTab));
     ['steps', 'profile', 'schema', 'overview'].forEach((t) => { const el = $('#tab-' + t); if (el) el.classList.toggle('hidden', Store.ui.rightTab !== t); });
@@ -648,7 +635,6 @@
       { label: 'Delete', icon: 'fa-trash', danger: true, disabled: i === 0, kbd: 'Del', run: () => deleteStep(q, i) },
     ], x, y);
   }
-  /** "Extract previous": steps 0..i-1 become a new query; this query now references it. */
   function extractPrevious(q, i) {
     const nq = { id: PQ.uid('q'), name: PQ.uniqueName(q.name + ' (base)', Store.project.queries.map((x) => x.name)), load: { target: 'none' }, steps: JSON.parse(JSON.stringify(q.steps.slice(0, i))) };
     Store.edit('Extract previous', (p) => {
@@ -709,7 +695,6 @@
   }
   const stat = (k, v, cls) => h('div.stat', h('div.k', k), h('div.v', { class: cls || '', title: v }, v));
 
-  /* ================================ formula bar / suggestions / banner / status ================================ */
   function renderFormulaBar() {
     const q = Store.query();
     const el = $('#step-summary');
@@ -717,7 +702,7 @@
     const s = q.steps[Store.activeIndex()];
     UI.clear(el);
     if (s) el.append(h('b', s.name), '  =  ' + PQ.Steps.describe(s.kind));
-    el.title = el.textContent;
+    UI.tip(el, el.textContent);
   }
   function renderSuggestions(list) {
     const bar = UI.clear($('#suggest-bar'));
@@ -759,7 +744,7 @@
     else if (lr) { name.textContent = engineLabel(lr.engine) + (lr.fellBack ? ' ↺' : ''); meta.textContent = (lr.failed ? 'Error' : UI.fmtMs(lr.ms)) + ' · ' + runData(lr); }
     else { name.textContent = UI.NativeEngine.available() ? 'Polars' : 'Built-in'; meta.textContent = 'Ready'; }
     chip.setAttribute('aria-label', 'Engine: ' + name.textContent.replace(' ↺', ', fell back to built-in') + (meta.textContent ? ', ' + meta.textContent : '') + '. Show details');
-    chip.title = lr && lr.fellBack && lr.reason ? lr.reason : 'Engine details';
+    UI.tip(chip, lr && lr.fellBack && lr.reason ? lr.reason : 'Engine details');
   }
   function engineDetails() {
     const lr = UI.Engine.lastRun, N = UI.NativeEngine, native = PQ.Platform.native;
@@ -786,7 +771,6 @@
   }
   App.engineDetails = engineDetails;
 
-  /* ================================ column menus ================================ */
   function filteredCols() {
     const q = Store.query(); const out = new Set(); if (!q) return out;
     q.steps.slice(0, Store.activeIndex() + 1).forEach((s) => { if (s.kind.type === 'Filter') { const f = PQ.Engine.filterFormula(s.kind); PQ.Formula.columns(f).forEach((c) => out.add(c)); } });
@@ -849,7 +833,6 @@
     const { values } = await UI.Engine.call('distinct', { resultId: App.result.resultId, col: c.name });
     UI.copy(values.map((v) => UI.cellText(v.value, c.type).text).join('\n'), 'Copied ' + values.length + ' distinct values');
   }
-  /** Checkbox filter with search, like Excel's autofilter. Produces a Filter step with an `in` condition. */
   function filterPopover(c) {
     const box = h('div.filter-pop', { on: { mousedown: (e) => e.stopPropagation(), click: (e) => e.stopPropagation() } });
     const search = h('input.input.sm', { placeholder: 'Search values…', 'aria-label': 'Search values' });
@@ -905,7 +888,6 @@
     ].filter(Boolean), x, y);
   }
 
-  /* ================================ export ================================ */
   async function exportAs(fmt) {
     const q = Store.query(); if (!q) return;
     App.busy('Exporting ' + q.name, true);
@@ -919,7 +901,6 @@
   }
   App.exportAs = exportAs;
 
-  /* ================================ layout wiring ================================ */
   function wireLayout() {
     $('#project-name').addEventListener('change', (e) => { const v = e.target.value.trim() || 'Untitled project'; Store.edit('Rename project', (p) => { p.name = v; }); });
     $('#btn-new-query').addEventListener('click', App.getData);
@@ -979,7 +960,7 @@
       if (r.files.length) App.afterAdd(await App.addFiles(r.files));
     });
     document.addEventListener('paste', (e) => {
-      if (UI.anyModal() || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable) return;
+      if (UI.anyModal() || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.closest('.select') || document.activeElement.isContentEditable) return;
       const cd = e.clipboardData; if (!cd) return;
       const files = [...cd.files].filter((f) => PQ.Platform.isData(f.name));
       if (files.length) { e.preventDefault(); App.addFiles(files).then(App.afterAdd); return; }
@@ -987,7 +968,7 @@
       if (text && text.includes('\t')) { e.preventDefault(); App.pasteTable(text); }
     });
     addEventListener('keydown', (e) => {
-      const inField = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+      const inField = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || !!document.activeElement.closest('.select');
       const mod = e.ctrlKey || e.metaKey;
       const k = (e.key || '').toLowerCase();
       if (e.key === 'Escape' && !UI.anyModal() && UI.Engine.state === 'busy') { UI.Engine.cancel(); return; }

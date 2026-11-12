@@ -27,6 +27,7 @@ const CORE = [
   './js/worker.js',
   './js/platform.js',
   './js/ui/core.js',
+  './js/ui/controls.js',
   './js/ui/grid.js',
   './js/ui/formula-editor.js',
   './js/ui/step-dialogs.js',

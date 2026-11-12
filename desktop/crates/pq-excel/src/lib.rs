@@ -1,14 +1,3 @@
-//! pq-excel — Excel is the headline feature, so this goes deeper than anyone else.
-//!
-//! * Navigator: sheets (visible/hidden), Excel Tables (ListObjects, ranked first), named ranges,
-//!   detected data regions (8-connected blocks) for sheets with stacked / side-by-side tables.
-//! * Header detection scores the top rows (share of text, uniqueness, fill, type change below).
-//! * Merged cells: optional fill with the top-left value.
-//! * Dates: Excel serials honoring 1900 (with the Lotus leap-year bug) vs 1904.
-//! * Cache: parse once → Arrow IPC keyed by (file hash, item, options) → `scan_ipc`. Reopening a 200 MB
-//!   workbook takes milliseconds.
-//! The browser prototype `js/io.js` is the executable spec for every heuristic here.
-
 use calamine::{open_workbook_auto, Data, Range, Reader, Sheets};
 use pq_model::ExcelItem;
 use polars::prelude::*;
@@ -81,7 +70,6 @@ fn kind(d: &Data) -> Kind {
 
 fn to_grid(r: &Range<Data>, max_rows: usize) -> Vec<Vec<Data>> { r.rows().take(max_rows).map(|row| row.to_vec()).collect() }
 
-/// Same scoring as `IO.detectHeader` in js/io.js.
 pub fn detect_header(grid: &[Vec<Data>]) -> HeaderGuess {
     let width = grid.iter().map(|r| r.len()).max().unwrap_or(0);
     let mut best = (0usize, f32::MIN);
@@ -107,7 +95,6 @@ pub fn detect_header(grid: &[Vec<Data>]) -> HeaderGuess {
     HeaderGuess { row: best.0, confidence: ((best.1 - 3.0) / 7.0).clamp(0.0, 1.0) }
 }
 
-/// Contiguous non-empty blocks (8-connectivity). Returns (r1, c1, r2, c2), 0-based.
 pub fn detect_regions(r: &Range<Data>) -> Vec<(usize, usize, usize, usize)> {
     let (h, w) = (r.height().min(2000), r.width().min(200));
     let (r0, c0) = r.start().map(|(a, b)| (a as usize, b as usize)).unwrap_or((0, 0));
@@ -137,7 +124,6 @@ pub fn detect_regions(r: &Range<Data>) -> Vec<(usize, usize, usize, usize)> {
 fn col_name(mut i: usize) -> String { let mut s = String::new(); i += 1; while i > 0 { let m = (i - 1) % 26; s.insert(0, (b'A' + m as u8) as char); i = (i - 1) / 26; } s }
 fn a1(r1: usize, c1: usize, r2: usize, c2: usize) -> String { format!("{}{}:{}{}", col_name(c1), r1 + 1, col_name(c2), r2 + 1) }
 
-/// Parse once to Arrow IPC in the cache dir; subsequent reads are `scan_ipc`.
 pub fn cached_ipc(path: &Path, item: &ExcelItem, fill_merged: bool, cache_dir: &Path) -> Result<PathBuf, ExcelError> {
     let bytes = std::fs::read(path)?;
     let mut h = blake3::Hasher::new();
@@ -151,8 +137,6 @@ pub fn cached_ipc(path: &Path, item: &ExcelItem, fill_merged: bool, cache_dir: &
     Ok(out)
 }
 
-/// Read an item as raw cells (`Column1..N`, all String / Float64 / Date by column). Header promotion is a
-/// separate `PromoteHeaders` step so the user can see and change it.
 pub fn read_item(path: &Path, item: &ExcelItem) -> Result<DataFrame, ExcelError> {
     let mut wb: Sheets<_> = open_workbook_auto(path).map_err(|e| ExcelError::Open(e.to_string()))?;
     let range = match item {
@@ -186,7 +170,6 @@ fn grid_to_df(r: &Range<Data>, headers: Option<Vec<String>>) -> Result<DataFrame
     Ok(DataFrame::new(cols)?)
 }
 
-/// "B3:H500", "B3:H" (to last row), "B:H".
 pub fn parse_a1(s: &str) -> Option<(usize, usize, Option<usize>, Option<usize>)> {
     let s = s.replace('$', "");
     let s = s.rsplit('!').next()?;

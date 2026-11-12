@@ -43,6 +43,56 @@ f.addEventListener('load', async () => {
     await until(() => UI().App.result && UI().App.result.schema.some((c) => c.name === 'Issues'));
     const r = await UI().Engine.call('exportQuery', { qid: UI().Store.ui.activeQid, format: 'parquet' });
     console.log('E2E parquet export rows', r.rows, 'bytes', r.data.byteLength);
+    const doc = w.document;
+    const nativeSel = 'select, option, datalist, details, dialog, progress, meter, input[type=number], input[type=range], input[type=date], input[type=color], input[type=time], [title]';
+    const closeAll = async () => { doc.querySelectorAll('.modal .close').forEach((b) => b.click()); await sleep(250); };
+    const cases = [
+      ['Sample', { mode: 'n', n: 1000, seed: 42 }],
+      ['Filter', { mode: 'builder', builder: { join: 'and', conds: [{ col: 'status', op: 'eq', value: '' }] } }],
+      ['Sort', { by: [{ col: 'revenue', desc: true }] }],
+      ['GroupBy', { keys: ['region'], aggs: [{ fn: 'sum', col: 'revenue', name: 'revenue' }] }],
+      ['KeepRows', { mode: 'top', n: 100 }],
+      ['ChangeType', { changes: [{ col: 'quantity', type: 'int' }], onError: 'error' }],
+      ['Validate', { rules: [{ col: 'status', check: 'regex' }], action: 'flag', name: 'Issues' }],
+      ['AddColumn', { formula: '' }],
+    ];
+    let nativeCount = 0, selects = 0, steppers = 0;
+    for (const [type, init] of cases) {
+      UI().App.stepDialog(type, init);
+      await until(() => doc.querySelector('.modal'));
+      await sleep(400);
+      nativeCount += doc.querySelectorAll(nativeSel).length;
+      selects += doc.querySelectorAll('.modal .select').length;
+      steppers += doc.querySelectorAll('.modal .stepper').length;
+      doc.querySelectorAll('.modal input[type=checkbox]').forEach((c) => { if (w.getComputedStyle(c).appearance !== 'none') nativeCount++; });
+      doc.querySelectorAll('.modal textarea').forEach((t) => { if (w.getComputedStyle(t).resize !== 'none') nativeCount++; });
+      await closeAll();
+    }
+    nativeCount += doc.querySelectorAll(nativeSel).length;
+    console.log('E2E native controls', nativeCount, 'custom selects', selects, 'steppers', steppers);
+    if (nativeCount || !selects || !steppers) throw new Error('native control audit failed');
+    UI().App.stepDialog('Sample', { mode: 'n', n: 1000, seed: 42 });
+    await until(() => doc.querySelector('.modal .select'));
+    const modeSel = doc.querySelector('.modal .select');
+    let fired = 0;
+    modeSel.addEventListener('change', () => fired++);
+    modeSel.click();
+    await until(() => doc.querySelector('.dd'));
+    const opts = doc.querySelectorAll('.dd-i').length;
+    doc.querySelectorAll('.dd-i')[1].click();
+    await sleep(200);
+    console.log('E2E select', 'options', opts, 'value', modeSel.value, 'change events', fired, 'list closed', !doc.querySelector('.dd'));
+    if (modeSel.value !== 'percent' || fired !== 1 || doc.querySelector('.dd')) throw new Error('select behaviour failed');
+    const step = doc.querySelector('.modal .stepper');
+    const stepInput = step.querySelector('input');
+    stepInput.value = '12abc';
+    stepInput.dispatchEvent(new w.Event('input', { bubbles: true }));
+    console.log('E2E stepper sanitised', step.value);
+    if (step.value !== '12') throw new Error('stepper sanitising failed');
+    await closeAll();
+    const tipBtn = doc.getElementById('btn-undo');
+    console.log('E2E tooltip source', tipBtn.hasAttribute('title') ? 'native title present' : tipBtn.getAttribute('data-tip'));
+    if (tipBtn.hasAttribute('title') || !tipBtn.getAttribute('data-tip')) throw new Error('tooltip migration failed');
     console.log('E2E DONE');
   } catch (e) { console.log('E2E FAIL', e.message, e.stack); }
 });

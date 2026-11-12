@@ -1,10 +1,3 @@
-//! pq-codegen — whole project → runnable Polars Python script.
-//!
-//! The complete generator (every step kind, formulas, helpers, outputs) lives in `js/steps.js`
-//! (`Steps.toPython`) and is exercised by the browser golden tests. This crate ports it step by step;
-//! CI runs both on the same fixtures and diffs the output, then executes the script with Python Polars
-//! and compares results against the Rust engine (property test: compile(q) ≡ run(export(q))).
-
 use pq_model::*;
 
 fn py(s: &str) -> String { format!("{:?}", s) }

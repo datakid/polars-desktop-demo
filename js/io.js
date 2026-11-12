@@ -1,10 +1,8 @@
-/* I/O: CSV sniffing/parsing, Excel navigator and reader (SheetJS), sample data, output writers. */
 (function () {
   const PQ = self.PQ;
   const { Table, CellError } = PQ;
   const IO = (PQ.IO = {});
 
-  /* ============================== Text decoding ============================== */
   IO.decode = function (buf, encoding) {
     const u8 = new Uint8Array(buf);
     if (!encoding || encoding === 'auto') {
@@ -17,8 +15,6 @@
     return { text: new TextDecoder(encoding.replace('-bom', '')).decode(encoding === 'utf-8-bom' ? u8.subarray(3) : u8), encoding };
   };
 
-  /* ============================== CSV ============================== */
-  /** RFC 4180 parser. Stops after maxRows records (preview = head(N) at the source). */
   IO.parseCSV = function (text, delim, maxRows, skipRows) {
     const rows = [];
     const n = text.length, limit = maxRows === undefined || maxRows === null ? Infinity : maxRows;
@@ -63,7 +59,6 @@
     return { rows, truncated: false };
   };
 
-  /** Same grammar as parseCSV, but writes straight into column arrays (no per-row arrays, no transpose). */
   IO.parseCSVColumns = function (text, delim, maxRows, skipRows) {
     const n = text.length, limit = maxRows === undefined || maxRows === null ? Infinity : maxRows;
     const D = (delim || ',').charCodeAt(0), Q = 34, CR = 13, LF = 10;
@@ -115,7 +110,6 @@
     return { cols, n: rows, truncated: false };
   };
 
-  /** Sniff delimiter (consistency of field counts), header presence and decimal separator. */
   IO.sniffCSV = function (text) {
     const sample = text.slice(0, 64 * 1024);
     let best = { delim: ',', score: -1 };
@@ -130,7 +124,6 @@
       if (score > best.score) best = { delim: d, score };
     }
     const { rows } = IO.parseCSV(sample, best.delim, 50);
-    // decimal-comma detection: many cells like 1.234,56 or 12,5 and delimiter isn't comma
     let commaDec = 0, dotDec = 0;
     rows.slice(1).forEach((r) => r.forEach((v) => {
       if (/^-?\d{1,3}(\.\d{3})*,\d+$/.test(v) || /^-?\d+,\d{1,2}$/.test(v)) commaDec++;
@@ -192,8 +185,6 @@
   }
   IO.decodeCached = decodeCached;
 
-  /* ============================== Header detection ============================== */
-  /** Scores candidate header rows: share of text cells, uniqueness, fill, and a type change on the rows below. */
   IO.detectHeader = function (grid) {
     const rows = grid.slice(0, 15);
     if (!rows.length) return { row: 0, confidence: 0, reasons: [] };
@@ -208,7 +199,6 @@
       const textShare = kinds.filter((k) => k === 't').length / filled;
       const vals = row.filter((v) => v !== null && v !== '').map(String);
       const unique = new Set(vals).size / vals.length;
-      // type change: for columns where header is text, how many rows below are non-text
       let change = 0, cols = 0;
       for (let c = 0; c < width; c++) {
         if (kinds[c] !== 't') continue;
@@ -226,7 +216,6 @@
     return { row: best.row, confidence: +confidence.toFixed(2), reasons: best.reasons };
   };
 
-  /* ============================== Excel ============================== */
   const wbCache = new Map();
   function workbook(rec) {
     const key = rec.id + ':' + rec.mtime;
@@ -239,7 +228,6 @@
     return info;
   }
 
-  /** Excel Tables (ListObjects) aren't exposed by SheetJS CE, so read xl/tables/*.xml from the zip directly. */
   function readListObjects(buf, wb) {
     const out = [];
     try {
@@ -270,10 +258,9 @@
           out.push({ name: t.displayName || t.name, sheet: s.name, ref: t.ref, headerRows: t.headerRowCount === undefined ? 1 : +t.headerRowCount, totalsRows: +(t.totalsRowCount || 0) });
         });
       });
-    } catch (e) { /* best effort; xls/ods/xlsb have no ListObjects here */ }
+    } catch (e) { }
     return out;
   }
-  /** Minimal attribute scanner — DOMParser isn't available inside Web Workers. */
   function DOMParserShim(s) { this.s = s; }
   DOMParserShim.prototype.all = function (tag) {
     const re = new RegExp('<(?:\\w+:)?' + tag + '\\b([^>]*)>', 'g'), out = [];
@@ -321,7 +308,6 @@
     return { r1: r.s.r, c1: r.s.c, r2: r.e.r, c2: r.e.c };
   }
 
-  /** Read a rectangular block as a 2D array of typed values. Honors merged-cell fill. */
   function readGrid(info, sheetName, range, opts, maxRows) {
     const ws = info.wb.Sheets[sheetName];
     if (!ws) throw new PQ.StepError('Sheet "' + sheetName + '" not found in workbook', { available: info.wb.SheetNames });
@@ -353,7 +339,6 @@
     return grid;
   }
 
-  /** Contiguous data regions (8-connectivity on non-empty cells), for sheets with stacked / side-by-side tables. */
   function detectRegions(info, sheetName) {
     const ws = info.wb.Sheets[sheetName];
     const b = sheetBounds(ws);
@@ -395,7 +380,6 @@
     return grid.slice(0, 40).map((r) => Array.from(r).slice(0, 26).map((v) => (v instanceof CellError ? '#ERR' : PQ.fmtValue(v))));
   }
 
-  /** Navigator tree for a workbook: tables first (cleanest source), then sheets with regions, named ranges. */
   IO.inspectExcel = function (rec) {
     const info = workbook(rec);
     const wbm = info.wb.Workbook || {};
@@ -414,7 +398,6 @@
   };
 
   function gridToTable(grid, header) {
-    // trim trailing blank rows/cols
     let end = grid.length; while (end > 0 && grid[end - 1].blank) end--;
     grid = grid.slice(0, end);
     let width = 0; grid.forEach((r) => { for (let c = r.length - 1; c >= 0; c--) if (r[c] !== null) { width = Math.max(width, c + 1); break; } });
@@ -426,7 +409,6 @@
     return new Table(names.map((n, i) => ({ name: n, type: PQ.valuesType(data[i]) })), data, body.length);
   }
 
-  /** Read one navigator item into a Table. maxRows = preview limit. */
   IO.readExcel = function (rec, item, opts, maxRows) {
     const info = workbook(rec);
     opts = opts || {};
@@ -466,7 +448,6 @@
     throw new PQ.StepError('Unknown Excel item type ' + item.type);
   };
 
-  /** Diagonal concat: union columns by name, fill missing with null. */
   PQ.concatDiagonal = function (tables) {
     const names = [], types = new Map();
     tables.forEach((t) => t.cols.forEach((c) => {
@@ -482,14 +463,13 @@
     return new Table(names.map((nm) => ({ name: nm, type: types.get(nm) })), data, n);
   };
 
-  /* ============================== JSON ============================== */
   IO.readJSON = function (rec, maxRows) {
     const { text } = IO.decode(rec.buf);
     let rows;
     const trimmed = text.trim();
     if (trimmed.startsWith('[')) rows = JSON.parse(trimmed);
     else if (trimmed.startsWith('{') && !/\n\s*\{/.test(trimmed)) { const o = JSON.parse(trimmed); const arr = Object.values(o).find(Array.isArray); rows = arr || [o]; }
-    else rows = trimmed.split(/\r?\n/).filter((l) => l.trim()).slice(0, maxRows === Infinity ? undefined : maxRows).map((l) => JSON.parse(l)); // NDJSON
+    else rows = trimmed.split(/\r?\n/).filter((l) => l.trim()).slice(0, maxRows === Infinity ? undefined : maxRows).map((l) => JSON.parse(l));
     if (maxRows !== Infinity) rows = rows.slice(0, maxRows);
     const names = [];
     const seen = new Set();
@@ -498,7 +478,6 @@
     return new Table(names.map((n, i) => ({ name: n, type: PQ.valuesType(data[i]) })), data, rows.length);
   };
 
-  /* ============================== Source dispatcher ============================== */
   IO.fileKind = function (name) {
     const ext = String(name).toLowerCase().split('.').pop();
     if (['xlsx', 'xlsm', 'xlsb', 'xls', 'ods'].includes(ext)) return 'excel';
@@ -525,7 +504,6 @@
     throw new PQ.StepError('Unsupported file type: ' + rec.name);
   };
 
-  /* ============================== Writers ============================== */
   IO.toCSV = function (t, delim) {
     delim = delim || ',';
     const needs = new RegExp('["\\n\\r' + delim.replace(/[\\\]^-]/g, '\\$&') + ',]');
@@ -572,7 +550,6 @@
     return lines.join('\n');
   };
 
-  /* ============================== Sample data (a deliberately messy set) ============================== */
   IO.makeSamples = function () {
     PQ.lib('xlsx');
     let seed = 42;
@@ -584,13 +561,11 @@
     const last = ['Silva', 'Novak', 'Martin', 'Ivanov', 'Berg', 'Haddad', 'Lee', 'Tanaka', 'García', 'Weber', 'Mensah', 'Fischer', 'Rossi', 'Kaur'];
     const out = [];
 
-    // customers.csv — clean-ish with a duplicate id (to show the non-unique key warning)
     const cust = ['customer_id,customer_name,region,segment,signup_date'];
     for (let i = 1; i <= 400; i++) cust.push([`C${String(i).padStart(4, '0')}`, `"${pick(first)} ${pick(last)}"`, pick(regions), pick(['Consumer', 'SMB', 'Enterprise']), `2024-${String(1 + Math.floor(rnd() * 12)).padStart(2, '0')}-${String(1 + Math.floor(rnd() * 28)).padStart(2, '0')}`].join(','));
     cust.push('C0007,"Duplicate Record",EU,SMB,2025-01-01');
     out.push({ name: 'customers.csv', text: cust.join('\n') });
 
-    // orders.csv — 60k rows, messy numbers ("1,234.50", blanks, "n/a"), mixed date formats
     const ord = ['order_id,order_date,customer_id,product_id,quantity,unit_price,discount,status'];
     for (let i = 1; i <= 60000; i++) {
       const p = pick(products), d = new Date(Date.UTC(2025, 0, 1) + Math.floor(rnd() * 600) * 86400000);
@@ -604,7 +579,6 @@
     }
     out.push({ name: 'orders.csv', text: ord.join('\n') });
 
-    // Report-style workbook: title rows, merged cells, stacked tables, hidden sheet, subtotal rows, named range
     const wb = XLSX.utils.book_new();
     const rep = [
       ['ACME Corp — Regional Sales Report', null, null, null, null, null],
@@ -625,7 +599,6 @@
     regions.forEach((reg) => rep.push([reg, 50000 + Math.round(rnd() * 20000), pick(first)]));
     const ws1 = XLSX.utils.aoa_to_sheet(rep);
     ws1['!merges'] = merges;
-    // subtotal formulas are just text-empty; fill a formula-looking value
     const ws2rows = [['Date', 'Store', 'Amount', 'Paid']];
     for (let i = 0; i < 300; i++) ws2rows.push([new Date(Date.UTC(2026, 0, 1) + i * 86400000), pick(['Berlin', 'Lisbon', 'Austin', 'Osaka']), +(rnd() * 900).toFixed(2), rnd() > 0.2]);
     const ws2 = XLSX.utils.aoa_to_sheet(ws2rows, { cellDates: true });
@@ -639,7 +612,6 @@
     wb.Workbook = { Sheets: [{}, {}, {}, {}, {}, { Hidden: 1 }], Names: [{ Name: 'TargetsRange', Ref: "Report!$A$" + (r0 + 4) + ":$C$" + (r0 + 8) }] };
     out.push({ name: 'regional_report.xlsx', buf: XLSX.write(wb, { type: 'array', bookType: 'xlsx', cellDates: true }) });
 
-    // Folder of monthly CSV exports with drifting schemas
     ['2026-06', '2026-07', '2026-08'].forEach((m, k) => {
       const hdr = k === 2 ? 'date;store;amount;currency;channel' : 'date;store;amount;currency';
       const lines = [hdr];

@@ -1,9 +1,6 @@
-/* Formula editor: syntax highlighting, schema-aware validation with positioned error underline,
- * autocomplete for [columns], Functions and @parameters. */
 (function () {
   const PQ = self.PQ, UI = PQ.UI, h = UI.h;
 
-  /** UI.formulaEditor({value, schema, params, single, placeholder, onChange(value, validation)}) → {el, get, set, focus, validation} */
   UI.formulaEditor = function (o) {
     const pre = h('pre', { 'aria-hidden': 'true' });
     const ta = h('textarea', { spellcheck: 'false', autocomplete: 'off', placeholder: o.placeholder || '', rows: o.single ? 1 : 3, 'aria-label': o.label || 'Formula' });
@@ -27,7 +24,6 @@
       toks.forEach((t) => {
         const a = pos, b = pos + t.text.length; pos = b;
         if (es >= 0 && b > es && a < ee) {
-          // split token around the error span
           const i1 = Math.max(0, es - a), i2 = Math.min(t.text.length, ee - a);
           if (i1 > 0) pre.appendChild(h('span', { class: t.cls || '' }, t.text.slice(0, i1)));
           pre.appendChild(h('span', { class: (t.cls || '') + ' errspan' }, t.text.slice(i1, i2)));
@@ -57,7 +53,6 @@
       ta.focus(); changed();
     }
 
-    /* ---------- autocomplete ---------- */
     function context() {
       const pos = ta.selectionStart, before = ta.value.slice(0, pos);
       let m = /\[([^\]]*)$/.exec(before);

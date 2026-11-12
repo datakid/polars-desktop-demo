@@ -1,13 +1,3 @@
-//! floe-engine — the native Polars engine process, spawned and supervised by the Tauri shell.
-//!
-//! Transport: stdin/stdout, one frame = u32 little-endian length + MessagePack body.
-//!   → Request  { id, op, ...args }
-//!   ← Reply    { id, ok, result | error }
-//! `page` results carry Arrow IPC stream bytes (`bytes`), passed to the webview untouched.
-//!
-//! Isolation: cancel = the shell kills this process; a panic/OOM only takes this process down.
-//! One request at a time (the shell serializes); results kept in an LRU keyed by result id.
-
 use anyhow::{anyhow, Result};
 use pq_compiler::{compile, unsupported, CompileCtx, Mode};
 use pq_model::Project;
@@ -46,7 +36,6 @@ struct Engine {
     seq: u64,
 }
 
-/// Floe UI type names (see js/util.js PQ.TYPES).
 fn ui_type(dt: &DataType) -> &'static str {
     use DataType::*;
     match dt {
@@ -64,7 +53,6 @@ fn schema_of(df: &DataFrame) -> Vec<Col> {
     df.get_columns().iter().filter(|c| !c.name().starts_with(pq_compiler::ERR_PREFIX)).map(|c| Col { name: c.name().to_string(), ty: ui_type(c.dtype()) }).collect()
 }
 
-/// Per-column quality (valid / error / empty), using the hidden `__err_<col>` masks from ChangeType.
 fn quality(df: &DataFrame) -> Vec<serde_json::Value> {
     let n = df.height();
     schema_of(df).iter().map(|c| {
@@ -85,7 +73,6 @@ impl Engine {
         id
     }
 
-    /// Owned resolver so callers can mutate `self` afterwards.
     fn resolver(&self) -> impl Fn(&str, &str) -> Option<PathBuf> {
         let files = self.files.clone();
         move |id: &str, _name: &str| files.get(id).cloned()
@@ -99,7 +86,6 @@ impl Engine {
                 self.files = serde_json::from_value(a["files"].clone()).unwrap_or_default();
                 Ok((serde_json::json!({}), None))
             }
-            // Can this query (and everything it references) run natively?
             "canRun" => {
                 let p = self.project.as_ref().ok_or_else(|| anyhow!("no project"))?;
                 let qid = a["qid"].as_str().unwrap_or_default();
@@ -116,7 +102,6 @@ impl Engine {
                 let q = p.queries.iter().find(|q| q.id == qid).ok_or_else(|| anyhow!("query not found"))?;
                 let upto = a["upto"].as_u64().map(|u| u as usize).unwrap_or(q.steps.len().saturating_sub(1)).min(q.steps.len().saturating_sub(1));
                 let t0 = std::time::Instant::now();
-                // Per-step states: schema via collect_schema (no data), row count only for the selected step.
                 let mut states = vec![];
                 let mut failed: Option<usize> = None;
                 for i in 0..=upto {
@@ -147,14 +132,12 @@ impl Engine {
                 let id = self.keep(df);
                 Ok((serde_json::json!({ "resultId": id, "n": n, "schema": schema, "quality": qual, "states": states, "failedAt": -1, "truncated": truncated, "ms": t0.elapsed().as_secs_f64() * 1e3, "engine": "polars" }), None))
             }
-            // Zero-copy slice → Arrow IPC stream. Error masks become `__err_<col>` boolean columns the UI decodes.
             "page" => {
                 let id = a["resultId"].as_str().unwrap_or_default();
                 let df = self.results.get(id).ok_or_else(|| anyhow!("result expired"))?;
                 let off = a["offset"].as_i64().unwrap_or(0);
                 let cnt = a["count"].as_u64().unwrap_or(200) as usize;
                 let mut page = df.slice(off, cnt);
-                // Dates/times as epoch ms keeps the JS decoder trivial and exact.
                 let casts: Vec<Expr> = page.get_columns().iter().filter_map(|c| match c.dtype() {
                     DataType::Date | DataType::Datetime(_, _) => Some(col(c.name().as_str()).cast(DataType::Datetime(TimeUnit::Milliseconds, None)).cast(DataType::Int64).alias(c.name().as_str())),
                     DataType::Decimal(_, _) => Some(col(c.name().as_str()).cast(DataType::Float64)),
@@ -212,7 +195,6 @@ impl Engine {
                 }).collect();
                 Ok((serde_json::json!({ "values": vals }), None))
             }
-            // Full-data export straight to disk (the shell has already granted the path).
             "export" => {
                 let p = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
                 let qid = a["qid"].as_str().unwrap_or_default();
@@ -265,7 +247,6 @@ fn main() -> Result<()> {
     while let Some(frame) = read_frame(&mut rx)? {
         let (id, res) = match rmp_serde::from_slice::<Envelope>(&frame) {
             Ok(env) => {
-                // A panic inside Polars turns into an error reply instead of killing the engine.
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| eng.handle(&env.op, env.args)));
                 (env.id, r.unwrap_or_else(|p| Err(anyhow!("engine panic: {}", p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()))))
             }

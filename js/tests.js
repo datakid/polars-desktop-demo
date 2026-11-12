@@ -1,4 +1,3 @@
-/* Engine golden tests (browser): every step kind and edge cases, plus Polars plan lowering. */
 (async function () {
   const PQ = self.PQ, E = PQ.Engine, T = PQ.Table;
   const out = document.getElementById('out');
@@ -14,7 +13,6 @@
   const tbl = () => T.fromRows(['id', 'name', 'region', 'sales'], [[1, 'Ana', 'EU', 100], [2, 'Ben', 'US', 2500], [3, 'Chloé', 'EU', null], [4, 'Dmitri', 'APAC', 1200], [5, 'Eva', 'EU', 2500]], ['int', 'text', 'text', 'int']);
   const col = (t, c) => t.get(c).map((v) => (PQ.isErr(v) ? 'ERR' : v instanceof Date ? PQ.fmtDate(v) : v));
 
-  /* ---------- formula language ---------- */
   test('formula: arithmetic + precedence', () => assertEq(PQ.Formula.evaluate('1 + 2 * 3 - [id]', tbl()).values, [6, 5, 4, 3, 2]));
   test('formula: if/then/else with and', () => assertEq(PQ.Formula.evaluate('if [sales] > 1000 and [region] = "EU" then "Key" else "Other"', tbl()).values, ['Other', 'Other', 'Other', 'Other', 'Key']));
   test('formula: null propagation in comparison → else branch', () => assertEq(PQ.Formula.evaluate('if [sales] > 0 then 1 else 0', tbl()).values[2], 0));
@@ -31,7 +29,6 @@
   test('formula: Number.Round is banker\'s rounding', () => assertEq(PQ.Formula.evaluate('Number.Round(2.5) + Number.Round(3.5)', tbl()).values[0], 6));
   test('formula → python', () => assertEq(PQ.Formula.toPython('if [a] > 1 then "x" else "y"'), 'pl.when((pl.col("a") > pl.lit(1))).then(pl.lit("x")).otherwise(pl.lit("y"))'));
 
-  /* ---------- Polars plan lowering ---------- */
   if (PQ.Plan) {
     const proj = (steps, extra) => Object.assign({ settings: { previewRows: 1000, locale: 'en-US' }, params: [{ name: 'Min', type: 'number', value: '10' }], queries: [{ id: 'q1', name: 'Orders', steps: steps.map((k, i) => ({ id: 's' + i, name: i ? PQ.Steps.label(k.type) : 'Source', kind: k })) }] }, extra || {});
     const src = { type: 'Source', source: { kind: 'file', fileId: 'f1', fileName: 'orders.csv', csv: { delimiter: ',' } } };
@@ -61,7 +58,6 @@
     test('plan: dates in formulas become epoch literals', () => { const r = PQ.Plan.lower(proj([src, { type: 'Filter', mode: 'advanced', formula: '[d] >= #date(2026, 1, 2)' }]), 'q1', files); assertEq(r.plan.ops[0].expr.b, { k: 'call', fn: '#date', args: [{ k: 'lit', v: 2026 }, { k: 'lit', v: 1 }, { k: 'lit', v: 2 }] }); });
   }
 
-  /* ---------- parsing & types ---------- */
   test('parseNumber: accounting, %, thousands, currency', () => assertEq(['(1,234.50)', '12%', '$1,000', '1e3', 'abc'].map((s) => PQ.parseNumber(s)), [-1234.5, 0.12, 1000, 1000, null]));
   test('parseNumber: German locale', () => assertEq(PQ.parseNumber('1.234,5', 'de-DE'), 1234.5));
   test('parseDate: locale order', () => { assertEq(PQ.fmtDate(PQ.parseDate('03/04/2026', 'en-US')), '2026-03-04'); assertEq(PQ.fmtDate(PQ.parseDate('03.04.2026', 'de-DE')), '2026-04-03'); });
@@ -69,7 +65,6 @@
   test('inferType samples beyond the first rows', () => { const a = Array(400).fill('1'); a[350] = 'x'; assertEq(PQ.inferType(a), 'text'); assertEq(PQ.inferType(['1', '2.5', '']), 'number'); assertEq(PQ.inferType(['2026-01-01', '2026-02-03']), 'date'); assertEq(PQ.inferType(['yes', 'no']), 'bool'); });
   test('A1 ranges incl. open-ended', () => { assertEq(PQ.parseA1('B3:H'), { sheet: null, c1: 1, r1: 2, c2: 7, r2: Infinity }); assertEq(PQ.parseA1("'My Sheet'!$A$1:$C$5").sheet, 'My Sheet'); });
 
-  /* ---------- step executors ---------- */
   test('ChangeType: per-cell errors (mode=error)', () => { const t = T.fromRows(['x'], [['1'], ['n/a'], [''], ['1,234']], ['text']); const r = E.X.ChangeType(t, { changes: [{ col: 'x', type: 'number' }], onError: 'error' }, ctx); assertEq(col(r, 'x'), [1, 'ERR', null, 1234]); });
   test('ChangeType: keep original in error column', () => { const t = T.fromRows(['x'], [['1'], ['n/a']], ['text']); const r = E.X.ChangeType(t, { changes: [{ col: 'x', type: 'int' }], onError: 'keep' }, ctx); assertEq(r.names, ['x', 'x_error']); assertEq(col(r, 'x_error'), [null, 'n/a']); });
   test('ChangeType: fail mode throws with row number and fixes', () => { const t = T.fromRows(['x'], [['1'], ['bad']], ['text']); try { E.X.ChangeType(t, { changes: [{ col: 'x', type: 'int' }], onError: 'fail' }, ctx); assert(false); } catch (e) { assert(/Row 2/.test(e.message) && e.fixes.length === 2, e.message); } });
@@ -108,7 +103,6 @@
   });
   test('CustomSql over self', () => { const r = E.X.CustomSql(tbl(), { sql: 'SELECT region, SUM(sales) AS s FROM self GROUP BY region ORDER BY s DESC' }, Object.assign({}, ctx, { sqlTables: () => [] })); assertEq(r.toRows()[0], ['EU', 2600]); });
 
-  /* ---------- compiler: fingerprints, cache, errors, cycles ---------- */
   const proj = () => ({ settings: { previewRows: 1000, locale: 'en-US' }, params: [], queries: [
     { id: 'a', name: 'A', steps: [{ id: '1', name: 'Source', kind: { type: 'Source', source: { kind: 'blank', columns: ['x', 'y'], rows: [['1', 'a'], ['2', 'b'], ['3', 'c']] } } }, { id: '2', name: 'CT', kind: { type: 'ChangeType', changes: [{ col: 'x', type: 'int' }] } }, { id: '3', name: 'Ren', kind: { type: 'Rename', map: [['y', 'label']] } }, { id: '4', name: 'Add', kind: { type: 'AddColumn', name: 'z', formula: '[x] * 2' } }] },
   ] });
@@ -117,9 +111,8 @@
   test('compiler: missing column error explains rename + offers fix', () => { const p = proj(); p.queries[0].steps.push({ id: '5', name: 'Rm', kind: { type: 'RemoveColumns', cols: ['y'] } }); E.setProject(p); const r = E.evaluate('a', undefined, 'preview'); const st = r.states[4]; assert(!st.ok && /renamed to `label` in step 3/.test(st.error), st.error); assert(st.fixes.some((f) => f.kind === 'replaceColumn' && f.to === 'label'), 'fix offered'); });
   test('renameColumnInKind fixes formulas and lists', () => { const k = PQ.Steps.renameColumnInKind({ type: 'AddColumn', name: 'y', formula: '[y] & [yy]' }, 'y', 'label'); assertEq(k, { type: 'AddColumn', name: 'y', formula: '[label] & [yy]' }); assertEq(PQ.Steps.renameColumnInKind({ type: 'RemoveColumns', cols: ['y', 'q'] }, 'y', 'label').cols, ['label', 'q']); });
   test('compiler: cycle detection with readable path', () => { const p = proj(); p.queries.push({ id: 'b', name: 'B', steps: [{ id: 'b1', name: 'Source', kind: { type: 'Source', source: { kind: 'query', query: 'a' } } }] }); p.queries[0].steps.push({ id: '9', name: 'M', kind: { type: 'Merge', right: 'b', on: [['x', 'x']] } }); E.setProject(p); let msg = ''; try { PQ.Steps.topo(p); } catch (e) { msg = e.message; } assert(/A → B → A|B → A → B/.test(msg), msg); });
-  test('preview mode applies head(N) at the source', () => { const p = proj(); p.settings.previewRows = 2; E.setProject(p); E.clearCache(); const r = E.evaluate('a', undefined, 'preview'); /* blank source is not truncated; file sources are */ assert(r.table.n === 3); });
+  test('preview mode applies head(N) at the source', () => { const p = proj(); p.settings.previewRows = 2; E.setProject(p); E.clearCache(); const r = E.evaluate('a', undefined, 'preview'); assert(r.table.n === 3); });
 
-  /* ---------- Excel: header detection, regions, merged cells, tables ---------- */
   const samples = PQ.IO.makeSamples();
   const rep = samples.find((s) => s.name === 'regional_report.xlsx');
   const rec = { id: 'rep', name: rep.name, buf: rep.buf instanceof ArrayBuffer ? rep.buf : new Uint8Array(rep.buf).buffer, mtime: 1, size: 1 };
@@ -137,7 +130,6 @@
   test('CSV sniffing: semicolon + decimal comma', () => { const s = samples.find((x) => x.name === 'sales_2026-06.csv'); const sn = PQ.IO.sniffCSV(s.text); assertEq([sn.delimiter, sn.locale, sn.header], [';', 'de-DE', true]); });
   test('Excel writer round-trip', () => { const buf = PQ.IO.toXLSX(tbl(), 'T'); const wb = XLSX.read(new Uint8Array(buf), { type: 'array' }); assertEq(XLSX.utils.sheet_to_json(wb.Sheets.T, { header: 1 })[1], [1, 'Ana', 'EU', 100]); });
 
-  /* ---------- codegen & project format ---------- */
   test('Python export covers every step and parses as plausible Python', () => {
     const p = proj(); p.name = 'Demo';
     p.queries[0].steps.push({ id: 'g', name: 'G', kind: { type: 'GroupBy', keys: ['label'], aggs: [{ fn: 'sum', col: 'z', name: 'z' }] } });
@@ -172,7 +164,6 @@
   test('Project files: stable, one file per query, format_version', () => { const p = proj(); p.name = 'X'; const f = PQ.Steps.toFiles(p); assert(f['project.json'].includes('"format_version": 1')); assert(f['queries/a.json']); assertEq(PQ.Steps.toFiles(p)['queries/a.json'], f['queries/a.json']); });
   test('migrate fills defaults, rejects newer format', () => { const m = PQ.Steps.migrate({ queries: [{ id: 'q', name: 'Q' }] }); assertEq(m.settings.previewRows, 1000); let threw = false; try { PQ.Steps.migrate({ format_version: 99 }); } catch (e) { threw = true; } assert(threw); });
 
-  /* ---------- host suggestions ---------- */
   test('suggestions: generic headers, fill down, subtotal rows', () => {
     const p = { settings: { previewRows: 1000, locale: 'en-US' }, params: [], queries: [{ id: 'r', name: 'R', steps: [{ id: 's', name: 'Source', kind: { type: 'Source', source: { kind: 'file', fileId: 'rep', fileName: rep.name, format: 'excel', item: { type: 'range', sheet: 'Report', range: 'A4:F23' } } } }, { id: 'p', name: 'P', kind: { type: 'PromoteHeaders', row: 0 } }] }] };
     PQ.Files.set('rep', rec); E.setProject(p);
@@ -180,7 +171,6 @@
     return r.then((x) => { const ids = x.suggestions.map((s) => s.id); assert(ids.includes('fill_Region') && ids.includes('subtotal'), ids.join(',')); });
   });
 
-  // perf smoke test: 60k-row CSV → group by
   test('perf: 60k-row CSV parse + type + group by < 3s', () => {
     const o = samples.find((s) => s.name === 'orders.csv');
     const t0 = performance.now();
@@ -200,7 +190,6 @@
   const typed = () => T.fromRows(['id', 'name', 'price', 'ok', 'day'], [[1, 'Ana', 1.5, true, new Date(Date.UTC(2026, 0, 2))], [2, null, null, false, null], [3, 'Zoë', 3.25, null, new Date(Date.UTC(2026, 5, 30))]], ['int', 'text', 'number', 'bool', 'date']);
   const roundtrip = (t2) => [t2.names, t2.cols.map((c) => c.type), t2.toRows().map((r) => r.map((v) => (v instanceof Date ? PQ.fmtDate(v) : v)))];
 
-  /* ---------- v0.4: columnar formats ---------- */
   await atest('Parquet: write → read round-trip keeps names, types, nulls', async () => {
     const buf = await PQ.IO.toParquet(typed());
     const t2 = await PQ.IO.decodeParquet({ id: 'pq1', name: 'x.parquet', mtime: 1, size: buf.byteLength, buf });
@@ -310,7 +299,7 @@
     return { r, t, lr: PQ.IO.parquetLastRead, rows: t.toRows().map((row) => row.map((v) => (v instanceof Date ? PQ.fmtDate(v) : v))) };
   };
   await atest('Parquet pushdown: filter skips row groups by min/max, result identical to a plain filter', async () => {
-    const buf = bigParquet(1000, 10); // id 0..999, 100 rows per group, amt = id * 1.5
+    const buf = bigParquet(1000, 10);
     const rec = { id: 'pqp1', name: 'pqp1.parquet', mtime: 1, size: buf.byteLength, buf };
     PQ.Files.set(rec.id, rec);
     const cases = [
@@ -328,7 +317,6 @@
       const lr = PQ.IO.parquetLastRead;
       assert(lr, f + ': ' + JSON.stringify(res.states.map((s) => s.error)));
       assert(lr.skippedRowGroups === skipped, f + ' → skipped ' + lr.skippedRowGroups + ', expected ' + skipped);
-      // reference: same filter on the full table, computed in JS
       const ids = Array.from({ length: 1000 }, (_, i) => i);
       const ref = PQ.Formula.evaluate(f, T.fromRows(['id', 'amt'], ids.map((i) => [i, i * 1.5]), ['int', 'number']), p.params).values;
       assertEq(t.get('id'), ids.filter((i) => ref[i] === true), f);
@@ -340,20 +328,19 @@
     const rec = { id: 'pqp2', name: 'pqp2.parquet', mtime: 1, size: buf.byteLength, buf };
     PQ.Files.set(rec.id, rec);
     const none = [
-      [{ type: 'Filter', mode: 'advanced', formula: '[id] <> 5' }],                       // <> keeps almost every group
-      [{ type: 'Filter', mode: 'advanced', formula: 'not ([id] < 900)' }],                // negation not analysed
-      [{ type: 'Filter', mode: 'advanced', formula: '[id] * 2 > 1900' }],                 // expression over a column
-      [{ type: 'Filter', mode: 'advanced', formula: '[id] > "900"' }],                    // kind mismatch
-      [{ type: 'Filter', mode: 'advanced', formula: '[id] >= 900 or [name] = "n1"' }],    // one side unprunable
-      [{ type: 'IndexColumn', name: 'ix' }, { type: 'Filter', mode: 'advanced', formula: '[id] >= 900' }], // row-sensitive step first
-      [{ type: 'Filter', mode: 'advanced', formula: '[id] >= 900 and [day] > #date(2026, 1, 20)' }], // timestamp column read: type comes from values
+      [{ type: 'Filter', mode: 'advanced', formula: '[id] <> 5' }],
+      [{ type: 'Filter', mode: 'advanced', formula: 'not ([id] < 900)' }],
+      [{ type: 'Filter', mode: 'advanced', formula: '[id] * 2 > 1900' }],
+      [{ type: 'Filter', mode: 'advanced', formula: '[id] > "900"' }],
+      [{ type: 'Filter', mode: 'advanced', formula: '[id] >= 900 or [name] = "n1"' }],
+      [{ type: 'IndexColumn', name: 'ix' }, { type: 'Filter', mode: 'advanced', formula: '[id] >= 900' }],
+      [{ type: 'Filter', mode: 'advanced', formula: '[id] >= 900 and [day] > #date(2026, 1, 20)' }],
     ];
     for (const st of none) {
       const steps = st[st.length - 1].formula.includes('[day]') ? st : [{ type: 'SelectColumns', cols: ['id', 'name'] }].concat(st);
       const { lr } = await fullRun(steps, rec.id);
       assert(!lr.skippedRowGroups, JSON.stringify(steps) + ' skipped ' + lr.skippedRowGroups);
     }
-    // pruning still applies through column-only steps; preview mode never prunes
     const { lr, t } = await fullRun([{ type: 'SelectColumns', cols: ['id', 'name'] }, { type: 'Filter', mode: 'builder', builder: { join: 'and', conds: [{ col: 'id', op: 'ge', value: '950' }] } }], rec.id);
     assert(lr.skippedRowGroups === 9 && t.n === 50, JSON.stringify(lr) + ' n=' + t.n);
     PQ.IO.parquetForget(rec.id);
@@ -386,7 +373,6 @@
   });
   test('fileKind recognises parquet / arrow / feather', () => assertEq(['a.parquet', 'b.arrow', 'c.feather', 'd.csv'].map(PQ.IO.fileKind), ['parquet', 'arrow', 'arrow', 'csv']));
 
-  /* ---------- v0.4: new steps ---------- */
   test('Sort: locale-aware, numeric-aware text, stable, nulls last', () => {
     const t = T.fromRows(['s', 'i'], [['item10', 1], ['Item2', 2], [null, 3], ['élan', 4], ['eagle', 5], ['item2', 6]], ['text', 'int']);
     assertEq(col(E.X.Sort(t, { by: [{ col: 's' }] }), 'i'), [5, 4, 2, 6, 1, 3]);

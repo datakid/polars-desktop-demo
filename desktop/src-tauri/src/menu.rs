@@ -1,6 +1,3 @@
-//! Native menu bar. Each custom item's id is forwarded to the UI as a `floe://menu` event
-//! (handled by `onNativeMenu` in js/ui/app.js). Clipboard / window items use the OS-native roles.
-
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Runtime};
 
@@ -34,7 +31,6 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         file.append(&PredefinedMenuItem::quit(app, Some("Quit Floe"))?)?;
     }
 
-    // Undo/Redo drive the project history; Cut/Copy/Paste stay native so text fields behave normally.
     let edit = Submenu::with_items(app, "Edit", true, &[
         &item(app, "edit.undo", "Undo Step", Some("CmdOrCtrl+Z"))?,
         &item(app, "edit.redo", "Redo Step", Some("CmdOrCtrl+Shift+Z"))?,

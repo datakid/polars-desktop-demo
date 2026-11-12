@@ -1,11 +1,8 @@
-/* Core utilities: Table, types, casting, locales, hashing, A1 ranges, IndexedDB file store. */
 (function () {
-  const PQ = (self.PQ = self.PQ || {}); // `self` works both on the page and inside the engine Web Worker
-  /** Product identity — the only place the name lives. */
+  const PQ = (self.PQ = self.PQ || {});
   PQ.BRAND = { name: 'Floe', tagline: 'Data preparation', full: 'Floe — data preparation', ext: 'floe', cli: 'floe', id: 'dev.floe.desktop' };
   PQ.VERSION = '1.1.0';
 
-  /* ---------- Per-cell errors (Polars has none; we add them, like the plan's error mask) ---------- */
   class CellError {
     constructor(msg, orig) { this.msg = msg; this.orig = orig; }
     toString() { return 'Error'; }
@@ -26,7 +23,6 @@
   PQ.StepError = StepError;
   PQ.MissingColumnError = MissingColumnError;
 
-  /* ---------- Column-oriented immutable table (Arrow-like). Never mutate column arrays in place. ---------- */
   class Table {
     constructor(cols, data, n) {
       this.cols = cols;
@@ -60,7 +56,6 @@
       e = Math.min(e, this.n); s = Math.min(s, e);
       return new Table(this.cols.map((c) => ({ ...c })), this.data.map((col) => col.slice(s, e)), e - s);
     }
-    /** Replace column (same position) or append a new one. Shares other column arrays. */
     withColumn(name, type, arr, position) {
       const i = this.index(name);
       const cols = this.cols.map((c) => ({ ...c }));
@@ -107,7 +102,6 @@
     });
   };
 
-  /* ---------- Types ---------- */
   PQ.TYPES = {
     any: { label: 'Any', icon: 'A1' },
     text: { label: 'Text', icon: 'ABC' },
@@ -126,7 +120,6 @@
     'fr-FR': { label: 'French — 1 234,5 · DD/MM/YYYY', dec: ',', thou: ' ', dmy: true },
   };
 
-  /** Lenient number parse for messy spreadsheets: currency, %, (accounting negatives), thousands separators. */
   PQ.parseNumber = function (s, locale) {
     const loc = PQ.LOCALES[locale] || PQ.LOCALES['en-US'];
     if (typeof s === 'string' && loc.dec === '.' && s.length) {
@@ -158,7 +151,7 @@
   PQ.excelSerialToDate = function (serial, date1904) {
     let base;
     if (date1904) base = Date.UTC(1904, 0, 1);
-    else base = serial < 60 ? Date.UTC(1899, 11, 31) : Date.UTC(1899, 11, 30); // Lotus 1900 leap-year bug
+    else base = serial < 60 ? Date.UTC(1899, 11, 31) : Date.UTC(1899, 11, 30);
     const whole = Math.floor(serial), frac = serial - whole;
     return new Date(base + whole * DAY + Math.round(frac * 86400) * 1000);
   };
@@ -172,7 +165,6 @@
     if (dt.getUTCDate() !== d) return null;
     return dt;
   }
-  /** Parse dates in ISO, locale-ordered numeric, and "12 Mar 2026" / "Mar 12, 2026" forms. strict=true skips fuzzy forms. */
   PQ.parseDate = function (v, locale, strict) {
     if (v instanceof Date) return isNaN(v) ? null : v;
     if (typeof v === 'number') return v > 0 && v < 2958466 ? PQ.excelSerialToDate(v, false) : null;
@@ -198,7 +190,6 @@
   const BOOL_T = new Set(['true', 'yes', 'y', '1', 'wahr', 'vrai']);
   const BOOL_F = new Set(['false', 'no', 'n', '0', 'falsch', 'faux']);
 
-  /** Cast one value. Returns the converted value, null, or a CellError (never throws). */
   PQ.cast = function (v, type, locale) {
     if (v === null || v === undefined) return null;
     if (v instanceof CellError) return v;
@@ -280,7 +271,6 @@
     return v;
   };
 
-  /** Type of the actual values in an array (used after formulas/SQL). */
   PQ.valuesType = function (arr) {
     let t = null, allInt = true, allMidnight = true;
     const n = Math.min(arr.length, 5000);
@@ -300,7 +290,6 @@
     return t || 'any';
   };
 
-  /** Infer the best target type for a raw column (samples head + random tail, as in the plan). */
   PQ.inferType = function (arr, locale) {
     const idx = [];
     const n = arr.length;
@@ -335,7 +324,6 @@
     return 'text';
   };
 
-  /* ---------- Formatting ---------- */
   const pad = (n, w) => String(n).padStart(w || 2, '0');
   PQ.fmtDate = function (d, type) {
     const base = d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
@@ -351,7 +339,6 @@
   };
   PQ.fmtInt = (n) => (n === Infinity ? '∞' : Number(n).toLocaleString('en-US'));
 
-  /* ---------- Hashing (fingerprints / cache keys) ---------- */
   PQ.hash = function (str) {
     let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
     for (let i = 0; i < str.length; i++) {
@@ -363,7 +350,6 @@
     h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
     return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
   };
-  /** Stable JSON: sorted keys (git-friendly project files, stable fingerprints). */
   PQ.stableStringify = function (obj, indent) {
     const sort = (v) => {
       if (Array.isArray(v)) return v.map(sort);
@@ -377,7 +363,6 @@
     return JSON.stringify(sort(obj), null, indent);
   };
 
-  /* ---------- Parameters: {name, type: text|number|date|list, value} ---------- */
   PQ.paramValue = function (p) {
     if (!p) return null;
     if (p.type === 'number') { const n = PQ.parseNumber(p.value); return n === null ? null : n; }
@@ -387,7 +372,6 @@
   };
   PQ.paramType = (p) => (p.type === 'number' ? 'number' : p.type === 'date' ? 'date' : p.type === 'list' ? 'list' : 'text');
 
-  /* ---------- Misc helpers ---------- */
   PQ.uid = (p) => (p || 'id') + '_' + Math.random().toString(36).slice(2, 10);
   PQ.esc = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   PQ.debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
@@ -414,10 +398,8 @@
   };
   PQ.globToRegex = (g) => new RegExp('^' + String(g).split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i');
 
-  /* ---------- A1 ranges ---------- */
   PQ.colToIdx = (s) => { let n = 0; for (const ch of s.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; };
   PQ.idxToCol = (i) => { let s = ''; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
-  /** "B3:H500", "B3:H" (to last row), "B:H", "B3", "Sheet1!$A$1:$B$5". Returns 0-based {sheet,r1,c1,r2,c2} (r2/c2 may be Infinity). */
   PQ.parseA1 = function (ref) {
     if (!ref) return null;
     let s = String(ref).trim().replace(/\$/g, ''), sheet = null;
@@ -431,7 +413,6 @@
   };
   PQ.fmtA1 = (r) => PQ.idxToCol(r.c1) + (r.r1 + 1) + ':' + (r.c2 === Infinity ? 'XFD' : PQ.idxToCol(r.c2)) + (r.r2 === Infinity ? '' : r.r2 + 1);
 
-  /* ---------- IndexedDB file store (stands in for the OS file system in the prototype) ---------- */
   const IDB = {
     _db: null,
     open() {
@@ -461,7 +442,6 @@
   };
   PQ.IDB = IDB;
 
-  /** In-memory mirror of stored files, so the engine can stay synchronous. */
   PQ.Files = new Map();
   PQ.isLazyFile = (name) => /\.(parquet|pq)$/i.test(String(name || ''));
   PQ.addFile = async function (name, buf, extra) {

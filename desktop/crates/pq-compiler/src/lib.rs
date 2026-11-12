@@ -1,14 +1,3 @@
-//! pq-compiler — turns a `Query` into a Polars `LazyFrame` for any step index.
-//!
-//! * `compile(q, upto, ctx)` builds the lazy plan; nothing executes.
-//! * `schema_after(q, upto)` calls `collect_schema()` — column pickers, type icons and
-//!   "column `Price` not found; it was renamed in step 4" without reading data.
-//! * Every step has a fingerprint = hash(source fingerprint + serialized steps so far + params).
-//!   It is the cache key: change step 7 and steps 1–6 stay cached.
-//! * Pivot / Transpose / PromoteHeaders need data → automatic checkpoint (collect → Arrow IPC → scan_ipc).
-//! * Per-cell errors: casts run non-strict and a hidden mask `__err_<col>` records
-//!   `casted.is_null() & original.is_not_null()`.
-
 use pq_model::*;
 use polars::prelude::*;
 use std::collections::HashMap;
@@ -37,9 +26,7 @@ pub enum StepError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// `head(N)` at the source — instant; group-by / join reflect the sample (the UI says so).
     Preview(u32),
-    /// Whole query with the streaming engine.
     Full,
 }
 
@@ -47,7 +34,6 @@ pub struct CompileCtx<'a> {
     pub project: &'a Project,
     pub mode: Mode,
     pub cache_dir: PathBuf,
-    /// Resolves a file id to a path on disk (the project stores ids + names, the app maps them).
     pub resolve_file: &'a dyn Fn(&str, &str) -> Option<PathBuf>,
     memo: std::cell::RefCell<HashMap<(QueryId, usize), LazyFrame>>,
 }
@@ -63,7 +49,6 @@ impl<'a> CompileCtx<'a> {
     }
 }
 
-/// Build the lazy plan for query `q` up to and including step `upto`.
 pub fn compile(q: &Query, upto: usize, ctx: &CompileCtx) -> Result<LazyFrame, (usize, StepError)> {
     if let Some(lf) = ctx.memo.borrow().get(&(q.id.clone(), upto)) { return Ok(lf.clone()); }
     let mut lf: Option<LazyFrame> = None;
@@ -71,7 +56,6 @@ pub fn compile(q: &Query, upto: usize, ctx: &CompileCtx) -> Result<LazyFrame, (u
         if step.disabled == Some(true) && i > 0 { continue; }
         let prev = lf.take();
         let next = apply(prev, &step.kind, ctx).map_err(|e| (i, explain(q, i, e)))?;
-        // Data-dependent schema → checkpoint so everything after stays lazy.
         let next = if step.kind.materializes() { checkpoint(next, q, i, ctx).map_err(|e| (i, e))? } else { next };
         lf = Some(next);
     }
@@ -80,7 +64,6 @@ pub fn compile(q: &Query, upto: usize, ctx: &CompileCtx) -> Result<LazyFrame, (u
     Ok(lf)
 }
 
-/// Schema after a step, without executing (except through checkpoints, which are cached).
 pub fn schema_after(q: &Query, upto: usize, ctx: &CompileCtx) -> Result<SchemaRef, (usize, StepError)> {
     let mut lf = compile(q, upto, ctx)?;
     lf.collect_schema().map_err(|e| (upto, e.into()))
@@ -125,7 +108,6 @@ fn strsim_lev(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-/// Turn "column not found" into "…it was renamed to `X` in step 4 (Renamed Columns)".
 fn explain(q: &Query, idx: usize, e: StepError) -> StepError {
     if let StepError::MissingColumn { col, suggestion, .. } = &e {
         for i in (0..idx).rev() {
@@ -260,7 +242,6 @@ fn apply(prev: Option<LazyFrame>, kind: &StepKind, ctx: &CompileCtx) -> Result<L
                 }
             }).collect::<Vec<_>>())
         }
-        // Data-dependent: done eagerly, then checkpointed by `compile`.
         PromoteHeaders { row } => {
             let df = lf.collect()?;
             if *row >= df.height() { return Err(StepError::Source(format!("row {} does not exist", row + 1))); }
@@ -280,7 +261,6 @@ fn apply(prev: Option<LazyFrame>, kind: &StepKind, ctx: &CompileCtx) -> Result<L
     })
 }
 
-/// Step kinds this engine executes. The UI's router sends a query here only if every step is supported.
 pub const SUPPORTED: &[&str] = &[
     "Source", "SelectColumns", "ReorderColumns", "RemoveColumns", "Rename", "ChangeType", "Filter", "Sort", "Distinct",
     "KeepDuplicates", "KeepRows", "FillDown", "FillUp", "TextTransform", "AddColumn", "IndexColumn", "GroupBy", "Unpivot",
@@ -291,7 +271,6 @@ pub fn step_type(k: &StepKind) -> String {
     serde_json::to_value(k).ok().and_then(|v| v.get("type").and_then(|t| t.as_str()).map(String::from)).unwrap_or_default()
 }
 
-/// First unsupported step (index, type) in `q` or any query it references; None = fully native.
 pub fn unsupported(project: &Project, q: &Query) -> Option<(usize, String)> {
     fn go(p: &Project, q: &Query, seen: &mut Vec<String>) -> Option<(usize, String)> {
         if seen.contains(&q.id) { return None; }
@@ -323,7 +302,6 @@ fn keep_rows(lf: LazyFrame, k: &KeepRowsSpec) -> LazyFrame {
     }
 }
 
-/// Non-strict cast + hidden per-cell error mask.
 fn cast_step(mut lf: LazyFrame, changes: &[TypeChange], mode: CastErrorMode, locale: &str) -> Result<LazyFrame, StepError> {
     need(&mut lf, &changes.iter().map(|c| c.col.clone()).collect::<Vec<_>>())?;
     let decimal_comma = matches!(locale, "de-DE" | "fr-FR");
@@ -366,7 +344,6 @@ fn agg_expr(a: &AggSpec) -> Expr {
     e.alias(name.as_str())
 }
 
-/// Builder filters compile to formula text, so there is exactly one code path (and one codegen).
 pub fn filter_formula(f: &FilterSpec) -> String {
     if f.mode == FilterMode::Advanced { return f.formula.clone().unwrap_or_else(|| "true".into()); }
     let Some(b) = &f.builder else { return "true".into() };
@@ -406,7 +383,6 @@ fn scan_source(src: &SourceSpec, ctx: &CompileCtx) -> Result<LazyFrame, StepErro
                 FileFormat::Parquet => { let lf = LazyFrame::scan_parquet(&path, Default::default())?; Ok(if let Some(n) = limit { lf.limit(n as IdxSize) } else { lf }) }
                 FileFormat::Ipc => { let lf = LazyFrame::scan_ipc(&path, Default::default())?; Ok(if let Some(n) = limit { lf.limit(n as IdxSize) } else { lf }) }
                 FileFormat::Json => { let lf = LazyJsonLineReader::new(&path).finish()?; Ok(if let Some(n) = limit { lf.limit(n as IdxSize) } else { lf }) }
-                // Excel can't be read lazily: parse once to Arrow IPC keyed by (file hash, item, options), then scan_ipc.
                 FileFormat::Excel => {
                     let item = item.clone().unwrap_or(ExcelItem::Sheet { name: String::new() });
                     let ipc = pq_excel::cached_ipc(&path, &item, fill_merged.unwrap_or(false), &ctx.cache_dir).map_err(|e| StepError::Source(e.to_string()))?;

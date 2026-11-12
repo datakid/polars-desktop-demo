@@ -1,10 +1,9 @@
-/* Engine message protocol. Pages of rows are sent on demand; the UI never receives whole tables. */
 (function () {
   const PQ = self.PQ;
   const E = PQ.Engine;
   const Host = (PQ.Host = {});
 
-  const results = new Map(); // resultId → Table (LRU)
+  const results = new Map();
   function keep(t) {
     const id = PQ.uid('res');
     results.set(id, t);
@@ -17,7 +16,6 @@
     return t;
   }
 
-  /** Effective project with an uncommitted draft step applied (live preview while a dialog is open). */
   function withDraft(project, draft) {
     if (!draft) return project;
     const p = JSON.parse(JSON.stringify(project));
@@ -30,7 +28,6 @@
   }
   Host.withDraft = withDraft;
 
-  /* ---------------- smart suggestions (messy-file assistance) ---------------- */
   const derived = new Map();
   function derivedFor(fp) {
     if (!fp) return {};
@@ -46,18 +43,15 @@
     const names = t.names;
     const steps = q.steps.slice(0, upto + 1);
     const hasStep = (type) => steps.some((s) => s.kind.type === type);
-    // 1. generic column names → header row
     if (names.every((n) => /^Column\d+$/.test(n)) && t.n > 1) {
       const grid = [];
       for (let r = 0; r < Math.min(15, t.n); r++) grid.push(t.row(r).map((v) => (PQ.isErr(v) ? null : v)));
       const h = PQ.IO.detectHeader(grid);
       out.push({ id: 'headers', icon: 'fa-heading', text: 'Headers: row ' + (h.row + 1), detail: h.reasons.join(' · '), kind: { type: 'PromoteHeaders', row: h.row } });
     }
-    // 2. blank rows
     let blank = 0;
     for (let r = 0; r < t.n; r++) if (t.data.every((c) => PQ.isEmpty(c[r]))) blank++;
     if (blank) out.push({ id: 'blank', icon: 'fa-eraser', text: 'Blank rows · ' + PQ.fmtInt(blank), kind: { type: 'KeepRows', mode: 'remove_blank' } });
-    // 3. types: text columns that parse cleanly as something better
     if (!names.every((n) => /^Column\d+$/.test(n))) {
       const changes = [];
       t.cols.forEach((c, i) => {
@@ -67,7 +61,6 @@
       });
       if (changes.length) out.push({ id: 'types', icon: 'fa-shapes', text: 'Types · ' + changes.length, detail: changes.slice(0, 4).map((c) => c.col + ' → ' + PQ.TYPES[c.type].label).join(', ') + (changes.length > 4 ? ' …' : ''), kind: { type: 'ChangeType', changes, onError: 'error' } });
     }
-    // 4. fill down: a column whose values are sparse "group labels" (merged-cell / report-style pattern)
     if (!hasStep('FillDown')) t.cols.forEach((c, i) => {
       if (i > 2) return;
       const col = t.data[i];
@@ -75,7 +68,6 @@
       for (let r = 0; r < t.n; r++) { if (col[r] === null) nulls++; else if (r > 0 && col[r - 1] === null) runs++; }
       if (nulls > t.n * 0.4 && runs >= 2 && col[0] !== null && c.type !== 'number') out.push({ id: 'fill_' + c.name, icon: 'fa-angles-down', text: 'Fill down ' + c.name, detail: PQ.fmtInt(nulls) + ' empty', kind: { type: 'FillDown', cols: [c.name] } });
     });
-    // 5. stray whitespace / inconsistent casing in text columns
     const trim = [];
     t.cols.forEach((c, i) => {
       if (c.type !== 'text') return;
@@ -86,7 +78,6 @@
       if (ws || (variants && lower.size < 50)) trim.push(c.name);
     });
     if (trim.length && !hasStep('TextTransform')) out.push({ id: 'trim', icon: 'fa-broom', text: 'Trim · ' + trim.length, detail: trim.slice(0, 5).join(', '), kind: { type: 'TextTransform', op: 'trim', cols: trim } });
-    // 6. subtotal-like rows
     const sub = [];
     t.cols.forEach((c, i) => {
       if (c.type !== 'text' && c.type !== 'any') return;
@@ -94,14 +85,12 @@
       if (n) sub.push({ col: c.name, n });
     });
     if (sub.length) out.push({ id: 'subtotal', icon: 'fa-filter-circle-xmark', text: 'Subtotals · ' + sub[0].n, detail: sub[0].col, kind: { type: 'Filter', mode: 'advanced', formula: 'not Text.StartsWith(Text.Lower(Text.Trim(Coalesce(Text.From(' + PQ.Formula.quoteCol(sub[0].col) + '), ""))), "subtotal") and not Text.StartsWith(Text.Lower(Text.Trim(Coalesce(Text.From(' + PQ.Formula.quoteCol(sub[0].col) + '), ""))), "total")' } });
-    // 7. error cells
     let errCols = [];
     t.data.forEach((c, i) => { for (let r = 0; r < t.n; r++) if (PQ.isErr(c[r])) { errCols.push(names[i]); break; } });
     if (errCols.length) out.push({ id: 'errors', icon: 'fa-triangle-exclamation', tone: 'warn', text: 'Errors · ' + errCols.length, kind: { type: 'KeepErrors', cols: errCols } });
     return out.slice(0, 5);
   }
 
-  /* ---------------- handlers ---------------- */
   const H = {};
 
   H.init = async function () {
@@ -176,7 +165,6 @@
     } finally { E.setProject(base); }
   };
 
-  /** Schema flowing into each step (for step dialogs: column pickers, formula checking). */
   H.schemaBefore = function (m) {
     if (m.index <= 0) return { schema: [] };
     const r = E.evaluate(m.qid, m.index - 1, 'preview');
@@ -193,7 +181,6 @@
     return { info: PQ.IO.inspectFile(rec) };
   };
 
-  /** Build the initial steps for a new source: Source → PromoteHeaders(detected) → ChangeType(inferred). */
   H.suggestSteps = function (m) {
     const src = m.source;
     const loc = (E.getProject() && E.getProject().settings.locale) || 'en-US';
@@ -275,7 +262,6 @@
     return { outputs, ms: performance.now() - t0 };
   };
 
-  /** Dispatch one message. post(type, payload) sends progress; returns a promise of the reply payload. */
   Host.handle = async function (msg, progress) {
     const h = H[msg.op];
     if (!h) throw new Error('Unknown engine op ' + msg.op);

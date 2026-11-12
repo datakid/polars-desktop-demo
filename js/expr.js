@@ -1,10 +1,3 @@
-/* Floe formula language.
- *   if [Sales] > 1000 and [Region] = "EU" then "Key" else "Other"
- *   Text.Upper([Name]) & " (" & Text.From(Date.Year([OrderDate])) & ")"
- *   try Number.From([Amount]) otherwise 0
- *   [Region] in {"EU", "US"}
- * Pipeline: tokenize → parse (spans) → check against input schema (typed, positioned errors)
- *           → compile to a vectorised row closure (preview engine) or to a Polars Python expression (codegen). */
 (function () {
   const PQ = self.PQ;
   const { CellError, isErr } = PQ;
@@ -16,7 +9,6 @@
 
   const KEYWORDS = new Set(['if', 'then', 'else', 'and', 'or', 'not', 'true', 'false', 'null', 'try', 'otherwise', 'in']);
 
-  /* ------------------------------ Tokenizer ------------------------------ */
   function tokenize(src) {
     const toks = [];
     let i = 0;
@@ -69,7 +61,6 @@
     return toks;
   }
 
-  /* ------------------------------ Parser (Pratt) ------------------------------ */
   const BIN = { or: 1, and: 2, '=': 4, '<>': 4, '<': 4, '>': 4, '<=': 4, '>=': 4, in: 4, '+': 5, '-': 5, '&': 5, '*': 6, '/': 6 };
 
   function parse(src) {
@@ -152,7 +143,6 @@
     return ast;
   }
 
-  /* ------------------------------ Runtime helpers ------------------------------ */
   const DAY = 86400000;
   const num = (v) => (typeof v === 'number' ? v : typeof v === 'boolean' ? +v : v === null ? null : (() => { const n = PQ.parseNumber(v, 'en-US'); return n === null ? new CellError('Expected a number but got "' + v + '"', v) : n; })());
   const txt = (v) => (v === null ? null : v instanceof Date ? PQ.fmtDate(v) : typeof v === 'boolean' ? (v ? 'true' : 'false') : String(v));
@@ -189,13 +179,10 @@
   const DOWN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const roundHalfEven = (x, d) => { const f = Math.pow(10, d || 0); const v = x * f; const r = Math.round(v); return (Math.abs(v % 1) === 0.5 ? 2 * Math.round(v / 2) : r) / f; };
 
-  /* ------------------------------ Function registry (drives compile + autocomplete + codegen) ------------------------------ */
-  // sig: arg kinds (t=text, n=number, d=date, a=any, '?' suffix optional, '...' variadic); ret: type or 'arg0'
   const F = {};
   const def = (name, sig, ret, doc, impl, py) => { F[name] = { name, sig, ret, doc, impl, py }; };
-  const P = (a) => a; // readability
+  const P = (a) => a;
 
-  // Text
   def('Text.Upper', ['t'], 'text', 'Converts text to upper case', (s) => s.toUpperCase(), (a) => `${a[0]}.str.to_uppercase()`);
   def('Text.Lower', ['t'], 'text', 'Converts text to lower case', (s) => s.toLowerCase(), (a) => `${a[0]}.str.to_lowercase()`);
   def('Text.Proper', ['t'], 'text', 'Capitalises the first letter of every word', (s) => s.toLowerCase().replace(/(^|[^\p{L}\p{N}'])(\p{L})/gu, (m, p, c) => p + c.toUpperCase()), (a) => `${a[0]}.str.to_titlecase()`);
@@ -216,7 +203,6 @@
   def('Text.Repeat', ['t', 'n'], 'text', 'Repeats text N times', (s, n) => s.repeat(Math.max(0, n)), (a) => `pl.concat_str([${a[0]}] * ${a[1]})`);
   def('Text.From', ['a'], 'text', 'Converts any value to text', (v) => txt(v), (a) => `${a[0]}.cast(pl.String)`, true);
   def('Text.Combine', ['a...'], 'text', 'Joins values, skipping nulls: Text.Combine([A], " ", [B])', null, (a) => `pl.concat_str([${a.join(', ')}], ignore_nulls=True)`);
-  // Number
   def('Number.Round', ['n', 'n?'], 'number', 'Rounds to N digits (banker\'s rounding, like Power Query)', (x, d) => roundHalfEven(x, d || 0), (a) => `${a[0]}.round(${a[1] || 0})`);
   def('Number.RoundUp', ['n'], 'int', 'Ceiling', (x) => Math.ceil(x), (a) => `${a[0]}.ceil()`);
   def('Number.RoundDown', ['n'], 'int', 'Floor', (x) => Math.floor(x), (a) => `${a[0]}.floor()`);
@@ -228,7 +214,6 @@
   def('Number.Sqrt', ['n'], 'number', 'Square root', (x) => (x < 0 ? new CellError('Square root of a negative number') : Math.sqrt(x)), (a) => `${a[0]}.sqrt()`);
   def('Number.Log', ['n'], 'number', 'Natural logarithm', (x) => (x <= 0 ? new CellError('Log of a non-positive number') : Math.log(x)), (a) => `${a[0]}.log()`);
   def('Number.From', ['a'], 'number', 'Converts text, booleans or dates to a number (lenient: "1,234", "(5)", "12%")', (v) => (v instanceof Date ? PQ.dateToExcelSerial(v) : num(v)), (a) => `${a[0]}.cast(pl.Float64, strict=False)`, true);
-  // Date
   def('Date.Year', ['d'], 'int', 'Year', (d) => d.getUTCFullYear(), (a) => `${a[0]}.dt.year()`);
   def('Date.Month', ['d'], 'int', 'Month number 1–12', (d) => d.getUTCMonth() + 1, (a) => `${a[0]}.dt.month()`);
   def('Date.Day', ['d'], 'int', 'Day of month', (d) => d.getUTCDate(), (a) => `${a[0]}.dt.day()`);
@@ -248,18 +233,15 @@
     return f.replace(/yyyy|MMMM|MMM|MM|dd|HH|mm|ss/g, (t) => ({ yyyy: d.getUTCFullYear(), MMMM: MONTHN[d.getUTCMonth()], MMM: MONTHN[d.getUTCMonth()].slice(0, 3), MM: p(d.getUTCMonth() + 1), dd: p(d.getUTCDate()), HH: p(d.getUTCHours()), mm: p(d.getUTCMinutes()), ss: p(d.getUTCSeconds()) }[t]));
   }, (a) => `${a[0]}.dt.strftime(${a[1] ? a[1].replace(/yyyy/g, '%Y').replace(/MMMM/g, '%B').replace(/MMM/g, '%b').replace(/MM/g, '%m').replace(/dd/g, '%d') : '"%Y-%m-%d"'})`);
   def('#date', ['n', 'n', 'n'], 'date', 'Date literal: #date(2026, 9, 26)', (y, m, d) => new Date(Date.UTC(y, m - 1, d)), (a) => `pl.date(${a.join(', ')})`);
-  // Logical / misc
   def('Coalesce', ['a...'], 'arg0', 'First non-null value', null, (a) => `pl.coalesce(${a.join(', ')})`);
   def('Value.IsNull', ['a'], 'bool', 'True if the value is null', null, (a) => `${a[0]}.is_null()`);
   def('Value.IsError', ['a'], 'bool', 'True if the value is an error', null, (a) => `pl.lit(False)`);
   def('List.Contains', ['L', 'a'], 'bool', 'True if the list contains the value: List.Contains({"EU","US"}, [Region])', null, (a) => `${a[1]}.is_in(${a[0]})`);
   PQ.FUNCS = F;
 
-  /* ------------------------------ Type checking ------------------------------ */
   const KIND_OK = { t: ['text', 'any'], n: ['number', 'int', 'any', 'bool'], d: ['date', 'datetime', 'any', 'text'] };
   const isNumT = (t) => t === 'number' || t === 'int';
 
-  /** Returns {type, cols:Set} or throws FormulaError. schema: [{name,type}] */
   function check(ast, schema, params) {
     const types = new Map(schema.map((c) => [c.name, c.type]));
     const ptypes = new Map((params || []).map((p) => [p.name, p.type]));
@@ -332,7 +314,6 @@
     return { type, cols: used };
   }
 
-  /* ------------------------------ Compile to row closure ------------------------------ */
   function compileRow(ast, table, params) {
     function go(n) {
       switch (n.k) {
@@ -414,7 +395,6 @@
     return go(ast);
   }
 
-  /* ------------------------------ Compile to Polars Python ------------------------------ */
   function toPython(ast, types) {
     types = types || {};
     function go(n) {
@@ -448,7 +428,6 @@
     return go(ast);
   }
 
-  /* ------------------------------ Public API ------------------------------ */
   const cache = new Map();
   PQ.Formula = {
     parse(src) {
@@ -456,7 +435,6 @@
       try { const ast = parse(src); cache.set(src, ast); return ast; } catch (e) { cache.set(src, e); throw e; }
     },
     check(src, schema, params) { const ast = this.parse(src); return check(ast, schema, params); },
-    /** Evaluate for every row. Returns {values, type}. */
     evaluate(src, table, params) {
       const ast = this.parse(src);
       const { type } = check(ast, table.schema(), params);
@@ -468,19 +446,16 @@
       return { values: out, type: t };
     },
     toPython(src) { return toPython(this.parse(src)); },
-    /** Validate for the editor. Returns null or {message,start,end,hint}. */
     validate(src, schema, params) {
       if (!src || !src.trim()) return { message: 'Enter a formula', start: 0, end: 0 };
       try { const r = this.check(src, schema, params); return { ok: true, type: r.type }; }
       catch (e) { if (e instanceof FormulaError) return { message: e.message, start: e.start, end: e.end, hint: e.hint }; return { message: e.message, start: 0, end: src.length }; }
     },
-    /** Columns referenced (for dependency / rename tracking). */
     columns(src) {
       const out = new Set();
-      try { (function walk(n) { if (!n || typeof n !== 'object') return; if (n.k === 'col') out.add(n.name); Object.values(n).forEach((v) => (Array.isArray(v) ? v.forEach(walk) : typeof v === 'object' && walk(v))); })(this.parse(src)); } catch (e) { /* ignore */ }
+      try { (function walk(n) { if (!n || typeof n !== 'object') return; if (n.k === 'col') out.add(n.name); Object.values(n).forEach((v) => (Array.isArray(v) ? v.forEach(walk) : typeof v === 'object' && walk(v))); })(this.parse(src)); } catch (e) { }
       return out;
     },
-    /** Tokens for syntax highlighting (never throws). */
     highlight(src) {
       const out = [];
       const re = /(\/\/[^\n]*)|(\[(?:[^\]]|\]\])*\]?)|("(?:[^"]|"")*"?)|(\d+\.?\d*)|(#date|[A-Za-z_][A-Za-z0-9_.]*)|(\s+)|(@[A-Za-z0-9_]*)|([\s\S])/g;

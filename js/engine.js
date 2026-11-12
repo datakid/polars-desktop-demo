@@ -1,11 +1,9 @@
-/* Built-in engine: step executors and the query evaluator with a fingerprint cache. Runs in the engine Web Worker. */
 (function () {
   const PQ = self.PQ;
   const { Table, CellError, isErr, StepError, MissingColumnError, Formula } = PQ;
 
   const E = (PQ.Engine = {});
 
-  /* ================================ helpers ================================ */
   const keyOf = (v) => (v === null || v === undefined ? '\u0000' : v instanceof Date ? 'd' + v.getTime() : isErr(v) ? '\u0001' : typeof v === 'number' ? 'n' + v : typeof v === 'boolean' ? 'b' + v : 's' + v);
   const textKey = (v) => (v === null || v === undefined ? '\u0000' : isErr(v) ? '\u0001' : 's' + PQ.fmtValue(v));
   E.keyOf = keyOf;
@@ -90,7 +88,6 @@
   E.csr = csr;
   function mapCol(arr, f) { const out = new Array(arr.length); for (let i = 0; i < arr.length; i++) out[i] = f(arr[i], i); return out; }
 
-  /** Builder filter → formula text (so the formula is the single source of truth and codegen gets it for free). */
   E.builderToFormula = function (b) {
     if (!b || !b.conds || !b.conds.length) return 'true';
     const parts = b.conds.map((c) => {
@@ -124,7 +121,6 @@
   };
   E.filterFormula = (s) => (s.mode === 'builder' ? E.builderToFormula(s.builder) : s.formula || 'true');
 
-  /* ================================ aggregation ================================ */
   const AGG = {
     count_rows: { label: 'Count rows', type: () => 'int', fn: (vals) => vals.length },
     count: { label: 'Count (non-empty)', type: () => 'int', fn: (vals) => vals.filter((v) => v !== null && !isErr(v)).length },
@@ -150,7 +146,6 @@
   }
   E.groupIndex = groupIndex;
 
-  /* ================================ step executors ================================ */
   const X = {};
   E.X = X;
 
@@ -548,7 +543,6 @@
     return out;
   };
 
-  /** Hash join. how: left|right|inner|full|semi|anti|cross */
   X.Merge = (t, s, ctx) => {
     const right = ctx.resolve(s.right);
     const how = s.how || 'left';
@@ -574,14 +568,12 @@
       else if (keepLeft) { li.push(r); ri.push(-1); }
     }
     if (how === 'right') {
-      // keep right order semantics: matched pairs + unmatched right
       for (let x = 0; x < right.n; x++) if (!matchedRight[x]) { li.push(-1); ri.push(x); }
     }
     if (how === 'full') for (let x = 0; x < right.n; x++) if (!matchedRight[x]) { li.push(-1); ri.push(x); }
     if (li.length > 2e7) throw new StepError('Merge would produce ' + PQ.fmtInt(li.length) + ' rows — the right-hand keys are probably not unique');
     const out = joinOutput(t, right, li, ri, s);
     if (how === 'right' || how === 'full') {
-      // coalesce keys so unmatched right rows still show the key value
       let o = out;
       on.forEach(([l, r]) => { const la = o.get(l), ra = right.get(r); const a = la.slice(); for (let i = 0; i < a.length; i++) if (li[i] < 0) a[i] = ra[ri[i]]; o = o.withColumn(l, t.type(l), a); });
       return o;
@@ -735,7 +727,6 @@
 
   X.Checkpoint = (t) => t;
 
-  /* ================================ sources ================================ */
   function readSource(src, ctx) {
     const limit = ctx.mode === 'preview' ? ctx.previewRows : Infinity;
     if (!src) throw new StepError('This query has no source');
@@ -777,7 +768,6 @@
   }
   X.Source = (t, s, ctx) => readSource(s.source, ctx);
 
-  /* ================================ compiler ================================ */
   const MATERIALIZES = new Set(['Pivot', 'Transpose', 'Merge', 'GroupBy', 'Sort', 'Distinct', 'CustomSql', 'Checkpoint']);
   E.MATERIALIZES = MATERIALIZES;
 
@@ -823,7 +813,6 @@
   }
   E.sourceVariant = () => '';
 
-  /** Fingerprint per step (cheap, no execution). Detects dependency cycles with a readable path. */
   function fingerprints(qid, mode, stack, upto) {
     stack = stack || [];
     const q = E.query(qid);
@@ -849,7 +838,6 @@
   E.fingerprints = fingerprints;
 
   function describeMissing(q, stepIndex, col) {
-    // Look back for a rename / removal that explains the missing column
     for (let i = stepIndex - 1; i >= 0; i--) {
       const k = q.steps[i].kind;
       if (k.type === 'Rename') { const m = (k.map || []).find((p) => p[0] === col); if (m) return { because: 'it was renamed to `' + m[1] + '` in step ' + (i + 1) + ' (' + q.steps[i].name + ')', replacement: m[1] }; }
@@ -861,11 +849,6 @@
     return null;
   }
 
-  /**
-   * Evaluate a query up to step `upto`. Returns {table, states[]} where each state has
-   * {ok, error, fixes, rows, cols, schema, ms, cached, truncated}.
-   * Every step's result is cached by fingerprint, so editing step 7 keeps steps 1–6 instant.
-   */
   function evaluate(qid, upto, mode, stack, onProgress) {
     stack = stack || [];
     const q = E.query(qid);
@@ -927,7 +910,6 @@
   }
   E.evaluate = evaluate;
 
-  /* ================================ column quality & profile ================================ */
   E.quality = function (t) {
     return t.data.map((col) => {
       let err = 0, empty = 0;
@@ -964,7 +946,6 @@
     return { col: colName, type, count: t.n, errors, empty, distinct: counts.size, unique, min: wire(min), max: wire(max), mean: nnum ? sum / nnum : null, stdev, minLen: minLen === Infinity ? null : minLen, maxLen: maxLen || null, top, hist };
   };
 
-  /** Serialize a value for postMessage (CellError loses its prototype otherwise). */
   function wire(v) { return isErr(v) ? { __err: v.msg } : v === undefined ? null : v; }
   E.wire = wire;
 
@@ -980,7 +961,6 @@
     return [...seen.values()].sort((a, b) => compareValues(a.v && a.v.__err ? null : a.v, b.v && b.v.__err ? null : b.v, true)).map((x) => ({ value: x.v, count: x.n }));
   };
 
-  /** Merge dialog: live match count + warnings (type mismatch, non-unique right keys). */
   E.mergeStats = function (left, right, on, how, castKeys) {
     const kf = castKeys ? textKey : keyOf;
     const warnings = [];

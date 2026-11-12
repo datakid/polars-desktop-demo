@@ -1,10 +1,6 @@
-/* Project-level dialogs: Excel/CSV navigator, From Folder, Python export, project files (git view),
- * dependency graph, parameters, settings, outputs / Refresh All, shortcuts. */
 (function () {
   const PQ = self.PQ, UI = PQ.UI, h = UI.h, Store = UI.Store, W = UI.W;
 
-  /* ================================ Navigator ================================ */
-  /** Opens a file and shows the navigator tree: Excel Tables first, then sheets + detected regions, named ranges. */
   UI.navigator = async function (fileId, opts) {
     opts = opts || {};
     const f = UI.App.files.find((x) => x.id === fileId);
@@ -95,7 +91,6 @@
           }
           tb.appendChild(tr);
         });
-        // drag-select a range visually
         if (it.type !== 'table' && it.type !== 'name') {
           tb.addEventListener('mousedown', (e) => { const td = e.target.closest('td'); if (!td) return; drag = { r: +td.dataset.r, c: +td.dataset.c }; e.preventDefault(); });
           tb.addEventListener('mouseover', (e) => { if (!drag) return; const td = e.target.closest('td'); if (!td) return; const r2 = +td.dataset.r, c2 = +td.dataset.c; const a = { r1: Math.min(drag.r, r2), c1: Math.min(drag.c, c2), r2: Math.max(drag.r, r2), c2: Math.max(drag.c, c2) }; tb.querySelectorAll('td').forEach((x) => { const R = +x.dataset.r, C = +x.dataset.c; x.className = R >= a.r1 && R <= a.r2 && C >= a.c1 && C <= a.c2 ? 'in' : ''; }); drag.cur = a; });
@@ -176,7 +171,7 @@
       const rows = info.preview || [];
       UI.clear(prev).appendChild(h('div.mini-wrap', { style: { maxHeight: '340px' } }, h('table.mini-table', h('tbody', rows.slice(0, 30).map((r, i) => h('tr', { style: i === 0 && hd.checked ? { fontWeight: 700, background: 'var(--accent-2)' } : null }, (info.kind === 'csv' ? reparse(r) : r).map((v) => h('td', v === null ? '' : String(v)))))))));
     };
-    const reparse = (r) => r; // preview rows already split with sniffed delimiter
+    const reparse = (r) => r;
     hd.addEventListener('change', draw);
     draw();
     const body = h('div.col',
@@ -192,7 +187,6 @@
     });
   }
 
-  /* ================================ From Folder ================================ */
   UI.folderDialog = function () {
     const folders = UI.App.folders();
     if (!folders.length) {
@@ -223,7 +217,6 @@
     });
   };
 
-  /* ================================ Python export ================================ */
   function highlightPy(code) {
     const esc = PQ.esc(code);
     return esc.replace(/(#[^\n]*)|(&quot;(?:[^&]|&(?!quot;))*?&quot;|"""[\s\S]*?"""|'[^'\n]*')|\b(import|from|def|return|for|in|if|else|lambda|as|with|None|True|False|not|and|or)\b|\b(\d+(?:\.\d+)?)\b|\b(pl|Path)\b/g, (m, c, s, k, n, f) => c ? '<span class="c">' + c + '</span>' : s ? '<span class="s">' + s + '</span>' : k ? '<span class="k">' + k + '</span>' : n ? '<span class="n">' + n + '</span>' : '<span class="f">' + f + '</span>');
@@ -242,7 +235,6 @@
     });
   };
 
-  /* ================================ Project files (git-friendly) ================================ */
   UI.projectFilesDialog = function () {
     const files = PQ.Steps.toFiles(Store.project);
     const names = Object.keys(files);
@@ -259,7 +251,6 @@
     });
   };
   function bundle() { return JSON.parse(PQ.stableStringify(Object.assign({ format_version: PQ.Steps.FORMAT_VERSION }, Store.project))); }
-  /** Save: writes back to the opened .floe file in the desktop app (Save As the first time); downloads in the browser. */
   UI.saveProject = async (saveAs) => {
     const text = PQ.stableStringify(bundle(), 2) + '\n';
     const name = PQ.snake(Store.project.name) + '.' + PQ.BRAND.ext;
@@ -334,7 +325,6 @@
     UI.menu([{ header: 'Recent projects' }].concat(list.map((r, i) => ({ label: r.name, icon: 'fa-file-lines', run: async () => { if (!(await UI.guardUnsaved('open'))) return; try { UI.openProject(await PQ.Platform.recent.open(r)); } catch (e) { UI.toast(e.message, 'err'); PQ.Platform.recent.remove(i); } } }))).concat(['-', { label: 'Browse…', icon: 'fa-folder-open', run: () => UI.openProject() }]), x, y);
   };
 
-  /* ================================ Dependency graph ================================ */
   UI.dependencyDialog = function () {
     let topo;
     try { topo = PQ.Steps.topo(Store.project); }
@@ -379,7 +369,6 @@
     m = UI.modal({ title: 'Query dependencies', icon: 'fa-diagram-project', size: 'xwide', body: h('div.col', { style: { height: '100%' } }, h('div.row.muted', { style: { fontSize: '12px' } }, h('span', UI.icon('fa-square', 'tag-lazy'), ' source'), h('span', UI.icon('fa-square', '', ''), ' '), h('span', { style: { color: 'var(--ok)' } }, UI.icon('fa-square'), ' has output'), h('span', '· Refresh All runs in this order (left → right), independent branches in parallel.')), canvas) });
   };
 
-  /* ================================ Parameters ================================ */
   UI.paramsDialog = function () {
     const rows = W.rows(Store.project.params, (p) => {
       const n = W.text(p.name, { placeholder: 'Name (letters, digits, _)' }), t = W.select([['text', 'Text'], ['number', 'Number'], ['date', 'Date'], ['list', 'List (comma-separated)']], p.type || 'text'), v = W.text(p.value, { placeholder: 'Value' });
@@ -398,7 +387,6 @@
     });
   };
 
-  /* ================================ Settings ================================ */
   UI.settingsDialog = function () {
     const s = Store.project.settings;
     const rows = W.select([[200, '200 rows'], [1000, '1,000 rows (default)'], [5000, '5,000 rows'], [10000, '10,000 rows']], s.previewRows);
@@ -428,7 +416,6 @@
     });
   };
 
-  /* ================================ Outputs / Refresh All ================================ */
   UI.refreshAll = async function () {
     const outs = Store.project.queries.filter((q) => q.load && q.load.target && q.load.target !== 'none');
     if (!outs.length) return UI.toast('No query has an output. Set "Load to" in the query properties (right panel).', 'warn', { ms: 6000 });
@@ -441,9 +428,7 @@
     finally { UI.App.busy(null); }
   };
 
-  /* ================================ CLI dialog ================================ */
   UI.cliDialog = function () {
-    // Commands match scripts/floe.mjs (Node 18+, same built-in engine as the app).
     const p = Store.project;
     const q = (s) => (/[\s"]/.test(s) ? '"' + String(s).replace(/"/g, '\\"') + '"' : s);
     const params = (p.params || []).map((x) => ' --param ' + q(x.name + '=' + x.value)).join('');
@@ -474,7 +459,6 @@
     });
   };
 
-  /* ================================ About ================================ */
   UI.aboutDialog = function () {
     const i = PQ.Platform.info;
     const eng = UI.NativeEngine.status();
@@ -488,7 +472,6 @@
       h('p.faint', { style: { fontSize: '12px', maxWidth: '380px', margin: '10px auto 0' } }, PQ.Platform.native ? 'Your data never leaves this device. Files are read from disk and processed locally.' : 'Your data never leaves this device. Files are processed in your browser and kept in its local storage.')) });
   };
 
-  /* ================================ Shortcuts ================================ */
   UI.shortcutsDialog = function () {
     const mac = PQ.Platform.os === 'mac';
     const rows = [['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+Enter', 'Apply dialog'], ['Ctrl+Space', 'Autocomplete'], ['Ctrl+S', 'Save'], ['Ctrl+Shift+S', 'Save as'], ['Ctrl+O', 'Open project'], ['Alt+N', 'New project'], ['Ctrl+Shift+F', 'Full data'], ['Ctrl+V', 'Paste a table as a new query'], ['Ctrl+K', 'Command palette'], ['Esc', 'Cancel query'], ['Delete', 'Remove columns'], ['Ctrl+click / Shift+click', 'Multi-select'], ['Ctrl+C', 'Copy cell'], ['Alt+↑ / Alt+↓', 'Previous / next step'], ['F2', 'Rename query']];
