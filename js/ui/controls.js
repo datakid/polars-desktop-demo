@@ -257,7 +257,7 @@
   };
   const showTip = (el, byKey) => {
     const text = el.getAttribute('data-tip');
-    if (!text || !el.isConnected) return;
+    if (!text || !el.isConnected || document.body.classList.contains('reordering')) return;
     if (byKey ? !el.matches(':focus-visible') : !el.matches(':hover')) return;
     tipEl.textContent = text;
     document.body.appendChild(tipEl);

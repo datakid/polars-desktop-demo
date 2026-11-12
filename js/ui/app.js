@@ -579,7 +579,7 @@
       const st = App.states[i];
       const cat = PQ.Steps.CATALOG[s.kind.type] || {};
       const err = st && !st.ok && !st.blocked;
-      const li = h('li.step', { class: (i === active ? 'active ' : '') + (i > active ? 'after ' : '') + (err ? 'error ' : '') + (st && st.ok && i < active ? 'done ' : '') + (cat.materializes ? 'mat ' : '') + (s.disabled ? 'disabled' : ''), draggable: i > 0 ? 'true' : null, tabindex: 0, dataset: { i },
+      const li = h('li.step', { class: (i === active ? 'active ' : '') + (i > active ? 'after ' : '') + (err ? 'error ' : '') + (st && st.ok && i < active ? 'done ' : '') + (cat.materializes ? 'mat ' : '') + (s.disabled ? 'disabled' : ''), tabindex: 0, dataset: { i },
         title: err ? st.error : PQ.Steps.describe(s.kind) + (s.note ? '\n\nNote: ' + s.note : ''),
         on: { click: () => selectStep(i), dblclick: () => UI.editStep({ qid: q.id, index: i }), contextmenu: (e) => { e.preventDefault(); stepMenu(q, i, e.clientX, e.clientY); }, keydown: (e) => { if (e.key === 'Enter') UI.editStep({ qid: q.id, index: i }); if (e.key === 'Delete' && i > 0) deleteStep(q, i); } } },
         h('span.s-idx', i + 1),
@@ -593,20 +593,73 @@
         h('span.s-actions',
           h('button.icon-btn', { title: 'Edit step', 'aria-label': 'Edit ' + s.name, on: { click: (e) => { e.stopPropagation(); UI.editStep({ qid: q.id, index: i }); } } }, UI.icon('fa-gear')),
           i > 0 ? h('button.icon-btn.danger', { title: 'Delete step', 'aria-label': 'Delete ' + s.name, on: { click: (e) => { e.stopPropagation(); deleteStep(q, i); } } }, UI.icon('fa-xmark')) : null));
-      if (i > 0) {
-        li.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/step', String(i)); e.dataTransfer.effectAllowed = 'move'; });
-        li.addEventListener('dragover', (e) => { if (!e.dataTransfer.types.includes('text/step')) return; e.preventDefault(); const r = li.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2; li.classList.toggle('drop-after', after); li.classList.toggle('drop-before', !after); });
-        li.addEventListener('dragleave', () => li.classList.remove('drop-after', 'drop-before'));
-        li.addEventListener('drop', (e) => {
-          e.preventDefault(); li.classList.remove('drop-after', 'drop-before');
-          const from = +e.dataTransfer.getData('text/step'); const r = li.getBoundingClientRect(); let to = e.clientY > r.top + r.height / 2 ? i + 1 : i;
-          if (from < to) to--;
-          if (to < 1 || to === from) return;
-          Store.edit('Move step', (p) => { const st2 = p.queries.find((x) => x.id === q.id).steps; const [m] = st2.splice(from, 1); st2.splice(to, 0, m); }, { activeStep: null });
-        });
-      }
+      if (i > 0) li.addEventListener('pointerdown', (e) => beginStepDrag(e, li, q, i));
       ul.appendChild(li);
     });
+  }
+  function beginStepDrag(e, li, q, from) {
+    if (e.button !== 0 || e.pointerType === 'touch' || e.target.closest('button')) return;
+    const ul = li.parentElement;
+    const x0 = e.clientX, y0 = e.clientY;
+    const box = li.getBoundingClientRect();
+    const grabY = e.clientY - box.top;
+    let ghost = null, hot = null, after = false;
+    const clearHot = () => { if (hot) hot.classList.remove('drop-before', 'drop-after'); hot = null; };
+    const move = (ev) => {
+      if (!ghost) {
+        if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
+        ghost = li.cloneNode(true);
+        ghost.classList.add('step-ghost');
+        ghost.removeAttribute('tabindex');
+        ghost.style.width = box.width + 'px';
+        ghost.style.left = box.left + 'px';
+        document.body.appendChild(ghost);
+        li.classList.add('dragging');
+        document.body.classList.add('reordering');
+        UI.closeMenu();
+      }
+      ghost.style.top = (ev.clientY - grabY) + 'px';
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const over = el && el.closest ? el.closest('li.step') : null;
+      clearHot();
+      if (over && over !== li && over.parentElement === ul && +over.dataset.i > 0) {
+        const r = over.getBoundingClientRect();
+        after = ev.clientY > r.top + r.height / 2;
+        over.classList.add(after ? 'drop-after' : 'drop-before');
+        hot = over;
+      }
+    };
+    const finish = (ev, commit) => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', cancel);
+      document.removeEventListener('keydown', key, true);
+      document.removeEventListener('selectstart', noSelect);
+      const dropped = ghost, target = hot, below = after;
+      clearHot();
+      if (ghost) ghost.remove();
+      li.classList.remove('dragging');
+      document.body.classList.remove('reordering');
+      if (!dropped) return;
+      const swallow = (c) => { c.stopPropagation(); c.preventDefault(); };
+      addEventListener('click', swallow, { capture: true, once: true });
+      setTimeout(() => removeEventListener('click', swallow, true), 0);
+      if (!commit || !target) return;
+      const idx = +target.dataset.i;
+      let to = below ? idx + 1 : idx;
+      if (from < to) to--;
+      if (to < 1 || to === from) return;
+      Store.edit('Move step', (p) => { const st2 = p.queries.find((x) => x.id === q.id).steps; const [m] = st2.splice(from, 1); st2.splice(to, 0, m); }, { activeStep: null });
+    };
+    const up = (ev) => finish(ev, true);
+    const cancel = (ev) => finish(ev, false);
+    const key = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); finish(ev, false); } };
+    const noSelect = (ev) => ev.preventDefault();
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', cancel);
+    document.addEventListener('keydown', key, true);
+    document.addEventListener('selectstart', noSelect);
   }
   const fmtShort = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n));
   function selectStep(i) {
@@ -830,8 +883,10 @@
     return ',';
   }
   async function copyColumn(c) {
-    const { values } = await UI.Engine.call('distinct', { resultId: App.result.resultId, col: c.name });
-    UI.copy(values.map((v) => UI.cellText(v.value, c.type).text).join('\n'), 'Copied ' + values.length + ' distinct values');
+    try {
+      const { values } = await UI.Engine.call('distinct', { resultId: App.result.resultId, col: c.name });
+      UI.copy(values.map((v) => UI.cellText(v.value, c.type).text).join('\n'), 'Copied ' + values.length + ' distinct values');
+    } catch (err) { UI.toast(err.message, 'err'); }
   }
   function filterPopover(c) {
     const box = h('div.filter-pop', { on: { mousedown: (e) => e.stopPropagation(), click: (e) => e.stopPropagation() } });
@@ -844,7 +899,7 @@
     UI.Engine.call('distinct', { resultId: App.result.resultId, col: c.name }).then(({ values }) => {
       list = values; checked = new Set(values.map((_, i) => i));
       draw();
-    });
+    }).catch((err) => { UI.clear(vals).appendChild(h('div.muted', { style: { padding: '6px', fontSize: '12px' } }, err.message)); });
     const draw = () => {
       const s = search.value.toLowerCase();
       UI.clear(vals);
