@@ -7,7 +7,7 @@
       this.el = el; this.opts = opts || {};
       this.result = null; this.pages = new Map(); this.loading = new Set();
       this.widths = new Map(); this.sel = new Set(); this.focus = null;
-      this.rowH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--grid-row')) || 28;
+      this.rowH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--grid-row')) || 26;
       this.inner = h('div.g-inner');
       this.head = h('div.g-head');
       this.body = h('div.g-body');

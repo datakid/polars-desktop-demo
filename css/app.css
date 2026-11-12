@@ -28,7 +28,7 @@
   --t-date: #9a6b3f; --t-date-bg: #f1e8dc;
   --t-bool: #8b5f78; --t-bool-bg: #efe4ea;
   --t-any: #847f75;  --t-any-bg: #ebe7df;
-  --grid-row: 28px;
+  --grid-row: 26px;
   --radius: 12px; --radius-sm: 8px; --radius-lg: 16px;
   --shadow-1: 0 1px 2px rgba(60, 45, 30, .05);
   --shadow: 0 16px 40px -14px rgba(60, 45, 30, .22), 0 3px 10px -4px rgba(60, 45, 30, .08);
@@ -280,6 +280,10 @@ body.dragging #center { box-shadow: 0 0 0 2px var(--accent); }
 .step:hover .s-flags .rows, .step.active .s-flags .rows { display: none; }
 .step.error { background: var(--err-bg); }
 .step.error .s-desc { color: var(--err); }
+.step.dragging { opacity: .35; }
+.step-ghost { position: fixed; z-index: 110; margin: 0; list-style: none; pointer-events: none; background: var(--panel); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 10px; }
+.step-ghost::before { display: none; }
+body.reordering, body.reordering * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
 .step.drop-before::after, .step.drop-after::after { content: ''; position: absolute; left: 34px; right: 6px; height: 2px; background: var(--accent); border-radius: 2px; }
 .step.drop-before::after { top: -2px; } .step.drop-after::after { bottom: -2px; }
 .step-legend { padding: 8px 14px; font-size: 10.5px; color: var(--faint); display: flex; gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--border); }

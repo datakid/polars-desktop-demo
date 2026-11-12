@@ -46,16 +46,7 @@ f.addEventListener('load', async () => {
     const doc = w.document;
     const nativeSel = 'select, option, datalist, details, dialog, progress, meter, input[type=number], input[type=range], input[type=date], input[type=color], input[type=time], [title]';
     const closeAll = async () => { doc.querySelectorAll('.modal .close').forEach((b) => b.click()); await sleep(250); };
-    const cases = [
-      ['Sample', { mode: 'n', n: 1000, seed: 42 }],
-      ['Filter', { mode: 'builder', builder: { join: 'and', conds: [{ col: 'status', op: 'eq', value: '' }] } }],
-      ['Sort', { by: [{ col: 'revenue', desc: true }] }],
-      ['GroupBy', { keys: ['region'], aggs: [{ fn: 'sum', col: 'revenue', name: 'revenue' }] }],
-      ['KeepRows', { mode: 'top', n: 100 }],
-      ['ChangeType', { changes: [{ col: 'quantity', type: 'int' }], onError: 'error' }],
-      ['Validate', { rules: [{ col: 'status', check: 'regex' }], action: 'flag', name: 'Issues' }],
-      ['AddColumn', { formula: '' }],
-    ];
+    const cases = Object.keys(UI().StepForms).map((t) => [t, {}]);
     let nativeCount = 0, selects = 0, steppers = 0;
     for (const [type, init] of cases) {
       UI().App.stepDialog(type, init);
@@ -64,6 +55,7 @@ f.addEventListener('load', async () => {
       nativeCount += doc.querySelectorAll(nativeSel).length;
       selects += doc.querySelectorAll('.modal .select').length;
       steppers += doc.querySelectorAll('.modal .stepper').length;
+      doc.querySelectorAll('.modal .select').forEach((x) => { if (x.localName !== 'button') nativeCount++; });
       doc.querySelectorAll('.modal input[type=checkbox]').forEach((c) => { if (w.getComputedStyle(c).appearance !== 'none') nativeCount++; });
       doc.querySelectorAll('.modal textarea').forEach((t) => { if (w.getComputedStyle(t).resize !== 'none') nativeCount++; });
       await closeAll();
@@ -93,6 +85,27 @@ f.addEventListener('load', async () => {
     const tipBtn = doc.getElementById('btn-undo');
     console.log('E2E tooltip source', tipBtn.hasAttribute('title') ? 'native title present' : tipBtn.getAttribute('data-tip'));
     if (tipBtn.hasAttribute('title') || !tipBtn.getAttribute('data-tip')) throw new Error('tooltip migration failed');
+    UI().Store.setUI({ rightTab: 'steps' });
+    UI().App.renderRight();
+    await sleep(400);
+    const names = () => [...doc.querySelectorAll('#step-list .s-name')].map((e) => e.textContent);
+    const before = names();
+    const fire = (type, target, x, y) => target.dispatchEvent(new w.PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse', clientX: x, clientY: y }));
+    const items = () => [...doc.querySelectorAll('#step-list li.step')];
+    const from = items()[2].getBoundingClientRect(), to = items()[5].getBoundingClientRect();
+    fire('pointerdown', items()[2], from.left + 60, from.top + 10);
+    fire('pointermove', doc, from.left + 60, from.top + 30);
+    fire('pointermove', doc, from.left + 60, to.top + to.height * 0.8);
+    const ghost = doc.querySelectorAll('.step-ghost').length;
+    fire('pointerup', doc, from.left + 60, to.top + to.height * 0.8);
+    await sleep(600);
+    const moved = names();
+    const expected = before.slice(); expected.splice(5, 0, expected.splice(2, 1)[0]);
+    console.log('E2E reorder ghost', ghost, 'moved', JSON.stringify(moved) === JSON.stringify(expected), 'draggable', doc.querySelectorAll('[draggable=true]').length, 'ghost cleaned', !doc.querySelector('.step-ghost'));
+    if (!ghost || JSON.stringify(moved) !== JSON.stringify(expected) || doc.querySelector('[draggable=true]') || doc.querySelector('.step-ghost')) throw new Error('step reorder failed ');
+    UI().Store.undoOne();
+    await sleep(600);
+    if (JSON.stringify(names()) !== JSON.stringify(before)) throw new Error('undo after reorder failed');
     console.log('E2E DONE');
   } catch (e) { console.log('E2E FAIL', e.message, e.stack); }
 });
