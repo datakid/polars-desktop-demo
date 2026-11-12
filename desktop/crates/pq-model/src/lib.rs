@@ -1,11 +1,3 @@
-//! PQX project model — the single source of truth for queries.
-//!
-//! A query is an ordered list of typed steps (Power Query's "Applied Steps"), never raw code.
-//! The serialized form is identical to the web prototype's JSON (`js/steps.js`), so projects
-//! move freely between the browser preview and the desktop app.
-//!
-//! Rule: this crate must not depend on Polars.
-
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::BTreeMap;
@@ -84,9 +76,6 @@ pub struct Step {
     pub disabled: Option<bool>,
 }
 
-/// Every step kind. `#[serde(tag = "type")]` gives `{ "type": "Filter", ... }` — the same shape
-/// the UI writes. TypeScript types are generated from this enum with specta / tauri-specta,
-/// so the UI and the engine can never disagree about what a step looks like.
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
 #[serde(tag = "type")]
 pub enum StepKind {
@@ -146,22 +135,17 @@ pub enum StepKind {
         #[serde(default = "val")]
         val: String,
     },
-    /// Forces materialization: output columns depend on the data.
     Pivot { on: String, #[serde(default)] values: Option<String>, #[serde(default)] agg: AggFn, #[serde(default)] index: Vec<String> },
-    /// Forces materialization.
     Transpose { #[serde(default, rename = "headerCol")] header_col: Option<String> },
     Merge(MergeSpec),
     Append { others: Vec<QueryId>, #[serde(default)] mode: AppendMode },
     Window(WindowSpec),
     ExpandJson { col: String },
-    /// `self` = previous step; other queries by snake_case name. Runs through polars `SQLContext`.
     CustomSql { sql: String },
-    /// User-forced buffer (Table.Buffer): materialize, write Arrow IPC to cache, scan_ipc back.
     Checkpoint,
 }
 fn yes() -> bool { true }
 
-/// Accepts string, number, bool or null (the UI stores user-typed literals loosely).
 fn lenient_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     let v = serde_json::Value::deserialize(d)?;
     Ok(match v { serde_json::Value::Null => None, serde_json::Value::String(s) if s.is_empty() => None, serde_json::Value::String(s) => Some(s), other => Some(other.to_string()) })
@@ -173,11 +157,9 @@ fn merged() -> String { "Merged".into() }
 fn val() -> String { "Value".into() }
 
 impl StepKind {
-    /// Steps whose output schema depends on the data. The compiler inserts an automatic checkpoint.
     pub fn materializes(&self) -> bool {
         matches!(self, StepKind::Pivot { .. } | StepKind::Transpose { .. } | StepKind::Checkpoint | StepKind::PromoteHeaders { .. })
     }
-    /// Queries this step reads from (for the dependency DAG).
     pub fn references(&self) -> Vec<&QueryId> {
         match self {
             StepKind::Source { source: SourceSpec::Query { query } } => vec![query],
@@ -218,7 +200,6 @@ pub enum SourceSpec {
     },
     Query { query: QueryId },
     Blank { columns: Vec<String>, rows: Vec<Vec<String>> },
-    /// Desktop only: connectorx / arrow-odbc. The project stores a credential *reference*; the secret lives in the OS keychain.
     Database { connection: String, #[serde(rename = "credentialRef")] credential_ref: Option<String>, table: Option<String>, sql: Option<String> },
 }
 fn star() -> String { "*".into() }
@@ -261,15 +242,12 @@ pub struct TypeChange {
     pub locale: Option<String>,
 }
 
-/// Polars has no per-cell errors; PQX adds them (non-strict cast + error mask).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CastErrorMode {
-    /// Keep a per-cell error marker (hidden mask column `__err_<col>`).
     #[default]
     Error,
     Null,
-    /// Null + original text in `<col>_error`.
     Keep,
     Fail,
 }
@@ -339,7 +317,6 @@ pub struct ConditionalRule { pub when: String, pub then: String }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
 pub struct AggSpec {
-    /// JSON field is `fn` (a Rust keyword).
     #[serde(rename = "fn")]
     pub func: AggFn,
     #[serde(default)] pub col: Option<String>,
@@ -384,10 +361,6 @@ pub struct WindowSpec {
 #[serde(rename_all = "snake_case")]
 pub enum WindowOp { Cumsum, RowNumber, Rank, Lag, Lead, PctOfTotal, MovingAvg }
 
-/* ------------------------------------------------------------------ */
-/* Project files: folder (or zip) = project.json + queries/<name>.json */
-/* ------------------------------------------------------------------ */
-
 #[derive(Debug, thiserror::Error)]
 pub enum ModelError {
     #[error("not a PQX project: {0}")]
@@ -400,16 +373,13 @@ pub enum ModelError {
     MissingQuery(String),
 }
 
-/// Migrations run from day one: every format change adds an arm here.
 pub fn migrate(mut raw: serde_json::Value) -> Result<Project, ModelError> {
     let v = raw.get("format_version").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
     if v > FORMAT_VERSION { return Err(ModelError::TooNew(v)); }
-    // v1 is current. Future: `if v < 2 { rename field ... }`
     raw["format_version"] = FORMAT_VERSION.into();
     Ok(serde_json::from_value(raw)?)
 }
 
-/// Pretty-printed, sorted keys → clean `git diff`. One file per query.
 pub fn to_files(p: &Project) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let file_of = |q: &Query| format!("queries/{}.json", snake(&q.name));
@@ -451,7 +421,6 @@ pub fn snake(s: &str) -> String {
     if r.is_empty() || r.chars().next().unwrap().is_ascii_digit() { format!("q_{r}") } else { r }
 }
 
-/// Topological order of queries (dependencies first). Cycles are reported as `A → B → A`.
 pub fn topo_order(p: &Project) -> Result<Vec<QueryId>, ModelError> {
     use std::collections::HashMap;
     let by_id: HashMap<&str, &Query> = p.queries.iter().map(|q| (q.id.as_str(), q)).collect();

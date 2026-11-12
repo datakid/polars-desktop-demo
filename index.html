@@ -29,15 +29,15 @@
         <div class="brand-text" data-tauri-drag-region><span class="brand-name">Floe</span></div>
       </div>
       <span class="tb-sep"></span>
-      <button class="icon-btn" id="btn-file-menu" title="Menu" aria-label="Menu"><i class="fa-solid fa-bars"></i></button>
-      <input id="project-name" aria-label="Project name" value="Untitled">
+      <button class="icon-btn" id="btn-file-menu" data-tip="Menu" aria-label="Menu"><i class="fa-solid fa-bars"></i></button>
+      <input id="project-name" aria-label="Project name" value="Untitled" autocomplete="off" spellcheck="false" autocapitalize="off">
       <button type="button" class="save-state" id="save-state">Saved</button>
       <span class="grow" data-tauri-drag-region></span>
-      <button type="button" class="palette-btn" id="btn-palette" aria-label="Command palette" title="Search commands, queries, steps and columns"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><span>Search or run a command</span><kbd>Ctrl K</kbd></button>
+      <button type="button" class="palette-btn" id="btn-palette" aria-label="Command palette" data-tip="Search commands, queries, steps and columns"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><span>Search or run a command</span><kbd>Ctrl K</kbd></button>
       <div class="tb-actions">
-        <button class="icon-btn" id="btn-undo" title="Undo" aria-label="Undo"><i class="fa-solid fa-rotate-left"></i></button>
-        <button class="icon-btn" id="btn-redo" title="Redo" aria-label="Redo"><i class="fa-solid fa-rotate-right"></i></button>
-        <button class="icon-btn" id="btn-theme" title="Theme" aria-label="Toggle theme"><i class="fa-solid fa-circle-half-stroke"></i></button>
+        <button class="icon-btn" id="btn-undo" data-tip="Undo" aria-label="Undo"><i class="fa-solid fa-rotate-left"></i></button>
+        <button class="icon-btn" id="btn-redo" data-tip="Redo" aria-label="Redo"><i class="fa-solid fa-rotate-right"></i></button>
+        <button class="icon-btn" id="btn-theme" data-tip="Theme" aria-label="Toggle theme"><i class="fa-solid fa-circle-half-stroke"></i></button>
         <button class="pill-btn" id="btn-export"><i class="fa-solid fa-arrow-up-from-bracket"></i><span>Export</span></button>
       </div>
     </header>
@@ -53,11 +53,11 @@
     <main id="workspace">
       <aside id="left-panel" class="panel" aria-label="Queries and files">
         <div class="panel-h">Queries
-          <span class="actions"><button class="icon-btn" id="btn-new-query" title="New query" aria-label="New query"><i class="fa-solid fa-plus"></i></button></span>
+          <span class="actions"><button class="icon-btn" id="btn-new-query" data-tip="New query" aria-label="New query"><i class="fa-solid fa-plus"></i></button></span>
         </div>
         <ul id="query-list" class="scroll" role="listbox" aria-label="Queries" style="max-height:46%"></ul>
         <div class="panel-h">Files
-          <span class="actions"><button class="icon-btn" id="btn-add-file" title="Add files" aria-label="Add files"><i class="fa-solid fa-plus"></i></button></span>
+          <span class="actions"><button class="icon-btn" id="btn-add-file" data-tip="Add files" aria-label="Add files"><i class="fa-solid fa-plus"></i></button></span>
         </div>
         <ul id="file-list" class="scroll grow"></ul>
         <div class="drop-hint" id="drop-hint">Drop files here</div>
@@ -134,6 +134,7 @@
   <script src="js/engine-ext.js"></script>
   <script src="js/platform.js"></script>
   <script src="js/ui/core.js"></script>
+  <script src="js/ui/controls.js"></script>
   <script src="js/ui/grid.js"></script>
   <script src="js/ui/formula-editor.js"></script>
   <script src="js/ui/step-dialogs.js"></script>

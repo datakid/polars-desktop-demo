@@ -12,15 +12,27 @@
     th:first-child, td:first-child { text-align: left; }
     .bar { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
     #status { color: #6e6a62; }
+    .lbl { color: #6e6a62; }
+    .seg { display: inline-flex; padding: 3px; gap: 2px; background: #e5e0d6; border-radius: 99px; }
+    .seg button { font: inherit; border: 0; background: none; color: inherit; padding: 4px 12px; border-radius: 99px; cursor: pointer; }
+    .seg button.on { background: #faf8f4; box-shadow: 0 1px 2px rgba(43, 41, 38, .18); font-weight: 600; }
+    .btn { font: inherit; border: 1px solid #d6d0c4; background: #faf8f4; color: inherit; padding: 5px 14px; border-radius: 99px; cursor: pointer; }
+    .btn.primary { background: #2b2926; border-color: #2b2926; color: #f1eee7; }
+    button:focus-visible { outline: 2px solid #cf8a65; outline-offset: 2px; }
   </style>
 </head>
 <body>
   <h1>Floe built-in engine benchmark</h1>
   <p>Six fixed pipelines on generated data. Preview = first 1,000 rows. Cold = first run (includes decoding), warm = step cache cleared, decoded text reused.</p>
   <div class="bar">
-    <label>Input rows <select id="size"><option value="100000" selected>100,000</option><option value="250000">250,000</option><option value="1000000">1,000,000</option></select></label>
-    <button id="run" type="button">Run</button>
-    <button id="copy" type="button">Copy JSON</button>
+    <span class="lbl">Input rows</span>
+    <div class="seg" id="size" role="radiogroup" aria-label="Input rows">
+      <button type="button" role="radio" aria-checked="true" class="on" data-value="100000">100,000</button>
+      <button type="button" role="radio" aria-checked="false" data-value="250000">250,000</button>
+      <button type="button" role="radio" aria-checked="false" data-value="1000000">1,000,000</button>
+    </div>
+    <button id="run" class="btn primary" type="button">Run</button>
+    <button id="copy" class="btn" type="button">Copy JSON</button>
     <span id="status"></span>
   </div>
   <table>

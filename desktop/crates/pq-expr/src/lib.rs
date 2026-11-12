@@ -1,15 +1,3 @@
-//! PQX formula language → Polars `Expr`.
-//!
-//! ```text
-//! if [Sales] > 1000 and [Region] = "EU" then "Key" else "Other"
-//! Text.Upper([Name]) & " " & Text.From(Date.Year([OrderDate]))
-//! [Region] in {"EU", "US"}        try Number.From([x]) otherwise 0        [Date] >= @StartDate
-//! ```
-//! A hand-written Pratt parser (same grammar and precedence as `js/expr.js`, which is the
-//! executable spec) produces a spanned AST; `check` type-checks it against the input schema with
-//! character positions so the editor can underline the exact spot; `lower` emits a Polars Expr.
-//! Planned: port the grammar to `chumsky` for better error recovery.
-
 use pq_model::{Param, ParamKind};
 use polars::prelude::*;
 
@@ -149,7 +137,6 @@ pub fn parse(src: &str) -> Result<Node, FormulaError> {
     Ok(n)
 }
 
-/// Parse + type-check + lower to a Polars expression.
 pub fn compile(src: &str, schema: &Schema, params: &[Param]) -> Result<Expr, FormulaError> {
     let ast = parse(src)?;
     lower(&ast, schema, params)

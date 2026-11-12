@@ -1,4 +1,3 @@
-/* global importScripts */
 importScripts('util.js', 'storage.js', 'expr.js', 'io.js', 'steps.js', 'engine.js', 'host.js', 'engine-ext.js', 'parquet.js');
 
 self.onmessage = async (ev) => {

@@ -1,7 +1,3 @@
-//! Step fingerprints = cache keys.
-//! hash(mode + params + source fingerprint + serialized steps up to i + fingerprints of referenced queries)
-//! Source fingerprint: path + mtime + size for files; connection + SQL for databases.
-
 use crate::{Mode, StepError};
 use pq_model::*;
 use std::path::PathBuf;

@@ -1,12 +1,3 @@
-//! Supervisor for the native Polars engine (`floe-engine`, crate desktop/crates/pq-worker).
-//!
-//! * Spawned lazily on first use; located next to the app binary (bundled via `externalBin`)
-//!   or via FLOE_ENGINE for development.
-//! * Frames: u32-LE length + MessagePack. One request in flight (Mutex) — the UI keeps a single
-//!   evaluation active and supersedes older ones.
-//! * Cancel = kill. Crash = next call respawns and re-sends the last project.
-//! * Absent binary = `engine_status` reports unavailable and the UI keeps using the built-in engine.
-
 use serde::Serialize;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -21,7 +12,6 @@ struct Proc { child: Child, stdin: ChildStdin, stdout: ChildStdout }
 #[derive(Default)]
 pub struct Engine {
     proc: Mutex<Option<Proc>>,
-    /// Kept outside `proc` so `cancel` can kill without waiting for the in-flight call's lock.
     pid: Mutex<Option<u32>>,
     last_project: Mutex<Option<Vec<u8>>>,
     hello: Mutex<Option<serde_json::Value>>,
@@ -39,7 +29,6 @@ fn locate(app: &AppHandle) -> Option<PathBuf> {
     let mut dirs = vec![];
     if let Ok(exe) = std::env::current_exe() { if let Some(d) = exe.parent() { dirs.push(d.to_path_buf()); } }
     if let Ok(r) = app.path().resource_dir() { dirs.push(r); }
-    // dev: desktop/target/{release,debug}
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("target");
     dirs.push(dev.join("release"));
     dirs.push(dev.join("debug"));
@@ -70,7 +59,7 @@ impl Engine {
         let mut cmd = Command::new(&path);
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
         #[cfg(windows)]
-        { use std::os::windows::process::CommandExt; cmd.creation_flags(0x0800_0000); } // CREATE_NO_WINDOW
+        { use std::os::windows::process::CommandExt; cmd.creation_flags(0x0800_0000); }
         let mut child = cmd.spawn().map_err(|e| format!("engine: {e}"))?;
         *self.pid.lock().unwrap() = Some(child.id());
         let stdin = child.stdin.take().ok_or("engine stdin")?;
@@ -94,7 +83,6 @@ impl Engine {
         rmp_serde::from_slice::<Reply>(&frame).map_err(|e| format!("engine reply: {e}"))
     }
 
-    /// One call; respawns once if the process died (crash or cancel).
     pub fn call(&self, app: &AppHandle, op: &str, args: serde_json::Value) -> Result<Reply, String> {
         let mut guard = self.proc.lock().unwrap();
         for attempt in 0..2 {
@@ -122,8 +110,6 @@ impl Engine {
     }
 }
 
-/* ─────────────────────────────── commands ─────────────────────────────── */
-
 #[tauri::command]
 pub async fn engine_status(app: AppHandle, eng: State<'_, Engine>) -> Result<Status, String> {
     let path = locate(&app);
@@ -134,8 +120,6 @@ pub async fn engine_status(app: AppHandle, eng: State<'_, Engine>) -> Result<Sta
     Ok(Status { available: path.is_some(), running, restarts: eng.restarts.load(Ordering::Relaxed), path: path.map(|p| p.to_string_lossy().into_owned()), info: eng.hello.lock().unwrap().clone() })
 }
 
-/// JSON ops (setProject, canRun, evaluate, profile, distinct, export, drop). File ids → granted paths
-/// are resolved here so the engine never sees paths the user didn't grant.
 #[tauri::command]
 pub async fn engine_call(app: AppHandle, eng: State<'_, Engine>, grants: State<'_, crate::Grants>, op: String, args: serde_json::Value) -> Result<serde_json::Value, String> {
     let mut args = args;
@@ -156,7 +140,6 @@ pub async fn engine_call(app: AppHandle, eng: State<'_, Engine>, grants: State<'
     Ok(res.result.unwrap_or(serde_json::Value::Null))
 }
 
-/// A page of rows as raw Arrow IPC bytes (ArrayBuffer in JS). Args in the JSON body.
 #[tauri::command]
 pub async fn engine_page(app: AppHandle, request: Request<'_>) -> Result<Response, String> {
     let args: serde_json::Value = match request.body() {

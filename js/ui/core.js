@@ -1,19 +1,18 @@
-/* UI core: DOM helpers, toasts, menus, modals, engine supervisor and router, project store with undo/redo. */
 (function () {
   const PQ = self.PQ;
   const UI = (PQ.UI = {});
 
-  /* ================================ DOM ================================ */
-  /** h('div.cls#id', {attrs, on:{click}}, ...children) */
   UI.h = function (sel, attrs, ...kids) {
     const m = /^([a-z0-9-]+)?((?:[.#][\w-]+)*)$/i.exec(sel) || [];
     const el = document.createElement(m[1] || 'div');
     (m[2] || '').replace(/([.#])([\w-]+)/g, (_, t, v) => { if (t === '.') el.classList.add(v); else el.id = v; });
     if (attrs && (typeof attrs !== 'object' || attrs instanceof Node || Array.isArray(attrs))) { kids.unshift(attrs); attrs = null; }
+    let tip = null;
     if (attrs) for (const k of Object.keys(attrs)) {
       const v = attrs[k];
       if (v === undefined || v === null || v === false) continue;
-      if (k === 'on') { for (const ev of Object.keys(v)) el.addEventListener(ev, v[ev]); }
+      if (k === 'title') tip = String(v);
+      else if (k === 'on') { for (const ev of Object.keys(v)) el.addEventListener(ev, v[ev]); }
       else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
       else if (k === 'html') el.innerHTML = v;
       else if (k === 'class') el.className += ' ' + v;
@@ -24,6 +23,16 @@
     }
     const add = (c) => { if (c === null || c === undefined || c === false) return; if (Array.isArray(c)) c.forEach(add); else el.appendChild(c instanceof Node ? c : document.createTextNode(String(c))); };
     kids.forEach(add);
+    if (tip !== null) {
+      el.setAttribute('data-tip', tip);
+      if (!el.hasAttribute('aria-label') && !el.textContent.trim() && /^(button|a)$/.test(el.localName)) el.setAttribute('aria-label', tip);
+    }
+    if (el.localName === 'input' || el.localName === 'textarea') {
+      if (!el.hasAttribute('autocomplete')) el.setAttribute('autocomplete', 'off');
+      if (!el.hasAttribute('spellcheck')) el.setAttribute('spellcheck', 'false');
+      el.setAttribute('autocapitalize', 'off');
+      el.setAttribute('autocorrect', 'off');
+    }
     return el;
   };
   const h = UI.h;
@@ -32,13 +41,10 @@
   UI.$$ = (s, r) => [...(r || document).querySelectorAll(s)];
   UI.clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
   UI.typeIcon = (t) => (PQ.TYPES[t] || PQ.TYPES.any).icon;
-  /** Floe mark, inline so it follows the theme: ink blocks = currentColor, drifting block = accent. */
   UI.LOGO = '<svg viewBox="0 0 32 32" aria-hidden="true"><g fill="currentColor"><rect x="3" y="17" width="12" height="12" rx="3.2"/><rect x="17" y="17" width="12" height="12" rx="3.2"/><rect x="3" y="3" width="12" height="12" rx="3.2"/></g><rect x="18" y="2" width="12" height="12" rx="3.2" fill="var(--accent)" transform="rotate(12 24 8)"/></svg>';
   UI.logo = (cls) => { const s = document.createElement('span'); s.className = cls || ''; s.innerHTML = UI.LOGO; return s.firstChild; };
-  /** Colour-coded type chip: each data type owns a chroma. */
   UI.typeChip = (t, attrs) => h('span.t-ico', Object.assign({ dataset: { t: t || 'any' }, title: (PQ.TYPES[t] || PQ.TYPES.any).label }, attrs || {}), UI.typeIcon(t));
 
-  /* ================================ Toasts ================================ */
   UI.toast = function (text, kind, opts) {
     opts = opts || {};
     const box = UI.$('#toasts');
@@ -50,10 +56,8 @@
     setTimeout(() => el.remove(), opts.ms || (kind === 'err' ? 9000 : 4000));
   };
 
-  /* ================================ Menus ================================ */
   let openMenu = null;
   UI.closeMenu = () => { if (openMenu) { openMenu.remove(); openMenu = null; } UI.$$('.menu').forEach((m) => m.remove()); };
-  /** items: [{label, icon, run, kbd, danger, disabled, sub:[...]}, '-', {header}] */
   UI.menu = function (items, x, y, opts) {
     UI.closeMenu();
     const el = buildMenu(items);
@@ -94,7 +98,7 @@
         btn.addEventListener('mouseenter', () => { if (el._sub) { el._sub.remove(); el._sub = null; } });
         btn.addEventListener('click', (e) => { e.stopPropagation(); UI.closeMenu(); if (it.run) it.run(); });
       }
-      if (it.title) btn.title = it.title;
+      if (it.title) UI.tip(btn, it.title);
       el.appendChild(btn);
     });
     return el;
@@ -121,7 +125,7 @@
     let timer = null, start = null, fired = 0;
     const clear = () => { clearTimeout(timer); timer = null; };
     document.addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'touch' || e.target.closest('input, textarea, select, .menu, .modal-back')) return;
+      if (e.pointerType !== 'touch' || e.target.closest('input, textarea, .select, .dd, .menu, .modal-back')) return;
       clear();
       start = { x: e.clientX, y: e.clientY, t: e.target };
       timer = setTimeout(() => {
@@ -142,9 +146,7 @@
   })();
   addEventListener('resize', () => UI.closeMenu());
 
-  /* ================================ Modals ================================ */
   const modalStack = [];
-  /** UI.modal({title, icon, body: Node, wide, footer: [nodes], onOk, okLabel, onClose}) → {close, el, setBusy} */
   UI.modal = function (o) {
     const prevFocus = document.activeElement;
     const okBtn = o.onOk ? h('button.btn.primary', { on: { click: () => doOk() } }, o.okLabel || 'OK') : null;
@@ -171,11 +173,20 @@
     function api() {}
     api.close = close; api.el = m; api.ok = doOk; api.footLeft = footLeft;
     api.setOkEnabled = (v) => { if (okBtn) okBtn.disabled = !v; };
+    const focusables = () => [...m.querySelectorAll('button, input, textarea, [tabindex]:not([tabindex="-1"])')].filter((x) => !x.disabled && x.tabIndex >= 0 && x.offsetParent !== null);
     m.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        const f = focusables();
+        if (!f.length) return;
+        const a = document.activeElement;
+        if (e.shiftKey && (a === f[0] || !m.contains(a))) { e.preventDefault(); f[f.length - 1].focus(); }
+        else if (!e.shiftKey && (a === f[f.length - 1] || !m.contains(a))) { e.preventDefault(); f[0].focus(); }
+        return;
+      }
       if (e.key === 'Escape' && !e.target.closest('.ac')) { e.stopPropagation(); close(); }
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doOk(); }
     });
-    setTimeout(() => { const f = m.querySelector('[autofocus]') || m.querySelector('.modal-b input, .modal-b select, .modal-b textarea') || m.querySelector('.modal-h .close'); if (f) f.focus(); }, 30);
+    setTimeout(() => { const f = m.querySelector('[autofocus]') || [...m.querySelectorAll('.modal-b input, .modal-b .select, .modal-b textarea')].find((x) => !x.disabled && x.offsetParent !== null) || m.querySelector('.modal-h .close'); if (f) f.focus(); }, 30);
     return api;
   };
   UI.anyModal = () => modalStack.length > 0;
@@ -186,7 +197,6 @@
     setTimeout(() => inp.select(), 40);
   });
 
-  /* ================================ Engine supervisor ================================ */
   if (!UI.NativeEngine) UI.NativeEngine = { ready: false, info: null, available: () => false, status: () => ({ ready: false }), shouldRun: () => false, call: () => Promise.reject(new Error('No native engine')), cancel() {}, init: async () => false, setEnabled() {} };
   const Engine = (UI.Engine = { worker: null, pending: new Map(), seq: 0, restarts: 0, state: 'starting', listeners: new Set(), lastProject: null, lastRun: null, nativeReason: null });
   function noteRun(msg, r, engine, fellBack) {
@@ -226,15 +236,13 @@
   function crash(msg) {
     const pend = [...Engine.pending.values()];
     Engine.pending.clear();
-    try { Engine.worker.terminate(); } catch (e) { /* ignore */ }
+    try { Engine.worker.terminate(); } catch (e) { }
     Engine.restarts++;
     Engine.state = 'restarting'; notify();
     pend.forEach((p) => { const e = new Error(msg); e.cancelled = /cancel/i.test(msg); p.reject(e); });
     return Engine.start();
   }
-  /** Cancel = kill the worker (and the native engine process). Always works, even mid-collect. */
   Engine.cancel = () => { if (UI.NativeEngine) UI.NativeEngine.cancel(); return crash('Cancelled by user'); };
-  /** Router: native Polars engine when eligible, built-in engine otherwise (and as fallback). */
   Engine.call = function (op, msg, onProgress, transfer) {
     const N = UI.NativeEngine;
     msg = msg || {};
@@ -272,7 +280,6 @@
   Engine.onState = (f) => Engine.listeners.add(f);
   function notify() { Engine.listeners.forEach((f) => f(Engine.state)); }
 
-  /* ================================ Project store (immutable snapshots + undo/redo) ================================ */
   const Store = (UI.Store = { project: null, undo: [], redo: [], listeners: new Set(), filePath: null, fileHandle: null, fileName: null, savedSnapshot: null, ui: { activeQid: null, activeStep: null, mode: 'preview', selCols: [], rightTab: 'steps', pane: 'data' } });
   Store.dirty = () => Store.savedSnapshot !== null && Store.savedSnapshot !== Store.project;
   Store.linked = () => !!(Store.filePath || Store.fileHandle);
@@ -283,8 +290,7 @@
     emit('saved');
   };
   const LS_KEY = 'floe.project.v1';
-  // one-time migration from the pre-rename key
-  try { if (!localStorage.getItem(LS_KEY) && localStorage.getItem('pqx.project.v1')) localStorage.setItem(LS_KEY, localStorage.getItem('pqx.project.v1')); } catch (e) { /* storage disabled */ }
+  try { if (!localStorage.getItem(LS_KEY) && localStorage.getItem('pqx.project.v1')) localStorage.setItem(LS_KEY, localStorage.getItem('pqx.project.v1')); } catch (e) { }
   Store.newProject = () => ({ format_version: PQ.Steps.FORMAT_VERSION, name: 'Untitled project', settings: { previewRows: 1000, locale: 'en-US' }, params: [], queries: [] });
   Store.load = function () {
     try { const raw = localStorage.getItem(LS_KEY); if (raw) return PQ.Steps.migrate(JSON.parse(raw)); } catch (e) { console.warn('Could not restore project', e); }
@@ -339,7 +345,6 @@
     } catch (e) { UI.toast(e.message, 'err'); }
   };
 
-  /** Apply an edit. fn receives a deep copy and mutates it; the previous snapshot goes on the undo stack. */
   Store.edit = function (label, fn, uiPatch) {
     const before = Store.project;
     const next = JSON.parse(JSON.stringify(before));
@@ -387,7 +392,6 @@
   Store.activeIndex = function () { const q = Store.query(); if (!q) return -1; const a = Store.ui.activeStep; return a === null || a === undefined || a >= q.steps.length ? q.steps.length - 1 : a; };
   PQ.queryName = (id) => { const q = Store.project && Store.project.queries.find((x) => x.id === id); return q ? q.name : '(missing query)'; };
 
-  /** Default step name, made unique within the query ("Filtered Rows 2"). */
   Store.stepName = function (q, type) {
     const base = PQ.Steps.label(type);
     const names = new Set(q.steps.map((s) => s.name));
@@ -396,7 +400,6 @@
     return base + ' ' + i;
   };
 
-  /** Add a step after the active step. Consecutive compatible steps are folded together (like Power Query). */
   Store.addStep = function (kind, opts) {
     opts = opts || {};
     const q = Store.query(); if (!q) return;
@@ -430,8 +433,6 @@
     return null;
   }
 
-  /* ================================ Files ================================ */
-  /** Save output: native Save-As dialog in the desktop app, a download in the browser. Resolves to path/name or null. */
   UI.download = async function (name, data, mime) {
     try { return await PQ.Platform.saveFile(name, data, mime); }
     catch (e) { UI.toast(e.message || String(e), 'err'); return null; }
@@ -450,7 +451,6 @@
   UI.fmtBytes = (n) => (n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB');
   UI.fmtMs = (ms) => (ms < 1 ? '<1 ms' : ms < 1000 ? Math.round(ms) + ' ms' : (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + ' s');
 
-  /** Render a value from the engine (errors arrive as {__err}) */
   UI.cellText = function (v, type) {
     if (v === null || v === undefined) return { text: 'null', cls: 'null' };
     if (v && v.__err) return { text: 'Error', cls: 'err', title: v.__err };
@@ -460,7 +460,6 @@
     return { text: String(v), cls: '' };
   };
 
-  /** Small preview table used in dialogs. */
   UI.miniTable = function (schema, rows, opts) {
     opts = opts || {};
     const hl = new Set(opts.highlight || []);

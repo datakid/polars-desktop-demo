@@ -1,7 +1,3 @@
-# Floe native engine — Cargo workspace (Polars in Rust, no Python).
-#   cargo test                       engine crates (work in progress, see README → Roadmap)
-# The Tauri 2 desktop shell lives in ./src-tauri as its OWN crate so the app always builds,
-# independent of engine progress:   cd desktop && npm install && npm run dev
 [workspace]
 resolver = "2"
 members = [
@@ -22,7 +18,6 @@ license = "MIT OR Apache-2.0"
 rust-version = "1.80"
 
 [workspace.dependencies]
-# Pin Polars EXACTLY and upgrade on purpose with the golden tests running (plan §2).
 polars = { version = "=0.46.0", default-features = false, features = [
     "lazy", "csv", "parquet", "ipc", "json", "strings", "temporal", "dtype-date", "dtype-datetime",
     "dtype-struct", "is_in", "pivot", "cum_agg", "rank", "round_series", "concat_str", "diagonal_concat",

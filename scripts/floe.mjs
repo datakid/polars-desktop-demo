@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import vm from 'node:vm';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync, openSync, readSync, closeSync } from 'node:fs';
 import { dirname, join, resolve, basename, extname } from 'node:path';

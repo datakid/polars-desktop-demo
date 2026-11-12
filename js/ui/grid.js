@@ -1,14 +1,13 @@
-/* Virtualized data grid. Requests pages of rows (offset, count) from the engine on demand —
- * the whole result never crosses the process boundary. Column header shows type icon + quality strip. */
 (function () {
   const PQ = self.PQ, UI = PQ.UI, h = UI.h;
-  const ROW_H = 26, PAGE = 200, RN_W = 56;
+  const PAGE = 200, RN_W = 56;
 
   class Grid {
     constructor(el, opts) {
       this.el = el; this.opts = opts || {};
       this.result = null; this.pages = new Map(); this.loading = new Set();
       this.widths = new Map(); this.sel = new Set(); this.focus = null;
+      this.rowH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--grid-row')) || 28;
       this.inner = h('div.g-inner');
       this.head = h('div.g-head');
       this.body = h('div.g-body');
@@ -123,7 +122,7 @@
         this.pages.set(pi, rows);
         if (this.pages.size > 60) { const k = this.pages.keys().next().value; if (k !== 0) this.pages.delete(k); }
         this.paint(true);
-      } catch (e) { /* result expired: re-evaluated soon */ }
+      } catch (e) { }
       finally { this.loading.delete(pi); }
     }
     paint() {
@@ -131,14 +130,13 @@
       if (!r) { UI.clear(this.body); return; }
       const total = r.n;
       const tw = this.totalWidth();
-      this.body.style.height = total * ROW_H + 'px';
+      this.body.style.height = total * this.rowH + 'px';
       this.body.style.width = tw + 'px';
       this.inner.style.width = tw + 'px';
       const headH = this.head.offsetHeight;
       const top = Math.max(0, this.el.scrollTop - headH);
       const vh = this.el.clientHeight;
-      const r0 = Math.max(0, Math.floor(top / ROW_H) - 5), r1 = Math.min(total, Math.ceil((top + vh) / ROW_H) + 5);
-      // horizontal virtualization
+      const r0 = Math.max(0, Math.floor(top / this.rowH) - 5), r1 = Math.min(total, Math.ceil((top + vh) / this.rowH) + 5);
       const left = this.el.scrollLeft, vw = this.el.clientWidth;
       const xs = []; let x = RN_W;
       r.schema.forEach((c) => { const w = this.width(c.name, c.type); xs.push([x, w]); x += w; });
@@ -147,7 +145,7 @@
       for (let p = Math.floor(r0 / PAGE); p <= Math.floor(Math.max(r0, r1 - 1) / PAGE); p++) this.fetchPage(p);
       const frag = document.createDocumentFragment();
       for (let row = r0; row < r1; row++) {
-        const rowEl = h('div.g-row', { style: { top: row * ROW_H + 'px', width: tw + 'px' } });
+        const rowEl = h('div.g-row', { style: { top: row * this.rowH + 'px', width: tw + 'px' } });
         rowEl.appendChild(h('div.g-rownum', String(row + 1)));
         if (c0 > 0) rowEl.appendChild(h('div', { style: { width: xs[c0][0] - RN_W + 'px', flex: 'none' } }));
         const page = this.pages.get(Math.floor(row / PAGE));
@@ -170,9 +168,9 @@
       if (mv) {
         e.preventDefault();
         this.focus = { r: Math.max(0, Math.min(this.result.n - 1, r + mv[0])), c: Math.max(0, Math.min(this.result.schema.length - 1, c + mv[1])) };
-        const y = this.focus.r * ROW_H + this.head.offsetHeight;
+        const y = this.focus.r * this.rowH + this.head.offsetHeight;
         if (y < this.el.scrollTop + this.head.offsetHeight) this.el.scrollTop = y - this.head.offsetHeight;
-        else if (y + ROW_H > this.el.scrollTop + this.el.clientHeight) this.el.scrollTop = y + ROW_H - this.el.clientHeight;
+        else if (y + this.rowH > this.el.scrollTop + this.el.clientHeight) this.el.scrollTop = y + this.rowH - this.el.clientHeight;
         this.paint();
       } else if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
         if (window.getSelection && String(window.getSelection())) return;

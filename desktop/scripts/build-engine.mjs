@@ -1,6 +1,3 @@
-// Builds the native Polars engine and places it where Tauri's `externalBin` expects it:
-//   src-tauri/binaries/floe-engine-<target-triple>[.exe]
-// Also copies it next to the dev binary so `npm run dev` finds it without bundling.
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

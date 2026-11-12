@@ -1,27 +1,19 @@
-/* Step dialogs: one form per step kind, all with an instant live preview (a "draft" step evaluated by
- * the engine on the preview sample) and schema-aware column pickers. */
 (function () {
   const PQ = self.PQ, UI = PQ.UI, h = UI.h, Store = UI.Store;
 
-  /* ================================ form widgets ================================ */
   const W = (UI.W = {});
   W.field = (label, input, help) => h('div.field', h('label', label), input, help ? h('div.help', help) : null);
   W.text = (value, attrs) => h('input.input', Object.assign({ value: value === undefined || value === null ? '' : value }, attrs || {}));
-  W.num = (value, attrs) => h('input.input', Object.assign({ type: 'number', value: value === undefined || value === null ? '' : value }, attrs || {}));
-  W.select = (options, value, attrs) => {
-    const s = h('select.input', attrs || {});
-    options.forEach((o) => { const [v, l] = Array.isArray(o) ? o : [o, o]; s.appendChild(h('option', { value: v, selected: String(v) === String(value) }, l)); });
-    return s;
-  };
+  W.num = (value, attrs) => UI.numberInput(value, attrs);
+  W.select = (options, value, attrs) => UI.select(options, value, attrs);
   W.colSelect = (schema, value, opts) => {
     opts = opts || {};
-    const s = h('select.input', opts.attrs || {});
-    if (opts.empty) s.appendChild(h('option', { value: '' }, opts.empty));
-    schema.forEach((c) => s.appendChild(h('option', { value: c.name, selected: c.name === value }, (PQ.TYPES[c.type] || PQ.TYPES.any).icon + '  ' + c.name)));
-    if (value && !schema.some((c) => c.name === value)) s.appendChild(h('option', { value, selected: true }, '⚠ ' + value + ' (missing)'));
-    return s;
+    const list = [];
+    if (opts.empty) list.push({ value: '', label: opts.empty });
+    schema.forEach((c) => list.push({ value: c.name, label: c.name, type: PQ.TYPES[c.type] ? c.type : 'any' }));
+    if (value && !schema.some((c) => c.name === value)) list.push({ value, label: '⚠ ' + value + ' (missing)' });
+    return UI.select(list, value, opts.attrs);
   };
-  /** Multi-select as toggle pills. Returns element with .get() */
   W.colMulti = (schema, values, onChange) => {
     const set = new Set(values || []);
     const el = h('div.pill-select', { role: 'group' });
@@ -41,7 +33,6 @@
     wrap.get = el.get;
     return wrap;
   };
-  /** Repeating rows editor. make(item) → {el, get}. */
   W.rows = (items, make, blank, addLabel, onChange) => {
     const list = h('div.list-rows');
     const rows = [];
@@ -57,7 +48,6 @@
   };
   const onAny = (el, f) => { el.addEventListener('input', f); el.addEventListener('change', f); return el; };
 
-  /* ================================ forms per step kind ================================ */
   const TYPE_OPTS = Object.keys(PQ.TYPES).filter((t) => t !== 'any').map((t) => [t, PQ.TYPES[t].icon + '  ' + PQ.TYPES[t].label]);
   const AGG_OPTS = () => Object.keys(PQ.Engine ? PQ.Engine.AGG : {}).map((k) => [k, PQ.Engine.AGG[k].label]);
 
@@ -216,7 +206,6 @@
   };
   F.Checkpoint = () => ({ el: h('p.muted', 'Materializes the result here and caches it (Power Query\'s Table.Buffer). Useful before expensive branches that reuse the same intermediate result.'), get: () => ({ type: 'Checkpoint' }) });
 
-  /* ---------- Source editing ---------- */
   F.Source = (k, ctx) => {
     const s = JSON.parse(JSON.stringify(k.source || {}));
     if (s.kind === 'query') {
@@ -232,7 +221,6 @@
       onAny(ta, PQ.debounce(ctx.changed, 300));
       return { el: W.field('Data (tab-separated, first line = headers; paste from Excel works)', ta), get: () => { const lines = ta.value.split(/\r?\n/).filter((l) => l.length); const cols = (lines[0] || 'Column1').split('\t'); return { type: 'Source', source: { kind: 'blank', columns: cols, rows: lines.slice(1).map((l) => l.split('\t')) } }; } };
     }
-    // file
     const files = UI.App.files.filter((f) => !f.folder);
     const file = onAny(W.select(files.map((f) => [f.id, f.name]).concat(files.some((f) => f.id === s.fileId) ? [] : [[s.fileId || '', '⚠ ' + (s.fileName || 'missing file')]]), s.fileId), ctx.changed);
     const kind = PQ.IO ? null : null;
@@ -281,11 +269,6 @@
     return { el: h('div.col', parts), get };
   };
 
-  /* ================================ generic step dialog with live preview ================================ */
-  /**
-   * UI.editStep({qid, index}) edits an existing step; UI.editStep({qid, insertAt, kind}) adds a new one.
-   * Every change re-evaluates a draft step on the preview sample.
-   */
   UI.editStep = async function (o) {
     const q = Store.query(o.qid);
     if (!q) return;
@@ -363,7 +346,6 @@
     refresh();
   };
 
-  /* ================================ Merge dialog (live match count) ================================ */
   UI.mergeDialog = async function (o) {
     const q = Store.query(o.qid);
     const editing = o.index !== undefined;
@@ -410,7 +392,6 @@
       const r = await UI.Engine.call('querySchema', { qid: rightSel.value });
       rightSchema = r.schema;
       k.right = rightSel.value;
-      // auto-suggest matching key names when nothing is chosen yet
       if (!k.on.length) {
         const common = leftSchema.map((c) => c.name).filter((n) => rightSchema.some((c) => c.name === n));
         const idLike = common.find((n) => /(^|_| )(id|key|code)$/i.test(n)) || common[0];

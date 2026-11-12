@@ -1,10 +1,3 @@
-//! pqx — run a PQX project headless. Same engine crates as the desktop app.
-//!
-//!   pqx run    <project> [--param K=V]... [--query NAME] [--output DIR] [--data DIR]
-//!   pqx inspect <project>
-//!
-//! Schedule with cron / Task Scheduler / CI — something Power Query can't do without Excel.
-
 use anyhow::{bail, Context, Result};
 use pq_compiler::{compile, CompileCtx, Mode};
 use pq_model::*;
@@ -13,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 fn load(path: &Path) -> Result<Project> {
     let text = if path.is_dir() {
-        // folder layout: project.json + queries/*.json
         let idx: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path.join("project.json"))?)?;
         let mut v = idx.clone();
         let qs: Vec<serde_json::Value> = idx["queries"].as_array().cloned().unwrap_or_default().iter()
@@ -61,7 +53,6 @@ fn main() -> Result<()> {
         let file = out_dir.join(format!("{}.{}", snake(&q.name), match q.load.target { OutputKind::Parquet => "parquet", OutputKind::Xlsx => "xlsx", _ => "csv" }));
         match q.load.target {
             OutputKind::Parquet => lf.sink_parquet(&file, Default::default(), None)?,
-            // xlsx output uses polars_excel_writer in the full build; CSV keeps this scaffold dependency-light.
             _ => { let mut df = lf.with_new_streaming(true).collect()?; CsvWriter::new(std::fs::File::create(&file)?).finish(&mut df)?; }
         }
         eprintln!("✓ {:<32} → {} ({} ms)", q.name, file.display(), t0.elapsed().as_millis());

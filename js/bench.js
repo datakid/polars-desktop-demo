@@ -88,8 +88,10 @@
   }
 
   addEventListener('DOMContentLoaded', () => {
-    $('run').addEventListener('click', () => bench(+$('size').value));
+    const size = () => +$('size').querySelector('.on').dataset.value;
+    $('size').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; [...$('size').children].forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b ? 'true' : 'false'); }); });
+    $('run').addEventListener('click', () => bench(size()));
     $('copy').addEventListener('click', () => navigator.clipboard.writeText(JSON.stringify(self.BENCH || {}, null, 2)));
-    bench(+$('size').value);
+    bench(size());
   });
 })();

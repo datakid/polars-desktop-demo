@@ -1,5 +1,3 @@
-/* Step catalog and Polars Python code generation.
- * Shared by the UI thread and the engine worker. Pure functions only. */
 (function () {
   const PQ = self.PQ;
   const S = (PQ.Steps = {});
@@ -7,7 +5,6 @@
   const cols = (a) => (a || []).map((c) => '`' + c + '`').join(', ');
   const short = (a, n) => { a = a || []; return a.length > (n || 3) ? cols(a.slice(0, n || 3)) + ' +' + (a.length - (n || 3)) : cols(a); };
 
-  /** label, icon, describe(kind), lazy: false when the step forces materialization (Pivot/Transpose… in Polars). */
   S.CATALOG = {
     Source: { label: 'Source', icon: 'fa-database', describe: (k) => { const s = k.source || {}; if (s.kind === 'file') return (s.fileName || 'file') + (s.columns && s.columns.length ? ' · ' + s.columns.length + ' column' + (s.columns.length === 1 ? '' : 's') : '') + (s.item ? ' › ' + (s.item.type === 'sheets' ? 'sheets "' + s.item.pattern + '"' : s.item.name || s.item.sheet || '') + (s.item.range ? '!' + s.item.range : '') : ''); if (s.kind === 'folder') return 'Folder ' + s.folder + '/' + (s.pattern || '*'); if (s.kind === 'query') return 'Reference to ' + (PQ.queryName ? PQ.queryName(s.query) : s.query); return 'Entered data'; } },
     SelectColumns: { label: 'Choose Columns', icon: 'fa-table-columns', describe: (k) => 'Keep ' + short(k.cols) },
@@ -52,7 +49,6 @@
   S.describe = function (kind) { try { return (S.CATALOG[kind.type] || { describe: () => '' }).describe(kind); } catch (e) { return ''; } };
   S.icon = (type) => (S.CATALOG[type] || {}).icon || 'fa-gear';
 
-  /** Replace a column name everywhere a step references it (used by the "Use X instead" fix). */
   const NON_COLUMN_KEYS = new Set(['find', 'replace', 'value', 'name', 'sql', 'type', 'mode', 'op', 'agg', 'how', 'delimiter', 'sep', 'prefix', 'var', 'val', 'right', 'others', 'onError', 'locale', 'digits', 'positions', 'join']);
   const FORMULA_KEYS = new Set(['formula', 'when', 'then', 'else']);
   S.renameColumnInKind = function (kind, from, to) {
@@ -69,7 +65,6 @@
     return out;
   };
 
-  /* ================================ Python (Polars) code generation ================================ */
   const py = PQ.pyStr;
   const pyList = (a) => '[' + (a || []).map(py).join(', ') + ']';
   const pyVal = (v) => (v === null || v === undefined || v === '' ? 'None' : typeof v === 'number' ? String(v) : typeof v === 'boolean' ? (v ? 'True' : 'False') : !isNaN(+v) && String(v).trim() !== '' ? String(+v) : py(v));
@@ -238,7 +233,6 @@
     return pl.concat([header, df]).rename({c: f"Column{i + 1}" for i, c in enumerate(df.columns)}).lazy()`,
   };
 
-  /** Topological order of queries (dependencies first). Throws with a readable cycle path. */
   S.topo = function (project) {
     const byId = new Map(project.queries.map((q) => [q.id, q]));
     const deps = (q) => {
@@ -265,7 +259,6 @@
     return { order, deps };
   };
 
-  /** Whole project → runnable Polars Python script. */
   S.toPython = function (project, onlyQueryId) {
     const { order, deps } = S.topo(project);
     const byId = new Map(project.queries.map((q) => [q.id, q]));
@@ -322,9 +315,7 @@
     ].join('\n');
   };
 
-  /* ================================ Project file format ================================ */
   S.FORMAT_VERSION = 1;
-  /** Git-friendly layout: project.json + queries/<name>.json, pretty-printed with stable key order. */
   S.toFiles = function (project) {
     const files = {};
     const qfile = (q) => 'queries/' + PQ.snake(q.name) + '.json';
@@ -332,7 +323,6 @@
     project.queries.forEach((q) => { files[qfile(q)] = PQ.stableStringify(q, 2) + '\n'; });
     return files;
   };
-  /** Migrations run from day one: every future format change adds a step here. */
   S.migrate = function (p) {
     if (!p || typeof p !== 'object') throw new Error('Not a Floe project');
     if (!p.format_version) p.format_version = 1;

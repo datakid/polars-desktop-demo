@@ -1,5 +1,3 @@
-// Copies the Floe UI (repo root) into desktop/dist — the Tauri frontendDist.
-// Runs automatically before `tauri dev` / `tauri build`. Pure Node, no dependencies.
 import { cpSync, existsSync, mkdirSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

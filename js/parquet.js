@@ -103,7 +103,6 @@
     return null;
   }
 
-  /** Rows left after skipping pruned row groups. */
   const keptRows = (m, skip) => { if (!skip || !skip.length) return m.numRows; let s = m.numRows; for (const g of skip) s -= m.groups[g] || 0; return s; };
 
   async function readColumns(rec, m, cols, n, progress, skip) {
@@ -115,7 +114,6 @@
       const file = byteSource(rec, stats);
       const rawCols = cols.map((c) => m.rawOf.get(c));
       const byRaw = new Map(cols.map((c) => [m.rawOf.get(c), data.get(c)]));
-      // Plan: which row groups to read, where they start in the file and how many rows to take.
       const plan = [];
       let fileStart = 0, need = n;
       for (let g = 0; g < m.groups.length && need > 0; g++) {
@@ -267,12 +265,6 @@
   }
   IO.parquetProjection = projection;
 
-  /* ---------- Row-group pruning from Filter steps (full runs only) ----------
-   * A row group is skipped only when its column-chunk min/max statistics prove that no row can make
-   * a leading Filter return true. Only Filters preceded by column-only steps (select/remove/reorder) count,
-   * so the filtered result is identical to an unpruned run. Supported: = <> < <= > >= and `in` between a
-   * column and a constant (literal, parameter or constant expression), combined with and/or, on int,
-   * number, ASCII text and date columns. Anything else simply isn't used for pruning. */
   const PRUNE_PASS = new Set(['SelectColumns', 'RemoveColumns', 'ReorderColumns', 'RemoveOtherColumns']);
   const ascii = (s) => typeof s === 'string' && /^[\x00-\x7f]*$/.test(s);
   const statVal = (v) => (typeof v === 'bigint' ? Number(v) : typeof v === 'number' ? (Number.isNaN(v) ? undefined : v) : typeof v === 'string' || v instanceof Date ? v : undefined);
@@ -290,7 +282,6 @@
     return lo === undefined || hi === undefined ? null : { lo, hi, nulls, exact: !bytes, float: ch.meta_data.type === 'FLOAT' || ch.meta_data.type === 'DOUBLE' };
   }
 
-  /** Compare a constant with a statistic of the same kind; undefined when kinds don't match. */
   function kindCmp(t, a, b) {
     if (t === 'int' || t === 'number') return typeof a === 'number' && typeof b === 'number' && isFinite(a) ? a - b : undefined;
     if (t === 'text') return ascii(a) && ascii(b) ? (a < b ? -1 : a > b ? 1 : 0) : undefined;
@@ -310,7 +301,6 @@
       break;
     }
     if (!forms.length || m.groups.length < 2) return null;
-    // Timestamp / nested / untyped columns get their type from the values read; skipping rows could change it.
     for (const c of cols) {
       const el = m.el.get(c), t = floeType(el);
       if (!el || el.num_children || t === 'datetime' || t === 'any') return null;
@@ -320,7 +310,7 @@
     const params = (project && project.params) || [];
     const one = Table.fromRows(['__c'], [[null]], ['any']);
     const asts = [];
-    for (const f of forms) { try { asts.push({ src: f, ast: PQ.Formula.parse(f) }); } catch (e) { /* unparseable: no pruning from it */ } }
+    for (const f of forms) { try { asts.push({ src: f, ast: PQ.Formula.parse(f) }); } catch (e) { } }
     const ranges = new Map();
     const rangeOf = (name, g) => {
       const key = name + '\u0001' + g;
@@ -361,11 +351,11 @@
       if (cLo === undefined || cHi === undefined) return false;
       switch (op) {
         case '=': return cLo < 0 || cHi > 0;
-        case '<>': return cLo === 0 && cHi === 0 && r.nulls === 0 && r.exact && !r.float; // nulls (and NaN) pass <>
-        case '<': return cLo <= 0;   // every value >= min >= v
-        case '<=': return cLo < 0;   // every value >= min > v
-        case '>': return cHi >= 0;   // every value <= max <= v
-        case '>=': return cHi > 0;   // every value <= max < v
+        case '<>': return cLo === 0 && cHi === 0 && r.nulls === 0 && r.exact && !r.float;
+        case '<': return cLo <= 0;
+        case '<=': return cLo < 0;
+        case '>': return cHi >= 0;
+        case '>=': return cHi > 0;
       }
       return false;
     }
