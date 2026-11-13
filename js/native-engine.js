@@ -115,7 +115,14 @@
     }
     if (op === 'page') return { rows: await page(msg.resultId, msg.offset, msg.count) };
     if (op === 'profile') return inv('engine_call', { op: 'profile', args: { resultId: msg.resultId, col: msg.col } });
-    if (op === 'distinct') return inv('engine_call', { op: 'distinct', args: { resultId: msg.resultId, col: msg.col } });
+    if (op === 'distinct') {
+      return inv('engine_call', { op: 'distinct', args: { resultId: msg.resultId, col: msg.col } }).then((r) => {
+        const col = (schemas.get(msg.resultId) || []).find((c) => c.name === msg.col);
+        const label = (PQ.TYPES[col && col.type] || PQ.TYPES.any).label;
+        r.values.forEach((x) => { if (x.value && x.value.__err === true) x.value = { __err: 'Cannot convert to ' + label }; });
+        return r;
+      });
+    }
     throw new Error('Polars: unsupported op ' + op);
   };
 

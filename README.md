@@ -33,13 +33,14 @@
 - **Engine indicator** in the status bar: `● Built-in · 42 ms · Sample 1,000`. Click it (or press Enter on it) for engine, location, last run, data scope and, on desktop, why that engine ran. The dot shows idle, busy, starting or error. On phones it shrinks to the dot and engine name.
 - **Polars engine for desktop** (optional build, `--features polars-engine`):
   - `js/plan.js` lowers a query into a JSON plan, or refuses with a reason naming the step.
-  - `desktop/src-tauri/engine` (crate `floe-engine`, Polars 0.46, calamine, rust_xlsxwriter) executes the plan.
+  - `desktop/src-tauri/engine` (crate `floe-engine`, Polars 0.55, calamine, rust_xlsxwriter) executes the plan.
   - Pages come back as Arrow IPC. Exports are written straight to the chosen path.
   - Anything Polars can't run falls back to the built-in engine automatically, and the indicator shows `Built-in ↺` with the reason.
 - **Web ships no native-engine code.** `native-engine.js` is loaded only inside Tauri and is excluded from the web build.
 - Engine tests: 86 (8 new plan-lowering tests).
   - Rust: `engine/tests/plan.rs` (unit tests).
-  - `engine/tests/parity.rs` runs 22 shared cases generated from the built-in engine by `scripts/gen-fixtures.mjs` and requires Polars to give the same schema and rows.
+  - `engine/tests/parity.rs` runs 27 shared cases generated from the built-in engine by `scripts/gen-fixtures.mjs` and requires Polars to give the same schema and rows, including half-way rounding cases.
+  - `engine/tests/ops.rs` checks the column profile, distinct values, grid pages and exports against the built-in engine.
 - **Faster built-in engine:**
   - CSV parsing writes straight into columns (about −30%).
   - Pivot uses streaming accumulators (−60%).
@@ -197,7 +198,7 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 - Formula functions without a Polars mapping, such as `Text.Similarity`. Dialog previews also stay on built-in.
 
 **Known differences:**
-- Polars sorts text in plain character order, while the built-in engine uses natural, accent-insensitive order.
+- Polars sorts text in plain character order, while the built-in engine uses natural, accent-insensitive order. This also decides the minimum and maximum shown for text columns in the profile.
 - With Polars, per-step row counts show only for the selected step.
 - Division by zero gives null instead of a cell error.
 
