@@ -30,6 +30,19 @@ const INPUTS = {
   'de.csv': ['datum;betrag;menge', '03.04.2026;1.234,50;2', '15.04.2026;12,5;3', '01.05.2026;abc;1'].join('\n'),
   'report.csv': ['ACME report,,', 'generated,,', 'Region,Product,Units', 'EU,Widget,10', ',Gadget,5', 'US,Widget,7', ',Gadget,', 'APAC,Widget,3'].join('\n'),
   'tags.csv': ['id,tags,name', '1,"a, b, c",  Ana  ', '2,b,BEN', '3,,chloé martin'].join('\n'),
+  'halves.csv': [
+    'id,x,a,b',
+    '1,0.5,2025-01-01 12:00:00,2025-01-01 00:00:00',
+    '2,1.5,2025-01-01 00:00:00,2025-01-01 12:00:00',
+    '3,2.5,2025-01-03 12:00:00,2025-01-01 00:00:00',
+    '4,-0.5,2025-01-01 00:00:00,2025-01-03 12:00:00',
+    '5,-1.5,2025-01-02 00:00:00,2025-01-02 00:00:00',
+    '6,-2.5,2025-06-01 18:00:00,2025-06-01 06:00:00',
+    '7,0.125,2025-01-01 06:00:00,2025-01-01 18:00:00',
+    '8,0.375,,',
+    '9,0.625,2025-03-01 00:00:00,2025-03-01 00:00:00',
+    '10,0.875,2025-03-01 01:00:00,2025-03-01 00:00:00',
+  ].join('\n'),
 };
 
 const types = { type: 'ChangeType', onError: 'error', changes: [{ col: 'order_id', type: 'int' }, { col: 'order_date', type: 'date' }, { col: 'qty', type: 'int' }, { col: 'price', type: 'number' }, { col: 'discount', type: 'number' }] };
@@ -57,6 +70,11 @@ const CASES = [
   ['report: promote headers, fill down, remove blank', 'report.csv', [{ type: 'PromoteHeaders', row: 2 }, { type: 'FillDown', cols: ['Region'] }, { type: 'KeepRows', mode: 'remove_blank' }, { type: 'ChangeType', onError: 'error', changes: [{ col: 'Units', type: 'int' }] }], { header: false }],
   ['split, text transforms, merge columns', 'tags.csv', [{ type: 'TextTransform', op: 'trim', cols: ['name'] }, { type: 'TextTransform', op: 'lower', cols: ['name'] }, { type: 'SplitColumn', col: 'tags', mode: 'each', delimiter: ',', trim: true }, { type: 'MergeColumns', cols: ['tags.1', 'tags.2'], sep: '|', name: 'first2' }]],
   ['split into rows', 'tags.csv', [{ type: 'SplitColumn', col: 'tags', mode: 'rows', delimiter: ',', trim: true }]],
+  ['half-even Number.Round formulas', 'halves.csv', [{ type: 'ChangeType', onError: 'null', changes: [{ col: 'x', type: 'number' }] }, { type: 'AddColumn', name: 'r0', formula: 'Number.Round([x])' }, { type: 'AddColumn', name: 'r2', formula: 'Number.Round([x], 2)' }]],
+  ['int cast rounds half up', 'halves.csv', [{ type: 'ChangeType', onError: 'error', changes: [{ col: 'x', type: 'int' }] }]],
+  ['Round numbers step on halves', 'halves.csv', [{ type: 'ChangeType', onError: 'null', changes: [{ col: 'x', type: 'number' }] }, { type: 'RoundNumbers', cols: ['x'], digits: 1 }]],
+  ['Round numbers step to integers', 'halves.csv', [{ type: 'ChangeType', onError: 'null', changes: [{ col: 'x', type: 'number' }] }, { type: 'RoundNumbers', cols: ['x'], digits: 0 }]],
+  ['datetime difference rounds half up', 'halves.csv', [{ type: 'ChangeType', onError: 'null', changes: [{ col: 'a', type: 'datetime' }, { col: 'b', type: 'datetime' }] }, { type: 'AddColumn', name: 'days', formula: '[a] - [b]' }]],
   ['append diagonal', 'orders.csv', [{ type: 'SelectColumns', cols: ['customer_id', 'region'] }, { type: 'Append', others: ['customers'], mode: 'diagonal' }]],
 ];
 
