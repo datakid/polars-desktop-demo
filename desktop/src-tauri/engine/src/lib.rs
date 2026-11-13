@@ -326,12 +326,23 @@ pub fn distinct(id: &str, name: &str) -> R<Value> {
     let df = get(id)?;
     let c = df.column(name).s()?.as_materialized_series().clone();
     let ty = floe_type(c.dtype());
+    let flags = df.column(&format!("{ERR_PREFIX}{name}")).ok().and_then(|e| e.bool().ok().cloned());
+    let (c, errors) = match &flags {
+        Some(mask) => {
+            let keep: BooleanChunked = mask.iter().map(|v| Some(v != Some(true))).collect();
+            (c.filter(&keep).s()?, mask.sum().unwrap_or(0) as usize)
+        }
+        None => (c, 0),
+    };
     let counts = c.value_counts(false, false, "count".into(), false).s()?;
     let counts = counts.sort([name], SortMultipleOptions::default().with_nulls_last(true)).s()?;
     let vals = counts.column(name).s()?;
     let cnt = counts.column("count").s()?.cast(&DataType::Int64).s()?;
     let cnt = cnt.i64().s()?;
-    let out: Vec<Value> = (0..counts.height().min(1000)).map(|i| json!({ "value": date_wrap(wire(vals.get(i).unwrap_or(AnyValue::Null)), ty), "count": cnt.get(i).unwrap_or(0) })).collect();
+    let mut out: Vec<Value> = (0..counts.height().min(1000)).map(|i| json!({ "value": date_wrap(wire(vals.get(i).unwrap_or(AnyValue::Null)), ty), "count": cnt.get(i).unwrap_or(0) })).collect();
+    if errors > 0 {
+        out.push(json!({ "value": { "__err": true }, "count": errors }));
+    }
     Ok(json!({ "values": out }))
 }
 

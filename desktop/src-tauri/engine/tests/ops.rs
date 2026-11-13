@@ -20,6 +20,7 @@ fn rewrite_paths(v: &mut Value, dir: &str) {
 fn norm(v: &Value) -> Value {
     match v {
         Value::Object(o) if o.len() == 1 && o.contains_key("__date") => json!({ "d": o["__date"] }),
+        Value::Object(o) if o.contains_key("__err") => json!({ "__err": "*" }),
         Value::Object(o) => Value::Object(o.iter().map(|(k, x)| (k.clone(), norm(x))).collect()),
         Value::Array(a) => Value::Array(a.iter().map(norm).collect()),
         other => other.clone(),
@@ -120,7 +121,7 @@ fn profile_and_distinct_match_builtin() {
                         out.sort();
                         out
                     };
-                    if pairs(&norm(&v["values"])) != pairs(exp) {
+                    if pairs(&norm(&v["values"])) != pairs(&norm(exp)) {
                         failures.push(format!("{name} / {col}: distinct got {} expected {}", v["values"], exp));
                     }
                 }
