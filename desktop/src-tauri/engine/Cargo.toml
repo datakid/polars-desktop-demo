@@ -9,7 +9,7 @@ description = "Floe Polars engine: executes JSON query plans produced by js/plan
 path = "src/lib.rs"
 
 [dependencies]
-polars = { version = "=0.46.0", features = [
+polars = { version = "=0.55.2", features = [
   "lazy", "csv", "parquet", "ipc", "strings", "regex", "temporal",
   "dtype-date", "dtype-datetime", "dtype-struct", "is_in", "cum_agg", "rank",
   "round_series", "rolling_window", "concat_str", "diagonal_concat", "cross_join",

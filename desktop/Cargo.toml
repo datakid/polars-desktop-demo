@@ -18,7 +18,7 @@ license = "MIT OR Apache-2.0"
 rust-version = "1.80"
 
 [workspace.dependencies]
-polars = { version = "=0.46.0", default-features = false, features = [
+polars = { version = "=0.55.2", default-features = false, features = [
     "lazy", "csv", "parquet", "ipc", "json", "strings", "temporal", "dtype-date", "dtype-datetime",
     "dtype-struct", "is_in", "pivot", "cum_agg", "rank", "round_series", "concat_str", "diagonal_concat",
     "sql", "streaming", "cross_join", "semi_anti_join", "fmt", "is_unique", "dtype-decimal", "dtype-categorical",
