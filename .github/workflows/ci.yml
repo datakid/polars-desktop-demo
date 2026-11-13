@@ -67,14 +67,7 @@ jobs:
         run: node scripts/gen-fixtures.mjs
 
       - name: Run engine tests
-        shell: bash
-        env:
-          CARGO_TERM_COLOR: never
-        run: |
-          cargo test --locked --message-format=short --manifest-path desktop/src-tauri/engine/Cargo.toml -- --nocapture > engine.log 2>&1 && { msg=$(grep -E 'parity:|ops:|test result|running' engine.log | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g'); echo "::notice title=engine-log::$msg"; exit 0; }
-          msg=$(grep -E -A30 'error|panicked|FAILED|mismatch' engine.log | head -400 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
-          echo "::error title=engine-log::$msg"
-          exit 1
+        run: cargo test --locked --manifest-path desktop/src-tauri/engine/Cargo.toml
 
   desktop:
     name: Windows installer (${{ matrix.variant }})
