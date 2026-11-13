@@ -71,8 +71,8 @@ jobs:
         env:
           CARGO_TERM_COLOR: never
         run: |
-          cargo test --locked --manifest-path desktop/src-tauri/engine/Cargo.toml > engine.log 2>&1 && { tail -40 engine.log; exit 0; }
-          msg=$(grep -E -A9 '^(error|warning: unused)|panicked|FAILED|mismatch' engine.log | head -220 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+          cargo test --locked --message-format=short --manifest-path desktop/src-tauri/engine/Cargo.toml > engine.log 2>&1 && { tail -40 engine.log; exit 0; }
+          msg=$(grep -E 'error|panicked|FAILED|mismatch' engine.log | head -400 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
           echo "::error title=engine-log::$msg"
           exit 1
 
