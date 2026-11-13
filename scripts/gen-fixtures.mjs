@@ -85,6 +85,12 @@ function wire(v) {
   return v;
 }
 
+function deepWire(v) {
+  if (Array.isArray(v)) return v.map(deepWire);
+  if (v && typeof v === 'object' && Object.prototype.toString.call(v) !== '[object Date]' && !PQ.isErr(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deepWire(x)]));
+  return wire(v);
+}
+
 const files = {};
 for (const [name, text] of Object.entries(INPUTS)) {
   const buf = new TextEncoder().encode(text).buffer;
@@ -104,7 +110,13 @@ for (const [label, input, steps, csv] of CASES) {
   if (!r.table) throw new Error(label + ': built-in failed at step ' + (r.failedAt + 1) + ': ' + r.states[r.failedAt].error);
   const low = PQ.Plan.lower(project, 'q', { files });
   if (!low.ok) { refused++; console.warn('refused:', label, '—', low.reason); continue; }
-  fixtures.push({ name: label, plan: low.plan, expected: { n: r.table.n, schema: r.table.schema(), rows: r.table.toRows(200).map((row) => row.map(wire)) } });
+  const names = r.table.schema().map((c) => c.name);
+  const profiles = {}, distinct = {};
+  for (const c of names) {
+    profiles[c] = deepWire(E.profile(r.table, c));
+    distinct[c] = deepWire(E.distinctValues(r.table, c, 1000));
+  }
+  fixtures.push({ name: label, plan: low.plan, expected: { n: r.table.n, schema: r.table.schema(), rows: r.table.toRows(200).map((row) => row.map(wire)), profiles, distinct } });
 }
 
 mkdirSync(dirname(out), { recursive: true });
