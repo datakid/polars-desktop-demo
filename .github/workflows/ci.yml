@@ -67,7 +67,12 @@ jobs:
         run: node scripts/gen-fixtures.mjs
 
       - name: Run engine tests
-        run: cargo test --locked --manifest-path desktop/src-tauri/engine/Cargo.toml
+        shell: bash
+        run: |
+          cargo test --locked --manifest-path desktop/src-tauri/engine/Cargo.toml > engine.log 2>&1 && { tail -40 engine.log; exit 0; }
+          msg=$(grep -E -A9 '^(error|warning: unused)|panicked|FAILED|mismatch' engine.log | head -220 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::error title=engine-log::$msg"
+          exit 1
 
   desktop:
     name: Windows installer (${{ matrix.variant }})
