@@ -286,7 +286,7 @@ pub fn write_xlsx(df: &DataFrame, path: &str, sheet: &str) -> R<()> {
         let dt = s.dtype().clone();
         match dt {
             DataType::Boolean => {
-                for (i, v) in s.bool().s()?.into_iter().enumerate() {
+                for (i, v) in s.bool().s()?.iter().enumerate() {
                     if let Some(b) = v {
                         ws.write_boolean(i as u32 + 1, c16, b).map_err(e)?;
                     }
@@ -295,7 +295,7 @@ pub fn write_xlsx(df: &DataFrame, path: &str, sheet: &str) -> R<()> {
             DataType::Date | DataType::Datetime(_, _) => {
                 let ms = s.cast(&DataType::Datetime(TimeUnit::Milliseconds, None)).s()?.cast(&DataType::Int64).s()?;
                 let f = if dt == DataType::Date { &fd } else { &fdt };
-                for (i, v) in ms.i64().s()?.into_iter().enumerate() {
+                for (i, v) in ms.i64().s()?.iter().enumerate() {
                     if let Some(x) = v {
                         ws.write_number_with_format(i as u32 + 1, c16, x as f64 / DAY as f64 + 25569.0, f).map_err(e)?;
                     }
@@ -304,7 +304,7 @@ pub fn write_xlsx(df: &DataFrame, path: &str, sheet: &str) -> R<()> {
             ref d if is_num(d) => {
                 let int = is_int(d);
                 let f = s.cast(&DataType::Float64).s()?;
-                for (i, v) in f.f64().s()?.into_iter().enumerate() {
+                for (i, v) in f.f64().s()?.iter().enumerate() {
                     if let Some(x) = v {
                         if int {
                             ws.write_number(i as u32 + 1, c16, x).map_err(e)?;
@@ -316,7 +316,7 @@ pub fn write_xlsx(df: &DataFrame, path: &str, sheet: &str) -> R<()> {
             }
             _ => {
                 let t = s.cast(&DataType::String).s()?;
-                for (i, v) in t.str().s()?.into_iter().enumerate() {
+                for (i, v) in t.str().s()?.iter().enumerate() {
                     if let Some(x) = v {
                         ws.write_string(i as u32 + 1, c16, x).map_err(e)?;
                     }

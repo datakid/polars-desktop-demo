@@ -544,7 +544,7 @@ fn split(mut lf: LazyFrame, op: &Value, s: &Schema) -> R<LazyFrame> {
     let fin = |e: Expr| if tr { trim(e) } else { e };
     let mode = st(op, "mode");
     if mode == "rows" {
-        return Ok(lf.with_column(src.str().split(lit(d.as_str())).alias(c.as_str())).explode([col(c.as_str())]).with_column(fin(col(c.as_str())).alias(c.as_str())));
+        return Ok(lf.with_column(src.str().split(lit(d.as_str())).alias(c.as_str())).explode(by_name([c.as_str()], true, false), ExplodeOptions { empty_as_null: true, keep_nulls: true }).with_column(fin(col(c.as_str())).alias(c.as_str())));
     }
     let names = visible(s);
     let pieces: Vec<Expr> = if mode == "first" || mode == "last" {
