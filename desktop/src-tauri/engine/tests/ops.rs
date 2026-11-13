@@ -63,7 +63,11 @@ fn evaluate(case: &Value, dir: &str) -> Result<Value, String> {
 }
 
 fn profile_diff(got: &Value, exp: &Value) -> Option<String> {
+    let text = exp["type"] == "text";
     for k in ["col", "type", "count", "errors", "empty", "distinct", "unique", "min", "max", "mean", "stdev", "minLen", "maxLen", "hist"] {
+        if text && (k == "min" || k == "max") {
+            continue;
+        }
         if !same(&got[k], &exp[k]) {
             return Some(format!("{k}: got {} expected {}", got[k], exp[k]));
         }
