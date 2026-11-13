@@ -64,7 +64,7 @@ fn place_after(names: &mut Vec<String>, new: &str, after: Option<usize>) {
 
 pub fn cast_expr(e: Expr, from: &DataType, to: &str, locale: &str) -> Expr {
     let k = kind_of(from);
-    let serial = |e: Expr| ((e.cast(DataType::Float64) - lit(25569.0)) * lit(DAY)).round(0).cast(DataType::Int64).cast(ms_dt());
+    let serial = |e: Expr| ((e.cast(DataType::Float64) - lit(25569.0)) * lit(DAY)).round(0, RoundMode::HalfAwayFromZero).cast(DataType::Int64).cast(ms_dt());
     match to {
         "text" => text_of(e, k),
         "number" | "int" => {
@@ -73,7 +73,7 @@ pub fn cast_expr(e: Expr, from: &DataType, to: &str, locale: &str) -> Expr {
                 K::Date | K::Dt | K::Null => null_of(&DataType::Float64),
                 _ => num_from_text(e.cast(DataType::String), locale),
             };
-            if to == "int" { x.round(0).cast(DataType::Int64) } else { x.cast(DataType::Float64) }
+            if to == "int" { (x + lit(0.5)).floor().cast(DataType::Int64) } else { x.cast(DataType::Float64) }
         }
         "bool" => match k {
             K::Bool => e,
@@ -262,7 +262,7 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
             let n = op["n"].as_u64().unwrap_or(0);
             let off = op["offset"].as_u64().unwrap_or(0);
             let idx = || col("__i").cast(DataType::Int64);
-            let with_i = |lf: LazyFrame, f: Expr| lf.with_row_index("__i", None).filter(f).select([col("*").exclude(["__i"])]);
+            let with_i = |lf: LazyFrame, f: Expr| lf.with_row_index("__i", None).filter(f).drop(by_name(["__i"], true, false));
             Ok(match op["mode"].as_str().unwrap_or("top") {
                 "top" => lf.limit(n as IdxSize),
                 "bottom" => lf.tail(n as IdxSize),
@@ -290,16 +290,17 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
             if row >= df.height() {
                 return Err(format!("Row {} does not exist (table has {} rows)", row + 1, df.height()));
             }
-            let new = uniquify(df.get_columns().iter().map(|c| fmt_any(c.get(row).unwrap_or(AnyValue::Null))).collect());
+            let new = uniquify(df.columns().iter().map(|c| fmt_any(c.get(row).unwrap_or(AnyValue::Null))).collect());
             let mut body = df.slice(row as i64 + 1, usize::MAX);
-            body.set_column_names(new.iter().map(|x| x.as_str())).s()?;
+            let new_names: Vec<&str> = new.iter().map(|x| x.as_str()).collect();
+            body.set_column_names(&new_names).s()?;
             Ok(body.lazy())
         }
         "fill" => {
             let cols = strs(&op["cols"]);
             need(&s, &cols)?;
             let down = op["dir"] == "down";
-            Ok(lf.with_columns(cols.iter().map(|c| if down { col(c.as_str()).forward_fill(None) } else { col(c.as_str()).backward_fill(None) }).collect::<Vec<_>>()))
+            Ok(lf.with_columns(cols.iter().map(|c| if down { col(c.as_str()).fill_null_with_strategy(FillNullStrategy::Forward(None)) } else { col(c.as_str()).fill_null_with_strategy(FillNullStrategy::Backward(None)) }).collect::<Vec<_>>()))
         }
         "replace" => {
             let cols = strs(&op["cols"]);
@@ -388,7 +389,7 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
             Ok(lf.with_columns(
                 cols.iter()
                     .filter(|c| crate::is_num(s.get(c.as_str()).unwrap()))
-                    .map(|c| { let r = col(c.as_str()).cast(DataType::Float64).round(d); if d == 0 { r.cast(DataType::Int64) } else { r } }.alias(c.as_str()))
+                    .map(|c| { let x = col(c.as_str()).cast(DataType::Float64); let f = 10f64.powi(d as i32); let r = (x * lit(f) + lit(0.5)).floor() / lit(f); if d == 0 { r.cast(DataType::Int64) } else { r } }.alias(c.as_str()))
                     .collect::<Vec<_>>(),
             ))
         }
@@ -506,7 +507,7 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
             if op["dropNulls"].as_bool().unwrap_or(true) {
                 out = out.filter(col(val.as_str()).is_not_null());
             }
-            Ok(out.sort(["__r", "__j"], SortMultipleOptions::default()).select([col("*").exclude(["__r", "__j"])]))
+            Ok(out.sort(["__r", "__j"], SortMultipleOptions::default()).drop(by_name(["__r", "__j"], true, false)))
         }
         "pivot" => pivot(lf, op, &s),
         "join" => join(lf, op, &s, cx),
@@ -589,7 +590,7 @@ fn pivot(lf: LazyFrame, op: &Value, s: &Schema) -> R<LazyFrame> {
     need(s, &index)?;
     let key = text_of(col(on.as_str()), kind_of(&on_dt));
     let df = lf.clone().select([key.clone().unique_stable().alias("__k")]).collect().s()?;
-    let keys: Vec<Option<String>> = df.column("__k").s()?.str().s()?.into_iter().map(|x| x.map(String::from)).collect();
+    let keys: Vec<Option<String>> = df.column("__k").s()?.str().s()?.iter().map(|x| x.map(String::from)).collect();
     if keys.len() > 500 {
         return Err(format!("Pivot would create {} columns (limit 500). Filter or group `{on}` first.", keys.len()));
     }
@@ -712,7 +713,7 @@ fn window(lf: LazyFrame, op: &Value, s: &Schema) -> R<LazyFrame> {
         o => return Err(format!("Unknown window operation {o}")),
     };
     if !part.is_empty() {
-        e = e.over(part.iter().map(|p| col(p.as_str())).collect::<Vec<_>>());
+        e = e.over(part.iter().map(|p| col(p.as_str())).collect::<Vec<_>>()).s()?;
     }
     let name = unique_name(&st(op, "name"), &visible(s).into_iter().collect());
     let mut lf = lf.with_row_index("__i", None);
@@ -720,5 +721,5 @@ fn window(lf: LazyFrame, op: &Value, s: &Schema) -> R<LazyFrame> {
         dtype(s, ob)?;
         lf = lf.sort([ob], SortMultipleOptions::default().with_order_descending(op["desc"].as_bool().unwrap_or(false)).with_nulls_last(true).with_maintain_order(true));
     }
-    Ok(lf.with_column(e.alias(name.as_str())).sort(["__i"], SortMultipleOptions::default()).select([col("*").exclude(["__i"])]))
+    Ok(lf.with_column(e.alias(name.as_str())).sort(["__i"], SortMultipleOptions::default()).drop(by_name(["__i"], true, false)))
 }

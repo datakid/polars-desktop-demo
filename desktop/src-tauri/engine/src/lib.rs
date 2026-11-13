@@ -162,7 +162,7 @@ fn quality(df: &DataFrame) -> Vec<Value> {
             let err = df.column(&format!("{ERR_PREFIX}{name}")).ok().and_then(|e| e.bool().ok().map(|b| b.sum().unwrap_or(0) as usize)).unwrap_or(0);
             let mut empty = c.null_count().saturating_sub(err);
             if let Ok(s) = c.str() {
-                empty += s.into_iter().filter(|v| matches!(v, Some(""))).count();
+                empty += s.iter().filter(|v| matches!(v, Some(""))).count();
             }
             json!({ "valid": n.saturating_sub(err + empty), "error": err, "empty": empty })
         })
@@ -206,7 +206,7 @@ pub fn page(id: &str, offset: usize, count: usize) -> R<Vec<u8>> {
     let df = get(id)?;
     let mut part = df.slice(offset as i64, count);
     let cols: Vec<Column> = part
-        .get_columns()
+        .columns()
         .iter()
         .map(|c| match c.dtype() {
             DataType::Date => c.cast(&DataType::Datetime(TimeUnit::Milliseconds, None)).unwrap_or_else(|_| c.clone()),
@@ -216,7 +216,7 @@ pub fn page(id: &str, offset: usize, count: usize) -> R<Vec<u8>> {
             _ => c.clone(),
         })
         .collect();
-    part = DataFrame::new(cols).s()?;
+    part = DataFrame::new_infer_height(cols).s()?;
     let mut buf = Vec::new();
     IpcStreamWriter::new(&mut buf).with_compat_level(CompatLevel::oldest()).finish(&mut part).s()?;
     Ok(buf)
@@ -278,8 +278,8 @@ pub fn profile(id: &str, name: &str) -> R<Value> {
     let mut min_len = None;
     let mut max_len = None;
     if let Ok(s) = non_null.str() {
-        empty += s.into_iter().filter(|v| matches!(v, Some(""))).count();
-        let lens: Vec<usize> = s.into_iter().flatten().map(|x| x.chars().count()).collect();
+        empty += s.iter().filter(|v| matches!(v, Some(""))).count();
+        let lens: Vec<usize> = s.iter().flatten().map(|x| x.chars().count()).collect();
         min_len = lens.iter().min().copied();
         max_len = lens.iter().max().copied();
     }
@@ -287,7 +287,7 @@ pub fn profile(id: &str, name: &str) -> R<Value> {
     let distinct = counts.height();
     let cnt = counts.column("count").s()?.cast(&DataType::Int64).s()?;
     let cnt = cnt.i64().s()?;
-    let unique = cnt.into_iter().filter(|x| *x == Some(1)).count();
+    let unique = cnt.iter().filter(|x| *x == Some(1)).count();
     let vals = counts.column(name).s()?;
     let top: Vec<Value> = (0..distinct.min(12)).map(|i| json!({ "value": date_wrap(wire(vals.get(i).unwrap_or(AnyValue::Null)), ty), "count": cnt.get(i).unwrap_or(0) })).collect();
     let (mut mean, mut stdev, mut hist) = (Value::Null, Value::Null, Value::Null);
@@ -300,7 +300,7 @@ pub fn profile(id: &str, name: &str) -> R<Value> {
     if is_num(c.dtype()) {
         let f = non_null.cast(&DataType::Float64).s()?;
         let f = f.f64().s()?;
-        let v: Vec<f64> = f.into_iter().flatten().collect();
+        let v: Vec<f64> = f.iter().flatten().collect();
         if !v.is_empty() {
             let m = v.iter().sum::<f64>() / v.len() as f64;
             mean = json!(m);

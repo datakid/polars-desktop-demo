@@ -319,7 +319,7 @@ fn bin(n: &Value, cx: &Cx) -> R<(Expr, K)> {
         }
         "-" if matches!(a.1, K::Date | K::Dt) && matches!(b.1, K::Date | K::Dt) => {
             let to_ms = |e: Expr| e.cast(DataType::Datetime(TimeUnit::Milliseconds, None)).cast(DataType::Int64).cast(DataType::Float64);
-            (((to_ms(a.0) - to_ms(b.0)) / lit(DAY_MS as f64)).round(0).cast(DataType::Int64), K::Num)
+            (((to_ms(a.0) - to_ms(b.0)) / lit(DAY_MS as f64) + lit(0.5)).floor().cast(DataType::Int64), K::Num)
         }
         _ => {
             let x = num_of(a.0, a.1, cx.locale);
@@ -419,13 +419,13 @@ fn call(n: &Value, cx: &Cx) -> R<(Expr, K)> {
                 ' '
             };
             let e = t(0)?;
-            (if f == "Text.PadStart" { e.str().pad_start(width, fill) } else { e.str().pad_end(width, fill) }, K::Text)
+            (if f == "Text.PadStart" { e.str().pad_start(lit(width as u64), fill) } else { e.str().pad_end(lit(width as u64), fill) }, K::Text)
         }
         "Text.RegexMatch" => (t(0)?.str().contains(t(1)?, false), K::Bool),
         "Text.RegexReplace" => (t(0)?.str().replace_all(t(1)?, t(2)?, false), K::Text),
         "Number.Round" => {
             let d = if raw.len() > 1 { int_arg(n, 1, &f)?.max(0) as u32 } else { 0 };
-            (num(0)?.cast(DataType::Float64).round(d), K::Num)
+            (num(0)?.cast(DataType::Float64).round(d, RoundMode::HalfToEven), K::Num)
         }
         "Number.RoundUp" => (i64e(num(0)?.cast(DataType::Float64).ceil()), K::Num),
         "Number.RoundDown" => (i64e(num(0)?.cast(DataType::Float64).floor()), K::Num),

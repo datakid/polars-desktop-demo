@@ -48,7 +48,7 @@ pub fn read(src: &Value, first: Option<&Value>, cx: &mut Ctx) -> R<(LazyFrame, b
         "csv" => {
             let d = src["delimiter"].as_str().and_then(|s| s.bytes().next()).unwrap_or_else(|| sniff(path));
             let header = src["header"].as_bool().unwrap_or(true);
-            let mut r = LazyCsvReader::new(path)
+            let mut r = LazyCsvReader::new(PlRefPath::new(path))
                 .with_separator(d)
                 .with_has_header(header)
                 .with_infer_schema_length(Some(0))
@@ -66,8 +66,8 @@ pub fn read(src: &Value, first: Option<&Value>, cx: &mut Ctx) -> R<(LazyFrame, b
             }
             Ok((limit(lf, cx)?, false))
         }
-        "parquet" => Ok((limit(LazyFrame::scan_parquet(path, ScanArgsParquet::default()).map_err(|e| format!("{path}: {e}"))?, cx)?, false)),
-        "ipc" => Ok((limit(LazyFrame::scan_ipc(path, ScanArgsIpc::default()).map_err(|e| format!("{path}: {e}"))?, cx)?, false)),
+        "parquet" => Ok((limit(LazyFrame::scan_parquet(PlRefPath::new(path), ScanArgsParquet::default()).map_err(|e| format!("{path}: {e}"))?, cx)?, false)),
+        "ipc" => Ok((limit(LazyFrame::scan_ipc(PlRefPath::new(path), IpcScanOptions::default(), UnifiedScanArgs::default()).map_err(|e| format!("{path}: {e}"))?, cx)?, false)),
         "excel" => {
             let header = first.filter(|o| o["op"] == "promoteHeaders").map(|o| o["row"].as_u64().unwrap_or(0) as usize);
             Ok((excel(src, header, cx)?, header.is_some()))
@@ -83,7 +83,7 @@ pub fn read(src: &Value, first: Option<&Value>, cx: &mut Ctx) -> R<(LazyFrame, b
                     Series::new(n.as_str().into(), v).into_column()
                 })
                 .collect();
-            Ok((DataFrame::new(cols).s()?.lazy(), false))
+            Ok((DataFrame::new_infer_height(cols).s()?.lazy(), false))
         }
         "query" => Ok((crate::build(&src["plan"], cx)?, false)),
         k => Err(format!("Unsupported source {k}")),
@@ -262,7 +262,7 @@ fn excel(src: &Value, header: Option<usize>, cx: &mut Ctx) -> R<LazyFrame> {
             to_column(n, &vals)
         })
         .collect();
-    Ok(DataFrame::new(cols?).s()?.lazy())
+    Ok(DataFrame::new_infer_height(cols?).s()?.lazy())
 }
 
 pub fn write_xlsx(df: &DataFrame, path: &str, sheet: &str) -> R<()> {
@@ -279,7 +279,7 @@ pub fn write_xlsx(df: &DataFrame, path: &str, sheet: &str) -> R<()> {
     let fd = Format::new().set_num_format("yyyy-mm-dd");
     let fdt = Format::new().set_num_format("yyyy-mm-dd hh:mm:ss");
     let fnum = Format::new().set_num_format("#,##0.00");
-    for (c, column) in df.get_columns().iter().enumerate() {
+    for (c, column) in df.columns().iter().enumerate() {
         let c16 = c as u16;
         ws.write_string_with_format(0, c16, column.name().as_str(), &bold).map_err(e)?;
         let s = column.as_materialized_series();
