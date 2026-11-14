@@ -121,6 +121,17 @@
   };
   E.filterFormula = (s) => (s.mode === 'builder' ? E.builderToFormula(s.builder) : s.formula || 'true');
 
+  function sampleVariance(vals) {
+    const a = vals.filter((v) => typeof v === 'number');
+    if (a.length < 2) return null;
+    let mean = 0;
+    for (const v of a) mean += v;
+    mean /= a.length;
+    let ss = 0;
+    for (const v of a) ss += (v - mean) * (v - mean);
+    return ss / (a.length - 1);
+  }
+
   const AGG = {
     count_rows: { label: 'Count rows', type: () => 'int', fn: (vals) => vals.length },
     count: { label: 'Count (non-empty)', type: () => 'int', fn: (vals) => vals.filter((v) => v !== null && !isErr(v)).length },
@@ -128,6 +139,8 @@
     sum: { label: 'Sum', type: (t) => (t === 'int' ? 'int' : 'number'), fn: (vals) => { let s = 0, any = false; for (const v of vals) if (typeof v === 'number') { s += v; any = true; } return any ? s : null; } },
     mean: { label: 'Average', type: () => 'number', fn: (vals) => { let s = 0, n = 0; for (const v of vals) if (typeof v === 'number') { s += v; n++; } return n ? s / n : null; } },
     median: { label: 'Median', type: () => 'number', fn: (vals) => { const a = vals.filter((v) => typeof v === 'number').sort((x, y) => x - y); if (!a.length) return null; const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; } },
+    std: { label: 'Std deviation', type: () => 'number', fn: (vals) => { const v = sampleVariance(vals); return v === null ? null : Math.sqrt(v); } },
+    var: { label: 'Variance', type: () => 'number', fn: (vals) => sampleVariance(vals) },
     min: { label: 'Min', type: (t) => t, fn: (vals) => { let m = null; for (const v of vals) if (v !== null && !isErr(v) && (m === null || compareValues(v, m) < 0)) m = v; return m; } },
     max: { label: 'Max', type: (t) => t, fn: (vals) => { let m = null; for (const v of vals) if (v !== null && !isErr(v) && (m === null || compareValues(v, m) > 0)) m = v; return m; } },
     first: { label: 'First', type: (t) => t, fn: (vals) => (vals.length ? vals[0] : null) },
@@ -667,6 +680,19 @@
           sorted.forEach((r, i) => { if (i === 0 || compareValues(src[r], prev) !== 0) rank = i + 1; prev = src[r]; out[r] = rank; });
           break;
         }
+        case 'dense_rank': {
+          const nul = (v) => v === null || v === undefined || isErr(v);
+          const sorted = g.slice().sort((a, b) => (nul(src[a]) || nul(src[b]) ? nul(src[a]) - nul(src[b]) : compareValues(src[b], src[a], true)));
+          let rank = 0, prev;
+          sorted.forEach((r, i) => { if (i === 0 || compareValues(src[r], prev) !== 0) rank++; prev = src[r]; out[r] = rank; });
+          break;
+        }
+        case 'diff': g.forEach((r, i) => { const cur = src[r], before = i ? src[g[i - 1]] : null; out[r] = typeof cur === 'number' && typeof before === 'number' ? cur - before : null; }); break;
+        case 'cummax': case 'cummin': {
+          let acc = null;
+          for (const r of g) { const v = src[r]; if (typeof v === 'number' && (acc === null || (s.op === 'cummax' ? v > acc : v < acc))) acc = v; out[r] = acc; }
+          break;
+        }
         case 'lag': g.forEach((r, i) => (out[r] = i - n >= 0 ? src[g[i - n]] : null)); break;
         case 'lead': g.forEach((r, i) => (out[r] = i + n < g.length ? src[g[i + n]] : null)); break;
         case 'pct_of_total': { let tot = 0; for (const r of g) if (typeof src[r] === 'number') tot += src[r]; for (const r of g) out[r] = typeof src[r] === 'number' && tot ? src[r] / tot : null; break; }
@@ -674,7 +700,7 @@
         default: throw new StepError('Unknown window operation ' + s.op);
       }
     }
-    const typ = s.op === 'row_number' || s.op === 'rank' ? 'int' : s.op === 'lag' || s.op === 'lead' ? t.type(s.col) : 'number';
+    const typ = s.op === 'row_number' || s.op === 'rank' || s.op === 'dense_rank' ? 'int' : s.op === 'lag' || s.op === 'lead' ? t.type(s.col) : 'number';
     return t.withColumn(PQ.uniqueName(s.name || s.op, t.names), typ, out);
   };
 

@@ -84,6 +84,9 @@ const CASES = [
   ['text repeat', 'tags.csv', [{ type: 'AddColumn', name: 'r2', formula: 'Text.Repeat([name], 2)' }, { type: 'AddColumn', name: 'r0', formula: 'Text.Repeat([name], 0)' }, { type: 'AddColumn', name: 'r3', formula: 'Text.Repeat([tags], 3)' }, { type: 'AddColumn', name: 'rf', formula: 'Text.Repeat([name], 2.5)' }]],
   ['split by positions', 'tags.csv', [{ type: 'SplitColumn', col: 'name', mode: 'positions', positions: '0, 3, 5', trim: true }]],
   ['split by positions with nulls and untrimmed pieces', 'tags.csv', [{ type: 'SplitColumn', col: 'tags', mode: 'positions', positions: '3, 0', trim: false }]],
+  ['group by std and var', 'orders.csv', [types, { type: 'GroupBy', keys: ['region'], aggs: [{ fn: 'count_rows', name: 'n' }, { fn: 'std', col: 'qty', name: 'sd_qty' }, { fn: 'var', col: 'qty', name: 'var_qty' }, { fn: 'std', col: 'discount', name: 'sd_disc' }] }]],
+  ['std and var over the whole table', 'orders.csv', [types, { type: 'GroupBy', keys: [], aggs: [{ fn: 'std', col: 'qty', name: 'sd' }, { fn: 'var', col: 'discount', name: 'vr' }, { fn: 'std', col: 'price', name: 'sd_price' }] }]],
+  ['window rank, dense rank, change and running extremes', 'orders.csv', [types, { type: 'Window', op: 'rank', col: 'discount', partition: ['region'], name: 'rk' }, { type: 'Window', op: 'dense_rank', col: 'discount', partition: ['region'], name: 'drk' }, { type: 'Window', op: 'dense_rank', col: 'qty', name: 'drq' }, { type: 'Window', op: 'diff', col: 'qty', partition: ['region'], orderBy: 'order_date', name: 'chg' }, { type: 'Window', op: 'cummax', col: 'qty', partition: ['region'], orderBy: 'order_date', name: 'hi' }, { type: 'Window', op: 'cummin', col: 'discount', orderBy: 'order_date', desc: true, name: 'lo' }]],
   ['append diagonal', 'orders.csv', [{ type: 'SelectColumns', cols: ['customer_id', 'region'] }, { type: 'Append', others: ['customers'], mode: 'diagonal' }]],
 ];
 
