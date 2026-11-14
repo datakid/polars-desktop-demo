@@ -2,7 +2,7 @@
   const PQ = self.PQ;
   const Plan = (PQ.Plan = { VERSION: 1 });
 
-  const FUNCS = new Set(['Text.Upper', 'Text.Lower', 'Text.Trim', 'Text.Length', 'Text.Start', 'Text.End', 'Text.Middle', 'Text.Contains', 'Text.StartsWith', 'Text.EndsWith', 'Text.Replace', 'Text.From', 'Text.Combine', 'Text.PadStart', 'Text.PadEnd', 'Text.RegexMatch', 'Text.RegexReplace', 'Number.Round', 'Number.RoundUp', 'Number.RoundDown', 'Number.Abs', 'Number.Mod', 'Number.Power', 'Number.Sqrt', 'Number.From', 'Date.Year', 'Date.Month', 'Date.Day', 'Date.Quarter', 'Date.DayOfWeek', 'Date.AddDays', '#date', 'Coalesce', 'Value.IsNull', 'List.Contains']);
+  const FUNCS = new Set(['Text.Upper', 'Text.Lower', 'Text.Trim', 'Text.Length', 'Text.Start', 'Text.End', 'Text.Middle', 'Text.Contains', 'Text.StartsWith', 'Text.EndsWith', 'Text.Replace', 'Text.From', 'Text.Combine', 'Text.PadStart', 'Text.PadEnd', 'Text.RegexMatch', 'Text.RegexReplace', 'Number.Round', 'Number.RoundUp', 'Number.RoundDown', 'Number.Abs', 'Number.Mod', 'Number.Power', 'Number.Sqrt', 'Number.From', 'Date.Year', 'Date.Month', 'Date.Day', 'Date.Quarter', 'Date.DayOfWeek', 'Date.AddDays', 'Date.AddMonths', 'Date.WeekOfYear', 'Date.MonthName', 'Date.DayOfWeekName', 'Date.StartOfMonth', 'Date.EndOfMonth', 'Date.DiffDays', 'Text.Clean', 'Text.BeforeDelimiter', 'Text.AfterDelimiter', 'Number.Sign', 'Number.IntegerDivide', 'Number.Log', '#date', 'Coalesce', 'Value.IsNull', 'List.Contains']);
   Plan.FUNCS = FUNCS;
   const TEXT_OPS = new Set(['upper', 'lower', 'trim', 'clean']);
   const WINDOW_OPS = new Set(['cumsum', 'row_number', 'rank', 'lag', 'lead', 'pct_of_total', 'moving_avg']);
@@ -94,7 +94,12 @@
       case 'TextTransform': if (!TEXT_OPS.has(k.op)) refuse('Text transform “' + k.op + '” runs on the built-in engine'); return { op: 'text', cols: k.cols || [], fn: k.op };
       case 'RoundNumbers': return { op: 'round', cols: k.cols || [], digits: +k.digits || 0 };
       case 'SplitColumn':
-        if (k.mode === 'positions') refuse('Split by positions runs on the built-in engine');
+        if (k.mode === 'positions') {
+          const ps = String(k.positions || '').split(',').map((x) => parseInt(x.trim(), 10)).filter((x) => !isNaN(x)).sort((a, b) => a - b);
+          if (!ps.length) refuse('Enter one or more character positions');
+          if (ps[0] < 0) refuse('Negative split positions run on the built-in engine');
+          return { op: 'split', col: k.col, mode: 'positions', positions: ps, delimiter: ',', count: k.count ? +k.count : 0, trim: k.trim !== false };
+        }
         return { op: 'split', col: k.col, mode: k.mode || 'each', delimiter: k.delimiter === undefined || k.delimiter === '' ? ',' : k.delimiter, count: k.count ? +k.count : 0, trim: k.trim !== false };
       case 'MergeColumns': return { op: 'mergeColumns', cols: k.cols || [], sep: k.sep === undefined ? ' ' : k.sep, name: k.name || 'Merged' };
       case 'AddColumn': if (!k.name) refuse('Custom column has no name'); return { op: 'addColumn', name: k.name, expr: expr(k.formula || 'null', P, 'Custom column'), castTo: k.castTo && k.castTo !== 'auto' ? k.castTo : null, locale: ctx.locale };
