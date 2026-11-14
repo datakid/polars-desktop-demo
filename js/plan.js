@@ -5,9 +5,9 @@
   const FUNCS = new Set(['Text.Upper', 'Text.Lower', 'Text.Trim', 'Text.Length', 'Text.Start', 'Text.End', 'Text.Middle', 'Text.Contains', 'Text.StartsWith', 'Text.EndsWith', 'Text.Replace', 'Text.From', 'Text.Combine', 'Text.PadStart', 'Text.PadEnd', 'Text.RegexMatch', 'Text.RegexReplace', 'Number.Round', 'Number.RoundUp', 'Number.RoundDown', 'Number.Abs', 'Number.Mod', 'Number.Power', 'Number.Sqrt', 'Number.From', 'Date.Year', 'Date.Month', 'Date.Day', 'Date.Quarter', 'Date.DayOfWeek', 'Date.AddDays', 'Date.AddMonths', 'Date.WeekOfYear', 'Date.MonthName', 'Date.DayOfWeekName', 'Date.StartOfMonth', 'Date.EndOfMonth', 'Date.DiffDays', 'Date.ToText', 'Text.Repeat', 'Text.Clean', 'Text.BeforeDelimiter', 'Text.AfterDelimiter', 'Number.Sign', 'Number.IntegerDivide', 'Number.Log', '#date', 'Coalesce', 'Value.IsNull', 'List.Contains']);
   Plan.FUNCS = FUNCS;
   const TEXT_OPS = new Set(['upper', 'lower', 'trim', 'clean']);
-  const WINDOW_OPS = new Set(['cumsum', 'row_number', 'rank', 'dense_rank', 'diff', 'cummax', 'cummin', 'lag', 'lead', 'pct_of_total', 'moving_avg']);
-  const AGGS = new Set(['count_rows', 'count', 'count_distinct', 'sum', 'mean', 'median', 'std', 'var', 'min', 'max', 'first', 'last', 'concat']);
-  const PIVOT_AGGS = new Set(['sum', 'mean', 'count_rows', 'min', 'max', 'first', 'last', 'median']);
+  const WINDOW_OPS = new Set(['cumsum', 'row_number', 'rank', 'dense_rank', 'diff', 'cummax', 'cummin', 'pct_change', 'rolling_sum', 'rolling_min', 'rolling_max', 'rolling_std', 'lag', 'lead', 'pct_of_total', 'moving_avg']);
+  const AGGS = new Set(['count_rows', 'count', 'count_distinct', 'sum', 'mean', 'median', 'std', 'var', 'mode', 'percentile', 'min', 'max', 'first', 'last', 'concat']);
+  const PIVOT_AGGS = new Set(['sum', 'mean', 'count_rows', 'min', 'max', 'first', 'last', 'median', 'std', 'var']);
 
   class Refuse extends Error { }
   const refuse = (msg) => { throw new Refuse(msg); };
@@ -110,8 +110,10 @@
         const used = new Set(k.keys || []);
         const aggs = (k.aggs || []).map((a) => {
           if (!AGGS.has(a.fn)) refuse('Aggregation ' + a.fn + ' runs on the built-in engine');
-          const name = PQ.uniqueName(a.name || (PQ.Engine.AGG[a.fn].label + (a.col ? ' of ' + a.col : '')), used); used.add(name);
-          return { fn: a.fn, col: a.fn === 'count_rows' ? null : a.col, name, sep: a.sep === undefined ? ', ' : a.sep };
+          const p = a.p === undefined || a.p === '' ? 50 : +a.p;
+          if (a.fn === 'percentile' && !(p >= 0 && p <= 100)) refuse('Percentile must be between 0 and 100');
+          const name = PQ.uniqueName(a.name || PQ.Engine.aggName(a), used); used.add(name);
+          return { fn: a.fn, col: a.fn === 'count_rows' ? null : a.col, name, sep: a.sep === undefined ? ', ' : a.sep, p };
         });
         return { op: 'groupBy', keys: k.keys || [], aggs };
       }
@@ -119,7 +121,13 @@
       case 'Pivot': if (!PIVOT_AGGS.has(k.agg || 'sum')) refuse('Pivot aggregation runs on the built-in engine'); return { op: 'pivot', on: k.on, index: k.index && k.index.length ? k.index : null, values: k.values || null, agg: k.agg || 'sum' };
       case 'Merge': return { op: 'join', right: ctx.sub(k.right), how: k.how || 'left', on: k.on || [], expand: k.expand && k.expand.length ? k.expand : null, prefix: k.prefix || '', castKeys: !!k.castKeys };
       case 'Append': return { op: 'append', others: (k.others || []).map((o) => ctx.sub(o)), strict: k.mode === 'strict' };
-      case 'Window': if (!WINDOW_OPS.has(k.op)) refuse('Window “' + k.op + '” runs on the built-in engine'); return { op: 'window', fn: k.op, col: k.col || null, partition: k.partition || [], orderBy: k.orderBy || null, desc: !!k.desc, n: Math.max(1, +k.n || (k.op === 'moving_avg' ? 3 : 1)), name: k.name || k.op };
+      case 'Window': {
+        if (!WINDOW_OPS.has(k.op)) refuse('Window “' + k.op + '” runs on the built-in engine');
+        const wn = Math.max(1, +k.n || (k.op === 'moving_avg' || k.op.startsWith('rolling_') ? 3 : 1));
+        if ((k.op === 'moving_avg' || k.op.startsWith('rolling_')) && wn > 500) refuse('Windows wider than 500 rows run on the built-in engine');
+        if (k.op === 'rolling_std' && wn > 60) refuse('Rolling std over more than 60 rows runs on the built-in engine');
+        return { op: 'window', fn: k.op, col: k.col || null, partition: k.partition || [], orderBy: k.orderBy || null, desc: !!k.desc, n: wn, name: k.name || k.op };
+      }
       case 'Checkpoint': return null;
     }
     refuse('Step “' + PQ.Steps.label(k.type) + '” isn’t supported by Polars yet');

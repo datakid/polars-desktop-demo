@@ -132,6 +132,14 @@
     return ss / (a.length - 1);
   }
 
+  function percentileOf(vals, p) {
+    const a = vals.filter((v) => typeof v === 'number').sort((x, y) => x - y);
+    if (!a.length) return null;
+    const q = Math.min(100, Math.max(0, p === undefined || p === null || isNaN(+p) ? 50 : +p)) / 100;
+    const pos = q * (a.length - 1), lo = Math.floor(pos), hi = Math.ceil(pos);
+    return a[lo] + (a[hi] - a[lo]) * (pos - lo);
+  }
+
   const AGG = {
     count_rows: { label: 'Count rows', type: () => 'int', fn: (vals) => vals.length },
     count: { label: 'Count (non-empty)', type: () => 'int', fn: (vals) => vals.filter((v) => v !== null && !isErr(v)).length },
@@ -141,6 +149,14 @@
     median: { label: 'Median', type: () => 'number', fn: (vals) => { const a = vals.filter((v) => typeof v === 'number').sort((x, y) => x - y); if (!a.length) return null; const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; } },
     std: { label: 'Std deviation', type: () => 'number', fn: (vals) => { const v = sampleVariance(vals); return v === null ? null : Math.sqrt(v); } },
     var: { label: 'Variance', type: () => 'number', fn: (vals) => sampleVariance(vals) },
+    mode: { label: 'Mode', type: (t) => t, fn: (vals) => {
+      const counts = new Map();
+      for (const v of vals) { if (v === null || v === undefined || isErr(v)) continue; const k = keyOf(v), e = counts.get(k); if (e) e.n++; else counts.set(k, { v, n: 1 }); }
+      let best = null;
+      for (const e of counts.values()) if (best === null || e.n > best.n || (e.n === best.n && compareValues(e.v, best.v, true) < 0)) best = e;
+      return best ? best.v : null;
+    } },
+    percentile: { label: 'Percentile', type: () => 'number', fn: (vals, sep, a) => percentileOf(vals, a && a.p) },
     min: { label: 'Min', type: (t) => t, fn: (vals) => { let m = null; for (const v of vals) if (v !== null && !isErr(v) && (m === null || compareValues(v, m) < 0)) m = v; return m; } },
     max: { label: 'Max', type: (t) => t, fn: (vals) => { let m = null; for (const v of vals) if (v !== null && !isErr(v) && (m === null || compareValues(v, m) > 0)) m = v; return m; } },
     first: { label: 'First', type: (t) => t, fn: (vals) => (vals.length ? vals[0] : null) },
@@ -148,6 +164,7 @@
     concat: { label: 'Concatenate text', type: () => 'text', fn: (vals, sep) => vals.filter((v) => v !== null && !isErr(v)).map((v) => PQ.fmtValue(v)).join(sep === undefined ? ', ' : sep) },
   };
   E.AGG = AGG;
+  E.aggName = (a) => (a.fn === 'percentile' ? 'P' + +(+(a.p === undefined || a.p === '' ? 50 : a.p)).toFixed(2) : AGG[a.fn].label) + (a.col ? ' of ' + a.col : '');
 
   function groupIndex(t, keys) {
     if (!t.n) return [];
@@ -413,7 +430,7 @@
     const used = new Set(keys);
     aggs.forEach((a) => {
       const src = a.fn === 'count_rows' ? null : t.get(a.col);
-      const name = PQ.uniqueName(a.name || (AGG[a.fn].label + (a.col ? ' of ' + a.col : '')), used); used.add(name);
+      const name = PQ.uniqueName(a.name || E.aggName(a), used); used.add(name);
       cols.push({ name, type: AGG[a.fn].type(a.col ? t.type(a.col) : 'int') });
       const o = new Array(ng);
       switch (a.fn) {
@@ -442,7 +459,7 @@
         case 'last': for (let g = 0; g < ng; g++) o[g] = last[g] < 0 ? null : src[last[g]]; break;
         default: {
           const { off, order } = groupsOf();
-          for (let g = 0; g < ng; g++) { const vs = new Array(off[g + 1] - off[g]); for (let k = off[g]; k < off[g + 1]; k++) vs[k - off[g]] = src[order[k]]; o[g] = AGG[a.fn].fn(vs, a.sep); }
+          for (let g = 0; g < ng; g++) { const vs = new Array(off[g + 1] - off[g]); for (let k = off[g]; k < off[g + 1]; k++) vs[k - off[g]] = src[order[k]]; o[g] = AGG[a.fn].fn(vs, a.sep, a); }
         }
       }
       data.push(o);
@@ -693,6 +710,18 @@
           for (const r of g) { const v = src[r]; if (typeof v === 'number' && (acc === null || (s.op === 'cummax' ? v > acc : v < acc))) acc = v; out[r] = acc; }
           break;
         }
+        case 'pct_change': g.forEach((r, i) => { const cur = src[r], before = i ? src[g[i - 1]] : null; out[r] = typeof cur === 'number' && typeof before === 'number' && before !== 0 ? (cur - before) / before : null; }); break;
+        case 'rolling_sum': case 'rolling_min': case 'rolling_max': case 'rolling_std':
+          g.forEach((r, i) => {
+            const w = [];
+            for (let k = Math.max(0, i - n + 1); k <= i; k++) { const v = src[g[k]]; if (typeof v === 'number') w.push(v); }
+            if (!w.length) { out[r] = null; return; }
+            if (s.op === 'rolling_std') { const sv = sampleVariance(w); out[r] = sv === null ? null : Math.sqrt(sv); return; }
+            let acc = w[0];
+            for (let k = 1; k < w.length; k++) acc = s.op === 'rolling_sum' ? acc + w[k] : s.op === 'rolling_min' ? Math.min(acc, w[k]) : Math.max(acc, w[k]);
+            out[r] = acc;
+          });
+          break;
         case 'lag': g.forEach((r, i) => (out[r] = i - n >= 0 ? src[g[i - n]] : null)); break;
         case 'lead': g.forEach((r, i) => (out[r] = i + n < g.length ? src[g[i + n]] : null)); break;
         case 'pct_of_total': { let tot = 0; for (const r of g) if (typeof src[r] === 'number') tot += src[r]; for (const r of g) out[r] = typeof src[r] === 'number' && tot ? src[r] / tot : null; break; }

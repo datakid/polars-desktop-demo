@@ -69,11 +69,23 @@
       assert(!PQ.Plan.lower(proj([src, { type: 'SplitColumn', col: 'name', mode: 'positions', positions: '-2, 3' }]), 'q1', files).ok);
       assert(!PQ.Plan.lower(proj([src, { type: 'SplitColumn', col: 'name', mode: 'positions', positions: '' }]), 'q1', files).ok);
     });
-    test('plan: std, var and the new window functions lower; pivot with std is refused', () => {
+    test('plan: std, var and the new window functions lower', () => {
       const ok = (k) => { const r = PQ.Plan.lower(proj([src, k]), 'q1', files); assert(r.ok, r.reason); return r.plan.ops[0]; };
       assertEq(ok({ type: 'GroupBy', keys: ['region'], aggs: [{ fn: 'std', col: 'qty', name: 's' }, { fn: 'var', col: 'qty', name: 'v' }] }).aggs.map((a) => a.fn), ['std', 'var']);
       ['dense_rank', 'diff', 'cummax', 'cummin'].forEach((op) => assertEq(ok({ type: 'Window', op, col: 'qty', name: 'w' }).fn, op));
-      assert(!PQ.Plan.lower(proj([src, { type: 'Pivot', on: 'region', values: 'qty', agg: 'std', index: [] }]), 'q1', files).ok);
+    });
+    test('plan: mode, percentile, pivot std and the rolling window functions lower with their limits', () => {
+      const ok = (k) => { const r = PQ.Plan.lower(proj([src, k]), 'q1', files); assert(r.ok, r.reason); return r.plan.ops[0]; };
+      const aggs = ok({ type: 'GroupBy', keys: ['region'], aggs: [{ fn: 'mode', col: 'qty' }, { fn: 'percentile', col: 'qty', p: 90 }, { fn: 'percentile', col: 'qty' }] }).aggs;
+      assertEq(aggs.map((a) => [a.fn, a.p, a.name]), [['mode', 50, 'Mode of qty'], ['percentile', 90, 'P90 of qty'], ['percentile', 50, 'P50 of qty']]);
+      assertEq(ok({ type: 'Pivot', on: 'region', values: 'qty', agg: 'var', index: [] }).agg, 'var');
+      ['pct_change', 'rolling_sum', 'rolling_min', 'rolling_max', 'rolling_std'].forEach((op) => assertEq(ok({ type: 'Window', op, col: 'qty', name: 'w' }).n, op === 'pct_change' ? 1 : 3));
+      const refused = (k) => !PQ.Plan.lower(proj([src, k]), 'q1', files).ok;
+      assert(refused({ type: 'GroupBy', keys: [], aggs: [{ fn: 'percentile', col: 'qty', p: 101 }] }), 'percentile above 100');
+      assert(refused({ type: 'Pivot', on: 'region', values: 'qty', agg: 'mode', index: [] }), 'pivot mode');
+      assert(refused({ type: 'Window', op: 'rolling_std', col: 'qty', n: 61 }), 'rolling std wider than 60');
+      assert(refused({ type: 'Window', op: 'moving_avg', col: 'qty', n: 501 }), 'moving average wider than 500');
+      assert(!refused({ type: 'Window', op: 'rolling_sum', col: 'qty', n: 500 }), 'rolling sum of 500');
     });
     test('plan: dates in formulas become epoch literals', () => { const r = PQ.Plan.lower(proj([src, { type: 'Filter', mode: 'advanced', formula: '[d] >= #date(2026, 1, 2)' }]), 'q1', files); assertEq(r.plan.ops[0].expr.b, { k: 'call', fn: '#date', args: [{ k: 'lit', v: 2026 }, { k: 'lit', v: 1 }, { k: 'lit', v: 2 }] }); });
   }
@@ -117,6 +129,33 @@
     assertEq(col(E.X.Window(t, { op: 'diff', col: 'v', name: 'o' }), 'o'), [null, -2, null, null, -7]);
     assertEq(col(E.X.Window(t, { op: 'cummax', col: 'v', name: 'o' }), 'o'), [5, 5, 5, 8, 8]);
     assertEq(col(E.X.Window(t, { op: 'cummin', col: 'v', name: 'o' }), 'o'), [5, 3, 3, 3, 1]);
+  });
+  test('GroupBy: mode takes the smallest value on ties and percentile interpolates linearly', () => {
+    const t = T.fromRows(['k', 'v'], [['a', 1], ['a', 2], ['a', 2], ['a', 3], ['b', 5], ['b', 4], ['c', null]], ['text', 'int']);
+    const r = E.X.GroupBy(t, { keys: ['k'], aggs: [{ fn: 'mode', col: 'v', name: 'm' }, { fn: 'percentile', col: 'v', p: 50, name: 'p50' }, { fn: 'percentile', col: 'v', p: 25, name: 'p25' }, { fn: 'percentile', col: 'v', name: 'dflt' }] });
+    assertEq(r.toRows(), [['a', 2, 2, 1.75, 2], ['b', 4, 4.5, 4.25, 4.5], ['c', null, null, null, null]]);
+    assertEq(r.names, ['k', 'm', 'p50', 'p25', 'dflt']);
+  });
+  test('GroupBy: percentile default name carries the percentage', () => {
+    const t = T.fromRows(['v'], [[1], [2], [3]], ['int']);
+    assertEq(E.X.GroupBy(t, { keys: [], aggs: [{ fn: 'percentile', col: 'v', p: 90 }] }).names, ['P90 of v']);
+  });
+  test('Pivot: std and var use the sample formula', () => {
+    const t = T.fromRows(['k', 'm', 'v'], [['a', 'x', 2], ['a', 'x', 4], ['a', 'x', 9], ['a', 'y', 5]], ['text', 'text', 'int']);
+    const r = E.X.Pivot(t, { on: 'm', values: 'v', agg: 'std', index: ['k'] });
+    assertEq(r.toRows().map((x) => [x[0], x[1] === null ? null : +x[1].toFixed(6), x[2]]), [['a', 3.605551, null]]);
+  });
+  test('Window: percent change skips empty values and a zero base', () => {
+    const t = T.fromRows(['v'], [[100], [110], [null], [50], [0], [5]], ['int']);
+    assertEq(col(E.X.Window(t, { op: 'pct_change', col: 'v', name: 'o' }), 'o'), [null, 0.1, null, null, -1, null]);
+  });
+  test('Window: rolling sum, min, max and std use the last N rows and ignore empty values', () => {
+    const t = T.fromRows(['v'], [[1], [2], [null], [4], [5]], ['int']);
+    const run = (op, n) => col(E.X.Window(t, { op, col: 'v', n, name: 'o' }), 'o').map((x) => (x === null ? null : +x.toFixed(4)));
+    assertEq(run('rolling_sum', 2), [1, 3, 2, 4, 9]);
+    assertEq(run('rolling_min', 2), [1, 1, 2, 4, 4]);
+    assertEq(run('rolling_max', 2), [1, 2, 2, 4, 5]);
+    assertEq(run('rolling_std', 3), [null, 0.7071, 0.7071, 1.4142, 0.7071]);
   });
   test('ExpandJson objects', () => { const t = T.fromRows(['j'], [['{"a":1,"b":"x"}'], ['{"a":2}']]); const r = E.X.ExpandJson(t, { col: 'j' }); assertEq(r.toRows(), [[1, 'x'], [2, null]]); });
   test('Append diagonal unions columns', () => { const a = T.fromRows(['x'], [[1]]), b = T.fromRows(['x', 'y'], [[2, 'q']]); const r = E.X.Append(a, { others: ['b'], mode: 'diagonal' }, Object.assign({}, ctx, { resolve: () => b })); assertEq(r.toRows(), [[1, null], [2, 'q']]); });
@@ -171,6 +210,14 @@
     ['dense_rank', 'diff', 'cummax', 'cummin'].forEach((op, i) => p.queries[0].steps.push({ id: 'w' + i, name: 'W' + i, kind: { type: 'Window', op, col: 'z', name: 'w' + i } }));
     const py = PQ.Steps.toPython(p);
     assert(/pl\.col\("z"\)\.std\(\)/.test(py) && /pl\.col\("z"\)\.var\(\)/.test(py) && /rank\("dense", descending=True\)/.test(py) && /\.diff\(\)/.test(py) && /cum_max\(\)/.test(py) && /cum_min\(\)/.test(py), py);
+    assert(!/undefined/.test(py), 'no undefined in output');
+  });
+  test('Python export: mode, percentile, percent change and rolling functions', () => {
+    const p = proj(); p.name = 'Demo';
+    p.queries[0].steps.push({ id: 'g', name: 'G', kind: { type: 'GroupBy', keys: ['label'], aggs: [{ fn: 'mode', col: 'z', name: 'm' }, { fn: 'percentile', col: 'z', p: 90, name: 'p' }] } });
+    ['pct_change', 'rolling_sum', 'rolling_min', 'rolling_max', 'rolling_std'].forEach((op, i) => p.queries[0].steps.push({ id: 'w' + i, name: 'W' + i, kind: { type: 'Window', op, col: 'z', n: 4, name: 'w' + i } }));
+    const py = PQ.Steps.toPython(p);
+    assert(/drop_nulls\(\)\.mode\(\)\.sort\(\)\.first\(\)/.test(py) && /quantile\(0\.9, "linear"\)/.test(py) && /rolling_sum\(4, min_samples=1\)/.test(py) && /rolling_min\(4/.test(py) && /rolling_max\(4/.test(py) && /rolling_std\(4, min_samples=2\)/.test(py) && /\.shift\(1\) != 0/.test(py), py);
     assert(!/undefined/.test(py), 'no undefined in output');
   });
   test('Python export covers every step and parses as plausible Python', () => {

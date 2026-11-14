@@ -64,7 +64,7 @@ One codebase ships two ways:
 ## Repository layout
 ```
 index.html, demo.html, 404.html     app pages
-tests.html, tests-ui.html           engine golden tests (100) · UI end-to-end smoke test (web build only)
+tests.html, tests-ui.html           engine golden tests (112) · UI end-to-end smoke test (web build only)
 css/app.css                         "Clay" design system
 js/                                 engine (worker), platform layer, UI
 js/native-engine.js                 optional Polars adapter; idle unless a desktop engine reports itself available
@@ -189,7 +189,7 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 - Columns: choose/remove/reorder, rename, change type (locale-aware, with per-cell error flags), split (delimiter, first, last, into rows, by positions), merge columns, custom and conditional columns, index, duplicate.
 - Rows: filter, sort, distinct, keep duplicates, keep rows, promote headers, fill down/up.
 - Values: replace values, replace/remove/keep errors, text transforms (except Proper), round.
-- Reshaping and combining: group by (count, distinct count, sum, average, median, standard deviation, variance, min, max, first, last, concatenate), unpivot, pivot, merge (all join types), append, window columns (running total, running max and min, row number, rank, dense rank, change from previous, previous and next value, percent of total, moving average).
+- Reshaping and combining: group by (count, distinct count, sum, average, median, standard deviation, variance, mode, percentile, min, max, first, last, concatenate), unpivot, pivot, merge (all join types), append, window columns (running total, running max and min, row number, rank, dense rank, change and % change from previous, previous and next value, percent of total, moving average, rolling sum, min, max and std deviation).
 - Formula functions: the text, number, date and logic functions listed in `PQ.Plan.FUNCS`.
 
 **Runs on built-in (with the reason shown):**
