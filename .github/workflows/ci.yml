@@ -73,10 +73,10 @@ jobs:
           CARGO_TERM_COLOR: never
         run: |
           set +e
-          cargo test --locked --manifest-path desktop/src-tauri/engine/Cargo.toml 2>&1 | tee engine-test.log
+          cargo test --locked --no-fail-fast --manifest-path desktop/src-tauri/engine/Cargo.toml 2>&1 | tee engine-test.log
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
-            grep -nE '^error|^warning: unused|panicked|parity:|^ +(got|expected)|^ +--> |engine error|rows [0-9]+ ≠|schema' engine-test.log | head -40 | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::${line}"; done
+            awk '/panicked at/{p=1} /^failures:/{p=0} p' engine-test.log | grep -v '^note:' | head -45 | cut -c1-400 | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::${line}"; done
           fi
           exit "$code"
 
