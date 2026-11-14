@@ -547,7 +547,30 @@ fn split(mut lf: LazyFrame, op: &Value, s: &Schema) -> R<LazyFrame> {
         return Ok(lf.with_column(src.str().split(lit(d.as_str())).alias(c.as_str())).explode(by_name([c.as_str()], true, false), ExplodeOptions { empty_as_null: true, keep_nulls: true }).with_column(fin(col(c.as_str())).alias(c.as_str())));
     }
     let names = visible(s);
-    let pieces: Vec<Expr> = if mode == "first" || mode == "last" {
+    let pieces: Vec<Expr> = if mode == "positions" {
+        let ps: Vec<i64> = op["positions"].as_array().map(|a| a.iter().filter_map(|x| x.as_i64()).collect()).unwrap_or_default();
+        if ps.is_empty() {
+            return Err("Enter one or more character positions".into());
+        }
+        let mut count = op["count"].as_u64().unwrap_or(0) as usize;
+        if count == 0 {
+            let any = first_row_value(lf.clone(), src.clone().is_not_null().cast(DataType::Int64).max())?.unwrap_or(0);
+            count = if any > 0 { ps.len() } else { 1 };
+        }
+        let count = count.clamp(1, 200);
+        (0..count)
+            .map(|k| match ps.get(k) {
+                Some(&p) => {
+                    let len = match ps.get(k + 1) {
+                        Some(&nx) => lit((nx - p) as u64),
+                        None => lit(NULL).cast(DataType::UInt64),
+                    };
+                    src.clone().str().slice(lit(p), len)
+                }
+                None => lit(NULL).cast(DataType::String),
+            })
+            .collect()
+    } else if mode == "first" || mode == "last" {
         let esc = regex_escape(&d);
         let pat = if mode == "first" { format!("^(?s)(.*?){esc}(.*)$") } else { format!("^(?s)(.*){esc}(.*?)$") };
         vec![coalesce(&[src.clone().str().extract(lit(pat.as_str()), 1), src.clone()]), src.str().extract(lit(pat.as_str()), 2)]

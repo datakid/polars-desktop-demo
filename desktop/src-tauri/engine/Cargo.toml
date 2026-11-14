@@ -14,7 +14,8 @@ polars = { version = "=0.55.2", features = [
   "dtype-date", "dtype-datetime", "dtype-struct", "is_in", "cum_agg", "rank",
   "round_series", "rolling_window", "concat_str", "diagonal_concat", "cross_join",
   "semi_anti_join", "is_first_distinct", "is_unique", "abs",
-  "string_pad", "range", "ipc_streaming", "timezones", "dtype-array"
+  "string_pad", "range", "ipc_streaming", "timezones", "dtype-array",
+  "log", "month_start", "month_end", "offset_by"
 ] }
 calamine = "0.26"
 rust_xlsxwriter = "0.79"

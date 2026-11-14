@@ -205,6 +205,21 @@ fn int_arg(n: &Value, i: usize, what: &str) -> R<i64> {
     Err(format!("{what} needs a fixed number in Polars"))
 }
 
+fn signed_int_arg(n: &Value, i: usize, what: &str) -> R<i64> {
+    let a = &n["args"][i];
+    if a["k"] == "un" && a["op"] == "-" && a["a"]["k"] == "lit" {
+        if let Some(f) = a["a"]["v"].as_f64() {
+            if f.fract() == 0.0 {
+                return Ok(-(f as i64));
+            }
+        }
+    }
+    if a["k"] == "lit" && a["v"].as_f64().map(|f| f.fract() != 0.0).unwrap_or(false) {
+        return Err(format!("{what} needs a whole number in Polars"));
+    }
+    int_arg(n, i, what)
+}
+
 type Arg = (Expr, K, Option<String>);
 
 fn with_raw(n: &Value, cx: &Cx) -> R<Arg> {
@@ -383,6 +398,14 @@ pub fn compile(n: &Value, cx: &Cx) -> R<(Expr, K)> {
     }
 }
 
+fn to_ms_f(e: Expr) -> Expr {
+    e.cast(DataType::Datetime(TimeUnit::Milliseconds, None)).cast(DataType::Int64).cast(DataType::Float64)
+}
+
+fn diff_days(from: Expr, to: Expr) -> Expr {
+    ((to_ms_f(to) - to_ms_f(from)) / lit(DAY_MS as f64) + lit(0.5)).floor().cast(DataType::Int64)
+}
+
 fn call(n: &Value, cx: &Cx) -> R<(Expr, K)> {
     let f = s(n, "fn");
     let raw = n["args"].as_array().cloned().unwrap_or_default();
@@ -456,6 +479,42 @@ fn call(n: &Value, cx: &Cx) -> R<(Expr, K)> {
             let out = ms.cast(DataType::Int64).cast(DataType::Datetime(TimeUnit::Milliseconds, None));
             if k == K::Date { (out.cast(DataType::Date), K::Date) } else { (out, K::Dt) }
         }
+        "Text.Clean" => (trim(t(0)?.str().replace_all(lit(r"[\x00-\x1f\x7f]"), lit(""), false).str().replace_all(lit(r"\s+"), lit(" "), false)), K::Text),
+        "Text.BeforeDelimiter" => {
+            let (x, d) = (t(0)?, t(1)?);
+            let first = x.clone().str().splitn(d.clone(), 2).struct_().field_by_name("field_0");
+            (when(d.eq(lit(""))).then(x.str().head(lit(0i64))).otherwise(first), K::Text)
+        }
+        "Text.AfterDelimiter" => {
+            let (x, d) = (t(0)?, t(1)?);
+            let rest = x.clone().str().splitn(d.clone(), 2).struct_().field_by_name("field_1").fill_null(lit(""));
+            let rest = when(x.clone().is_null()).then(lit(NULL).cast(DataType::String)).otherwise(rest);
+            (when(d.eq(lit(""))).then(x).otherwise(rest), K::Text)
+        }
+        "Number.Sign" => {
+            let x = num(0)?.cast(DataType::Float64);
+            let sg = when(x.clone().gt(lit(0.0))).then(lit(1i64)).when(x.clone().lt(lit(0.0))).then(lit(-1i64)).otherwise(lit(0i64));
+            (when(x.is_null()).then(lit(NULL).cast(DataType::Int64)).otherwise(sg), K::Num)
+        }
+        "Number.IntegerDivide" => {
+            let (x, y) = (num(0)?.cast(DataType::Float64), num(1)?.cast(DataType::Float64));
+            (when(y.clone().eq(lit(0.0))).then(lit(NULL).cast(DataType::Int64)).otherwise(i64e((x / y).floor())), K::Num)
+        }
+        "Number.Log" => {
+            let x = num(0)?.cast(DataType::Float64);
+            (when(x.clone().lt_eq(lit(0.0))).then(lit(NULL).cast(DataType::Float64)).otherwise(x.log(lit(std::f64::consts::E))), K::Num)
+        }
+        "Date.WeekOfYear" => (i64e(date(0)?.0.dt().week()), K::Num),
+        "Date.MonthName" => (date(0)?.0.dt().strftime("%B"), K::Text),
+        "Date.DayOfWeekName" => (date(0)?.0.dt().strftime("%A"), K::Text),
+        "Date.StartOfMonth" => (date(0)?.0.cast(DataType::Date).dt().month_start(), K::Date),
+        "Date.EndOfMonth" => (date(0)?.0.cast(DataType::Date).dt().month_end(), K::Date),
+        "Date.AddMonths" => {
+            let (d, k) = date(0)?;
+            let m = signed_int_arg(n, 1, &f)?;
+            (d.dt().offset_by(lit(format!("{m}mo"))), k)
+        }
+        "Date.DiffDays" => (diff_days(date(0)?.0, date(1)?.0), K::Num),
         "#date" => {
             let (y, m, d) = (int_arg(n, 0, "#date")?, int_arg(n, 1, "#date")?, int_arg(n, 2, "#date")?);
             (date_lit(days_from_civil(y, m, d)), K::Date)

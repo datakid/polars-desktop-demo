@@ -64,7 +64,7 @@ One codebase ships two ways:
 ## Repository layout
 ```
 index.html, demo.html, 404.html     app pages
-tests.html, tests-ui.html           engine golden tests (96) · UI end-to-end smoke test (web build only)
+tests.html, tests-ui.html           engine golden tests (100) · UI end-to-end smoke test (web build only)
 css/app.css                         "Clay" design system
 js/                                 engine (worker), platform layer, UI
 js/native-engine.js                 optional Polars adapter; idle unless a desktop engine reports itself available
@@ -186,7 +186,7 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 
 **Polars covers:**
 - Sources: CSV (UTF-8), Parquet, Arrow IPC, Excel sheets and ranges, entered data, query references.
-- Columns: choose/remove/reorder, rename, change type (locale-aware, with per-cell error flags), split (delimiter, first, last, into rows), merge columns, custom and conditional columns, index, duplicate.
+- Columns: choose/remove/reorder, rename, change type (locale-aware, with per-cell error flags), split (delimiter, first, last, into rows, by positions), merge columns, custom and conditional columns, index, duplicate.
 - Rows: filter, sort, distinct, keep duplicates, keep rows, promote headers, fill down/up.
 - Values: replace values, replace/remove/keep errors, text transforms (except Proper), round.
 - Reshaping and combining: group by, unpivot, pivot, merge (all join types), append, window columns.
@@ -194,8 +194,8 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 
 **Runs on built-in (with the reason shown):**
 - Sources: JSON, folders, Excel tables, named ranges, multi-sheet sources, merged-cell fill, non-UTF-8 CSV, pasted files.
-- Steps: Sample, ClusterValues, Validate, ExpandJson, Transpose, DemoteHeaders, Custom SQL, Proper case, split by positions.
-- Formula functions without a Polars mapping, such as `Text.Similarity`. Dialog previews also stay on built-in.
+- Steps: Sample, ClusterValues, Validate, ExpandJson, Transpose, DemoteHeaders, Custom SQL, Proper case, split by negative positions.
+- Formula functions without a Polars mapping, such as `Text.Similarity`, `Text.Proper`, `Text.Repeat`, `Date.From`, `Date.ToText` and `Value.IsError`. Dialog previews also stay on built-in.
 
 **Known differences:**
 - Polars sorts text in plain character order, while the built-in engine uses natural, accent-insensitive order. This also decides the minimum and maximum shown for text columns in the profile.
