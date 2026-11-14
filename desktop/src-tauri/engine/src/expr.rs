@@ -491,7 +491,11 @@ fn call(n: &Value, cx: &Cx) -> R<(Expr, K)> {
             let rest = when(x.clone().is_null()).then(lit(NULL).cast(DataType::String)).otherwise(rest);
             (when(d.eq(lit(""))).then(x).otherwise(rest), K::Text)
         }
-        "Number.Sign" => (i64e(num(0)?.cast(DataType::Float64).sign()), K::Num),
+        "Number.Sign" => {
+            let x = num(0)?.cast(DataType::Float64);
+            let sg = when(x.clone().gt(lit(0.0))).then(lit(1i64)).when(x.clone().lt(lit(0.0))).then(lit(-1i64)).otherwise(lit(0i64));
+            (when(x.is_null()).then(lit(NULL).cast(DataType::Int64)).otherwise(sg), K::Num)
+        }
         "Number.IntegerDivide" => {
             let (x, y) = (num(0)?.cast(DataType::Float64), num(1)?.cast(DataType::Float64));
             (when(y.clone().eq(lit(0.0))).then(lit(NULL).cast(DataType::Int64)).otherwise(i64e((x / y).floor())), K::Num)
