@@ -725,7 +725,10 @@ fn window(lf: LazyFrame, op: &Value, s: &Schema) -> R<LazyFrame> {
     let mut e = match f.as_str() {
         "cumsum" => num().fill_null(lit(0.0)).cum_sum(false),
         "row_number" => int_range(lit(1i64), len().cast(DataType::Int64) + lit(1i64), 1, DataType::Int64),
-        "rank" => x().rank(RankOptions { method: RankMethod::Min, descending: true }, None).cast(DataType::Int64),
+        "rank" => {
+            let ranked = x().rank(RankOptions { method: RankMethod::Min, descending: true }, None).cast(DataType::Int64);
+            when(x().is_null()).then(x().count().cast(DataType::Int64) + lit(1i64)).otherwise(ranked)
+        }
         "dense_rank" => {
             let ranked = x().rank(RankOptions { method: RankMethod::Dense, descending: true }, None).cast(DataType::Int64);
             when(x().is_null()).then(x().drop_nulls().n_unique().cast(DataType::Int64) + lit(1i64)).otherwise(ranked)
