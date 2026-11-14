@@ -56,10 +56,10 @@
       assert(PQ.Plan.lower(proj([x({ type: 'sheet', name: 'Daily' })]), 'q1', files).ok);
     });
     test('plan: newly mapped formula functions lower', () => {
-      const fns = ['Text.Clean([a])', 'Text.BeforeDelimiter([a], \",\")', 'Text.AfterDelimiter([a], \",\")', 'Number.Sign([n])', 'Number.IntegerDivide([n], 3)', 'Number.Log([n])', 'Date.WeekOfYear([d])', 'Date.MonthName([d])', 'Date.DayOfWeekName([d])', 'Date.StartOfMonth([d])', 'Date.EndOfMonth([d])', 'Date.AddMonths([d], -1)', 'Date.DiffDays([d], [e])'];
+      const fns = ['Text.Clean([a])', 'Text.BeforeDelimiter([a], \",\")', 'Text.AfterDelimiter([a], \",\")', 'Number.Sign([n])', 'Number.IntegerDivide([n], 3)', 'Number.Log([n])', 'Date.WeekOfYear([d])', 'Date.MonthName([d])', 'Date.DayOfWeekName([d])', 'Date.StartOfMonth([d])', 'Date.EndOfMonth([d])', 'Date.AddMonths([d], -1)', 'Date.DiffDays([d], [e])', 'Date.ToText([d])', 'Date.ToText([d], \"yyyy-MM\")', 'Text.Repeat([a], 3)'];
       fns.forEach((f) => { const r = PQ.Plan.lower(proj([src, { type: 'AddColumn', name: 'x', formula: f }]), 'q1', files); assert(r.ok, f + ': ' + r.reason); });
     });
-    test('plan: formula functions without a Polars mapping are still refused', () => ['Text.Proper([a])', 'Date.ToText([d])', 'Date.From([a])', 'Value.IsError([a])', 'Text.Repeat([a], 2)'].forEach((f) => { const r = PQ.Plan.lower(proj([src, { type: 'AddColumn', name: 'x', formula: f }]), 'q1', files); assert(!r.ok, f + ' should be refused'); }));
+    test('plan: formula functions without a Polars mapping are still refused', () => ['Text.Proper([a])', 'Date.From([a])', 'Value.IsError([a])'].forEach((f) => { const r = PQ.Plan.lower(proj([src, { type: 'AddColumn', name: 'x', formula: f }]), 'q1', files); assert(!r.ok, f + ' should be refused'); }));
     test('plan: split by positions lowers sorted positions', () => {
       const r = PQ.Plan.lower(proj([src, { type: 'SplitColumn', col: 'name', mode: 'positions', positions: '5, 0, x, 3', trim: true }]), 'q1', files);
       assert(r.ok, r.reason);
