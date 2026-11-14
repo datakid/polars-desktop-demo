@@ -62,12 +62,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
+          cache-on-failure: true
 
       - name: Generate fixtures
         run: node scripts/gen-fixtures.mjs
 
       - name: Run engine tests
-        run: cargo test --locked --manifest-path desktop/src-tauri/engine/Cargo.toml
+        shell: bash
+        run: |
+          set +e
+          cargo test --locked --manifest-path desktop/src-tauri/engine/Cargo.toml 2>&1 | tee engine-test.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            grep -nE '^error|^warning: unused|panicked|parity:|^ +(got|expected)|^ +--> |engine error|rows [0-9]+ ≠|schema' engine-test.log | head -40 | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::${line}"; done
+          fi
+          exit "$code"
 
   desktop:
     name: Windows installer (${{ matrix.variant }})
