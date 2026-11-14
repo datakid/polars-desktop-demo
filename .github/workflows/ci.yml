@@ -76,7 +76,7 @@ jobs:
           cargo test --locked --no-fail-fast --manifest-path desktop/src-tauri/engine/Cargo.toml 2>&1 | tee engine-test.log
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
-            awk '/panicked at/{p=1} /^failures:/{p=0} p' engine-test.log | grep -v '^note:' | head -45 | cut -c1-400 | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::${line}"; done
+            awk '/^---- /{p=1} /^failures:$/{p=0} p' engine-test.log | grep -v '^note:' | grep -v '^$' | head -70 | cut -c1-500 | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::${line}"; done
           fi
           exit "$code"
 
