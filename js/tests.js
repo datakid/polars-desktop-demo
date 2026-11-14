@@ -69,6 +69,12 @@
       assert(!PQ.Plan.lower(proj([src, { type: 'SplitColumn', col: 'name', mode: 'positions', positions: '-2, 3' }]), 'q1', files).ok);
       assert(!PQ.Plan.lower(proj([src, { type: 'SplitColumn', col: 'name', mode: 'positions', positions: '' }]), 'q1', files).ok);
     });
+    test('plan: std, var and the new window functions lower; pivot with std is refused', () => {
+      const ok = (k) => { const r = PQ.Plan.lower(proj([src, k]), 'q1', files); assert(r.ok, r.reason); return r.plan.ops[0]; };
+      assertEq(ok({ type: 'GroupBy', keys: ['region'], aggs: [{ fn: 'std', col: 'qty', name: 's' }, { fn: 'var', col: 'qty', name: 'v' }] }).aggs.map((a) => a.fn), ['std', 'var']);
+      ['dense_rank', 'diff', 'cummax', 'cummin'].forEach((op) => assertEq(ok({ type: 'Window', op, col: 'qty', name: 'w' }).fn, op));
+      assert(!PQ.Plan.lower(proj([src, { type: 'Pivot', on: 'region', values: 'qty', agg: 'std', index: [] }]), 'q1', files).ok);
+    });
     test('plan: dates in formulas become epoch literals', () => { const r = PQ.Plan.lower(proj([src, { type: 'Filter', mode: 'advanced', formula: '[d] >= #date(2026, 1, 2)' }]), 'q1', files); assertEq(r.plan.ops[0].expr.b, { k: 'call', fn: '#date', args: [{ k: 'lit', v: 2026 }, { k: 'lit', v: 1 }, { k: 'lit', v: 2 }] }); });
   }
 
@@ -97,6 +103,21 @@
   test('Transpose with header column', () => { const t = T.fromRows(['metric', 'x'], [['a', 1], ['b', 2]]); const r = E.X.Transpose(t, { headerCol: 'metric' }); assertEq(r.names, ['Name', 'a', 'b']); assertEq(r.toRows(), [['x', 1, 2]]); });
   test('Window: running total per partition', () => assertEq(col(E.X.Window(tbl(), { op: 'cumsum', col: 'sales', partition: ['region'], name: 'rt' }), 'rt'), [100, 2500, 100, 1200, 2600]));
   test('Window: rank', () => assertEq(col(E.X.Window(tbl(), { op: 'rank', col: 'sales', name: 'r' }), 'r'), [4, 1, 5, 3, 1]));
+  test('GroupBy: std and var are sample statistics and null below two values', () => {
+    const t = T.fromRows(['k', 'v'], [['a', 2], ['a', 4], ['a', 4], ['a', 4], ['a', 5], ['a', 5], ['a', 7], ['a', 9], ['b', 3], ['c', null], ['c', 6]], ['text', 'int']);
+    const rows = E.X.GroupBy(t, { keys: ['k'], aggs: [{ fn: 'std', col: 'v', name: 's' }, { fn: 'var', col: 'v', name: 'x' }] }).toRows();
+    assertEq(rows.map((r) => [r[0], r[1] === null ? null : +r[1].toFixed(9), r[2] === null ? null : +r[2].toFixed(9)]), [['a', 2.138089935, 4.571428571], ['b', null, null], ['c', null, null]]);
+  });
+  test('Window: dense rank keeps ties together and puts empty values last', () => {
+    const t = T.fromRows(['v'], [[10], [30], [30], [null], [20]], ['int']);
+    assertEq(col(E.X.Window(t, { op: 'dense_rank', col: 'v', name: 'r' }), 'r'), [3, 1, 1, 4, 2]);
+  });
+  test('Window: change from previous, running max and running min', () => {
+    const t = T.fromRows(['v'], [[5], [3], [null], [8], [1]], ['int']);
+    assertEq(col(E.X.Window(t, { op: 'diff', col: 'v', name: 'o' }), 'o'), [null, -2, null, null, -7]);
+    assertEq(col(E.X.Window(t, { op: 'cummax', col: 'v', name: 'o' }), 'o'), [5, 5, 5, 8, 8]);
+    assertEq(col(E.X.Window(t, { op: 'cummin', col: 'v', name: 'o' }), 'o'), [5, 3, 3, 3, 1]);
+  });
   test('ExpandJson objects', () => { const t = T.fromRows(['j'], [['{"a":1,"b":"x"}'], ['{"a":2}']]); const r = E.X.ExpandJson(t, { col: 'j' }); assertEq(r.toRows(), [[1, 'x'], [2, null]]); });
   test('Append diagonal unions columns', () => { const a = T.fromRows(['x'], [[1]]), b = T.fromRows(['x', 'y'], [[2, 'q']]); const r = E.X.Append(a, { others: ['b'], mode: 'diagonal' }, Object.assign({}, ctx, { resolve: () => b })); assertEq(r.toRows(), [[1, null], [2, 'q']]); });
   test('Append strict explains the difference', () => { const a = T.fromRows(['x'], [[1]]), b = T.fromRows(['x', 'y'], [[2, 'q']]); try { E.X.Append(a, { others: ['b'], mode: 'strict' }, Object.assign({}, ctx, { resolve: () => b })); assert(false); } catch (e) { assert(/extra y/.test(e.message), e.message); } });
@@ -144,6 +165,14 @@
   test('CSV sniffing: semicolon + decimal comma', () => { const s = samples.find((x) => x.name === 'sales_2026-06.csv'); const sn = PQ.IO.sniffCSV(s.text); assertEq([sn.delimiter, sn.locale, sn.header], [';', 'de-DE', true]); });
   test('Excel writer round-trip', () => { const buf = PQ.IO.toXLSX(tbl(), 'T'); const wb = XLSX.read(new Uint8Array(buf), { type: 'array' }); assertEq(XLSX.utils.sheet_to_json(wb.Sheets.T, { header: 1 })[1], [1, 'Ana', 'EU', 100]); });
 
+  test('Python export: std, var and the new window functions', () => {
+    const p = proj(); p.name = 'Demo';
+    p.queries[0].steps.push({ id: 'g', name: 'G', kind: { type: 'GroupBy', keys: ['label'], aggs: [{ fn: 'std', col: 'z', name: 's' }, { fn: 'var', col: 'z', name: 'v' }] } });
+    ['dense_rank', 'diff', 'cummax', 'cummin'].forEach((op, i) => p.queries[0].steps.push({ id: 'w' + i, name: 'W' + i, kind: { type: 'Window', op, col: 'z', name: 'w' + i } }));
+    const py = PQ.Steps.toPython(p);
+    assert(/pl\.col\("z"\)\.std\(\)/.test(py) && /pl\.col\("z"\)\.var\(\)/.test(py) && /rank\("dense", descending=True\)/.test(py) && /\.diff\(\)/.test(py) && /cum_max\(\)/.test(py) && /cum_min\(\)/.test(py), py);
+    assert(!/undefined/.test(py), 'no undefined in output');
+  });
   test('Python export covers every step and parses as plausible Python', () => {
     const p = proj(); p.name = 'Demo';
     p.queries[0].steps.push({ id: 'g', name: 'G', kind: { type: 'GroupBy', keys: ['label'], aggs: [{ fn: 'sum', col: 'z', name: 'z' }] } });

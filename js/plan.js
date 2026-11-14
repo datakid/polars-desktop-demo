@@ -5,8 +5,8 @@
   const FUNCS = new Set(['Text.Upper', 'Text.Lower', 'Text.Trim', 'Text.Length', 'Text.Start', 'Text.End', 'Text.Middle', 'Text.Contains', 'Text.StartsWith', 'Text.EndsWith', 'Text.Replace', 'Text.From', 'Text.Combine', 'Text.PadStart', 'Text.PadEnd', 'Text.RegexMatch', 'Text.RegexReplace', 'Number.Round', 'Number.RoundUp', 'Number.RoundDown', 'Number.Abs', 'Number.Mod', 'Number.Power', 'Number.Sqrt', 'Number.From', 'Date.Year', 'Date.Month', 'Date.Day', 'Date.Quarter', 'Date.DayOfWeek', 'Date.AddDays', 'Date.AddMonths', 'Date.WeekOfYear', 'Date.MonthName', 'Date.DayOfWeekName', 'Date.StartOfMonth', 'Date.EndOfMonth', 'Date.DiffDays', 'Date.ToText', 'Text.Repeat', 'Text.Clean', 'Text.BeforeDelimiter', 'Text.AfterDelimiter', 'Number.Sign', 'Number.IntegerDivide', 'Number.Log', '#date', 'Coalesce', 'Value.IsNull', 'List.Contains']);
   Plan.FUNCS = FUNCS;
   const TEXT_OPS = new Set(['upper', 'lower', 'trim', 'clean']);
-  const WINDOW_OPS = new Set(['cumsum', 'row_number', 'rank', 'lag', 'lead', 'pct_of_total', 'moving_avg']);
-  const AGGS = new Set(['count_rows', 'count', 'count_distinct', 'sum', 'mean', 'median', 'min', 'max', 'first', 'last', 'concat']);
+  const WINDOW_OPS = new Set(['cumsum', 'row_number', 'rank', 'dense_rank', 'diff', 'cummax', 'cummin', 'lag', 'lead', 'pct_of_total', 'moving_avg']);
+  const AGGS = new Set(['count_rows', 'count', 'count_distinct', 'sum', 'mean', 'median', 'std', 'var', 'min', 'max', 'first', 'last', 'concat']);
   const PIVOT_AGGS = new Set(['sum', 'mean', 'count_rows', 'min', 'max', 'first', 'last', 'median']);
 
   class Refuse extends Error { }
