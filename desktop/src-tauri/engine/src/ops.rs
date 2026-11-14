@@ -467,6 +467,13 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
                     "median" => num().median(),
                     "std" => num().std(1),
                     "var" => num().var(1),
+                    "mode" => {
+                        if matches!(kind_of(s.get(c.as_str()).unwrap()), K::Text) {
+                            return Err("Mode of text runs on the built-in engine".into());
+                        }
+                        e.clone().drop_nulls().mode(true).sort(SortOptions::default()).first()
+                    }
+                    "percentile" => num().quantile(lit(a["p"].as_f64().unwrap_or(50.0).clamp(0.0, 100.0) / 100.0), QuantileMethod::Linear),
                     "min" => e.min(),
                     "max" => e.max(),
                     "first" => e.first(),
@@ -634,6 +641,8 @@ fn pivot(lf: LazyFrame, op: &Value, s: &Schema) -> R<LazyFrame> {
                     "sum" => e.cast(DataType::Float64).sum(),
                     "mean" => e.cast(DataType::Float64).mean(),
                     "median" => e.cast(DataType::Float64).median(),
+                    "std" => e.cast(DataType::Float64).std(1),
+                    "var" => e.cast(DataType::Float64).var(1),
                     "count_rows" => cond.clone().cast(DataType::Int64).sum(),
                     "min" => e.min(),
                     "max" => e.max(),
@@ -741,6 +750,34 @@ fn window(lf: LazyFrame, op: &Value, s: &Schema) -> R<LazyFrame> {
         "cummin" => {
             let m = num().fill_null(lit(f64::INFINITY)).cum_min(false);
             when(m.clone().eq(lit(f64::INFINITY))).then(lit(NULL).cast(DataType::Float64)).otherwise(m)
+        }
+        "pct_change" => {
+            let prev = num().shift(lit(1));
+            when(prev.clone().eq(lit(0.0))).then(lit(NULL).cast(DataType::Float64)).otherwise((num() - prev.clone()) / prev)
+        }
+        "rolling_min" | "rolling_max" | "rolling_sum" | "rolling_std" => {
+            if n > 500 || (f == "rolling_std" && n > 60) {
+                return Err(format!("{f} over {n} rows runs on the built-in engine"));
+            }
+            let opts = RollingOptionsFixedWindow { window_size: n as usize, min_periods: 1, weights: None, center: false, fn_params: None };
+            let cnt = || (0..n).map(|k| num().shift(lit(k)).is_not_null().cast(DataType::Float64)).reduce(|a, b| a + b).unwrap();
+            let sum = || (0..n).map(|k| num().shift(lit(k)).fill_null(lit(0.0))).reduce(|a, b| a + b).unwrap();
+            match f.as_str() {
+                "rolling_min" => num().rolling_min(opts),
+                "rolling_max" => num().rolling_max(opts),
+                "rolling_sum" => when(cnt().eq(lit(0.0))).then(lit(NULL).cast(DataType::Float64)).otherwise(sum()),
+                _ => {
+                    let mean = sum() / cnt();
+                    let ss = (0..n)
+                        .map(|k| {
+                            let v = num().shift(lit(k));
+                            when(v.clone().is_null()).then(lit(0.0)).otherwise((v.clone() - mean.clone()) * (v - mean.clone()))
+                        })
+                        .reduce(|a, b| a + b)
+                        .unwrap();
+                    when(cnt().lt(lit(2.0))).then(lit(NULL).cast(DataType::Float64)).otherwise((ss / (cnt() - lit(1.0))).sqrt())
+                }
+            }
         }
         "lag" => x().shift(lit(n)),
         "lead" => x().shift(lit(-n)),

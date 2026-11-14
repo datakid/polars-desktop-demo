@@ -180,8 +180,8 @@
       case 'IndexColumn': return (+k.step || 1) === 1 ? `.with_row_index(${py(k.name || 'Index')}, offset=${k.start || 0})` : `.with_columns((pl.int_range(pl.len()) * ${k.step} + ${k.start || 0}).alias(${py(k.name || 'Index')}))`;
       case 'DuplicateColumn': return `.with_columns(pl.col(${py(k.col)}).alias(${py(k.name || k.col + ' - Copy')}))`;
       case 'GroupBy': {
-        const map = { count_rows: () => 'pl.len()', count: (c) => `pl.col(${c}).count()`, count_distinct: (c) => `pl.col(${c}).n_unique()`, sum: (c) => `pl.col(${c}).sum()`, mean: (c) => `pl.col(${c}).mean()`, median: (c) => `pl.col(${c}).median()`, std: (c) => `pl.col(${c}).std()`, var: (c) => `pl.col(${c}).var()`, min: (c) => `pl.col(${c}).min()`, max: (c) => `pl.col(${c}).max()`, first: (c) => `pl.col(${c}).first()`, last: (c) => `pl.col(${c}).last()`, concat: (c, a) => `pl.col(${c}).cast(pl.String).str.join(${py(a.sep === undefined ? ', ' : a.sep)})` };
-        const aggs = (k.aggs || []).map((a) => `${map[a.fn](py(a.col), a)}.alias(${py(a.name || (PQ.Engine ? PQ.Engine.AGG[a.fn].label : a.fn) + (a.col ? ' of ' + a.col : ''))})`);
+        const map = { count_rows: () => 'pl.len()', count: (c) => `pl.col(${c}).count()`, count_distinct: (c) => `pl.col(${c}).n_unique()`, sum: (c) => `pl.col(${c}).sum()`, mean: (c) => `pl.col(${c}).mean()`, median: (c) => `pl.col(${c}).median()`, std: (c) => `pl.col(${c}).std()`, mode: (c) => `pl.col(${c}).drop_nulls().mode().sort().first()`, percentile: (c, a) => `pl.col(${c}).quantile(${(a.p === undefined || a.p === '' ? 50 : +a.p) / 100}, "linear")`, var: (c) => `pl.col(${c}).var()`, min: (c) => `pl.col(${c}).min()`, max: (c) => `pl.col(${c}).max()`, first: (c) => `pl.col(${c}).first()`, last: (c) => `pl.col(${c}).last()`, concat: (c, a) => `pl.col(${c}).cast(pl.String).str.join(${py(a.sep === undefined ? ', ' : a.sep)})` };
+        const aggs = (k.aggs || []).map((a) => `${map[a.fn](py(a.col), a)}.alias(${py(a.name || (PQ.Engine ? PQ.Engine.aggName(a) : a.fn + (a.col ? ' of ' + a.col : '')))})`);
         if (!k.keys || !k.keys.length) return `.select(${aggs.join(', ')})`;
         return `.group_by(${pyList(k.keys)}, maintain_order=True).agg(\n        ${aggs.join(',\n        ')},\n    )`;
       }
@@ -200,7 +200,7 @@
       case 'Window': {
         const over = k.partition && k.partition.length ? `.over(${pyList(k.partition)})` : '';
         const c = `pl.col(${py(k.col || '')})`;
-        const e = { cumsum: `${c}.cum_sum()`, row_number: `pl.int_range(1, pl.len() + 1)`, rank: `${c}.rank("min", descending=True)`, dense_rank: `${c}.rank("dense", descending=True)`, diff: `${c}.diff()`, cummax: `${c}.cum_max()`, cummin: `${c}.cum_min()`, lag: `${c}.shift(${k.n || 1})`, lead: `${c}.shift(-${k.n || 1})`, pct_of_total: `${c} / ${c}.sum()`, moving_avg: `${c}.rolling_mean(${k.n || 3}, min_samples=1)` }[k.op];
+        const e = { cumsum: `${c}.cum_sum()`, row_number: `pl.int_range(1, pl.len() + 1)`, rank: `${c}.rank("min", descending=True)`, dense_rank: `${c}.rank("dense", descending=True)`, diff: `${c}.diff()`, cummax: `${c}.cum_max()`, cummin: `${c}.cum_min()`, pct_change: `pl.when(${c}.shift(1) != 0).then((${c} - ${c}.shift(1)) / ${c}.shift(1))`, rolling_sum: `${c}.rolling_sum(${k.n || 3}, min_samples=1)`, rolling_min: `${c}.rolling_min(${k.n || 3}, min_samples=1)`, rolling_max: `${c}.rolling_max(${k.n || 3}, min_samples=1)`, rolling_std: `${c}.rolling_std(${k.n || 3}, min_samples=2)`, lag: `${c}.shift(${k.n || 1})`, lead: `${c}.shift(-${k.n || 1})`, pct_of_total: `${c} / ${c}.sum()`, moving_avg: `${c}.rolling_mean(${k.n || 3}, min_samples=1)` }[k.op];
         return (k.orderBy ? `.sort(${py(k.orderBy)}${k.desc ? ', descending=True' : ''})` : '') + `.with_columns(${e}${over}.alias(${py(k.name || k.op)}))`;
       }
       case 'ExpandJson': return `.with_columns(pl.col(${py(k.col)}).str.json_decode()).unnest(${py(k.col)})`;

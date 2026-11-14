@@ -162,9 +162,10 @@
     const numCols = ctx.schema.filter((c) => c.type === 'int' || c.type === 'number');
     const aggs = W.rows(k.aggs, (a, ch) => {
       const nm = W.text(a.name || '', { placeholder: 'Output name (auto)' }), fn = W.select(AGG_OPTS(), a.fn || 'sum'), col = W.colSelect(ctx.schema, a.col || (numCols[0] || ctx.schema[0] || {}).name);
-      const sync = () => { col.style.visibility = fn.value === 'count_rows' ? 'hidden' : ''; };
-      [nm, fn, col].forEach((x) => onAny(x, () => { sync(); ch(); })); sync();
-      return { el: h('div.grid-3', nm, fn, col), get: () => ({ name: nm.value.trim() || undefined, fn: fn.value, col: fn.value === 'count_rows' ? undefined : col.value }) };
+      const pct = W.num(a.p === undefined ? 50 : a.p, { min: 0, max: 100, step: 'any' }), pctField = W.field('Percentile (0–100)', pct);
+      const sync = () => { col.style.visibility = fn.value === 'count_rows' ? 'hidden' : ''; pctField.classList.toggle('hidden', fn.value !== 'percentile'); };
+      [nm, fn, col, pct].forEach((x) => onAny(x, () => { sync(); ch(); })); sync();
+      return { el: h('div.col', h('div.grid-3', nm, fn, col), pctField), get: () => ({ name: nm.value.trim() || undefined, fn: fn.value, col: fn.value === 'count_rows' ? undefined : col.value, p: fn.value === 'percentile' ? (pct.value === '' ? 50 : +pct.value) : undefined }) };
     }, () => ({ fn: 'count_rows', name: 'Count' }), 'Add aggregation', ctx.changed);
     return { el: h('div.col', W.field('Group by (none = aggregate the whole table)', keys), W.field('Aggregations · Name · Operation · Column', aggs)), get: () => ({ type: 'GroupBy', keys: keys.get(), aggs: aggs.get() }) };
   };
@@ -175,7 +176,7 @@
     return { el: h('div.col', W.field('Mode', mode), W.field('Columns', m), h('div.grid-2', W.field('Attribute column', v), W.field('Value column', val))), get: () => mode.value === 'ids' ? { type: 'Unpivot', ids: m.get(), var: v.value || 'Attribute', val: val.value || 'Value' } : { type: 'Unpivot', ids: ctx.schema.map((c) => c.name).filter((n) => !m.get().includes(n)), values: m.get(), var: v.value || 'Attribute', val: val.value || 'Value' } };
   };
   F.Pivot = (k, ctx) => {
-    const on = onAny(W.colSelect(ctx.schema, k.on || ctx.focusCol), ctx.changed), vals = onAny(W.colSelect(ctx.schema, k.values, { empty: '(count rows)' }), ctx.changed), agg = onAny(W.select(AGG_OPTS().filter(([x]) => x !== 'count_rows' && x !== 'concat'), k.agg || 'sum'), ctx.changed);
+    const on = onAny(W.colSelect(ctx.schema, k.on || ctx.focusCol), ctx.changed), vals = onAny(W.colSelect(ctx.schema, k.values, { empty: '(count rows)' }), ctx.changed), agg = onAny(W.select(AGG_OPTS().filter(([x]) => x !== 'count_rows' && x !== 'concat' && x !== 'percentile'), k.agg || 'sum'), ctx.changed);
     const idx = W.colMulti(ctx.schema, k.index, ctx.changed);
     return { el: h('div.col', h('div.grid-3', W.field('Column whose values become headers', on), W.field('Values column', vals), W.field('Aggregate', agg)), W.field('Row index (none = all others)', idx), h('div.faint', { style: { fontSize: '12px' } }, UI.icon('fa-bolt', 'tag-mat'), ' Materializes')), get: () => ({ type: 'Pivot', on: on.value, values: vals.value || undefined, agg: vals.value ? agg.value : 'count_rows', index: idx.get() }) };
   };
@@ -188,13 +189,13 @@
     return { el: h('div.col', W.field('Append these queries below the current one', others), W.field('Mode', mode)), get: () => ({ type: 'Append', others: [...set], mode: mode.value }) };
   };
   F.Window = (k, ctx) => {
-    const op = onAny(W.select([['cumsum', 'Running total'], ['row_number', 'Row number'], ['rank', 'Rank (descending)'], ['dense_rank', 'Dense rank (descending)'], ['diff', 'Change from previous'], ['cummax', 'Running max'], ['cummin', 'Running min'], ['lag', 'Previous value (lag)'], ['lead', 'Next value (lead)'], ['pct_of_total', '% of total'], ['moving_avg', 'Moving average']], k.op || 'cumsum'), ctx.changed);
+    const op = onAny(W.select([['cumsum', 'Running total'], ['row_number', 'Row number'], ['rank', 'Rank (descending)'], ['dense_rank', 'Dense rank (descending)'], ['diff', 'Change from previous'], ['cummax', 'Running max'], ['cummin', 'Running min'], ['pct_change', '% change from previous'], ['rolling_sum', 'Rolling sum'], ['rolling_min', 'Rolling min'], ['rolling_max', 'Rolling max'], ['rolling_std', 'Rolling std deviation'], ['lag', 'Previous value (lag)'], ['lead', 'Next value (lead)'], ['pct_of_total', '% of total'], ['moving_avg', 'Moving average']], k.op || 'cumsum'), ctx.changed);
     const col = onAny(W.colSelect(ctx.schema, k.col || ctx.focusCol), ctx.changed), nm = onAny(W.text(k.name || ''), { placeholder: 'auto' }); onAny(nm, ctx.changed);
     const part = W.colMulti(ctx.schema, k.partition, ctx.changed), ord = onAny(W.colSelect(ctx.schema, k.orderBy, { empty: '(current order)' }), ctx.changed), n = onAny(W.num(k.n || 1, { min: 1 }), ctx.changed);
     const fN = W.field('N (offset / window)', n), fC = W.field('Column', col);
-    const sync = () => { fN.classList.toggle('hidden', !['lag', 'lead', 'moving_avg'].includes(op.value)); fC.classList.toggle('hidden', op.value === 'row_number'); };
+    const sync = () => { fN.classList.toggle('hidden', !['lag', 'lead', 'moving_avg', 'rolling_sum', 'rolling_min', 'rolling_max', 'rolling_std'].includes(op.value)); fC.classList.toggle('hidden', op.value === 'row_number'); };
     op.addEventListener('change', sync); sync();
-    return { el: h('div.col', h('div.grid-3', W.field('Operation', op), fC, W.field('New column name', nm)), h('div.grid-2', W.field('Order by', ord), fN), W.field('Partition by (restart per group)', part)), get: () => ({ type: 'Window', op: op.value, col: op.value === 'row_number' ? undefined : col.value, name: nm.value.trim() || ({ cumsum: 'Running total', row_number: 'Row number', rank: 'Rank', dense_rank: 'Dense rank', diff: 'Change', cummax: 'Running max', cummin: 'Running min', lag: 'Previous', lead: 'Next', pct_of_total: '% of total', moving_avg: 'Moving avg' }[op.value]), partition: part.get(), orderBy: ord.value || undefined, n: +n.value }) };
+    return { el: h('div.col', h('div.grid-3', W.field('Operation', op), fC, W.field('New column name', nm)), h('div.grid-2', W.field('Order by', ord), fN), W.field('Partition by (restart per group)', part)), get: () => ({ type: 'Window', op: op.value, col: op.value === 'row_number' ? undefined : col.value, name: nm.value.trim() || ({ cumsum: 'Running total', row_number: 'Row number', rank: 'Rank', dense_rank: 'Dense rank', diff: 'Change', cummax: 'Running max', cummin: 'Running min', pct_change: '% change', rolling_sum: 'Rolling sum', rolling_min: 'Rolling min', rolling_max: 'Rolling max', rolling_std: 'Rolling std', lag: 'Previous', lead: 'Next', pct_of_total: '% of total', moving_avg: 'Moving avg' }[op.value]), partition: part.get(), orderBy: ord.value || undefined, n: +n.value }) };
   };
   F.ExpandJson = (k, ctx) => { const c = onAny(W.colSelect(ctx.schema, k.col || ctx.focusCol), ctx.changed); return { el: h('div.col', W.field('Column containing JSON', c), h('p.muted', { style: { margin: 0 } }, 'Objects expand into columns (ExpandStruct); arrays expand into rows (ExplodeList).')), get: () => ({ type: 'ExpandJson', col: c.value }) }; };
   F.CustomSql = (k, ctx) => {
