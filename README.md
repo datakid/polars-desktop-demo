@@ -195,7 +195,7 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 **Runs on built-in (with the reason shown):**
 - Sources: JSON, folders, Excel tables, named ranges, multi-sheet sources, merged-cell fill, non-UTF-8 CSV, pasted files.
 - Steps: Sample, ClusterValues, Validate, ExpandJson, Transpose, DemoteHeaders, Custom SQL, Proper case, split by negative positions.
-- Formula functions without a Polars mapping, such as `Text.Similarity`, `Text.Proper`, `Text.Repeat`, `Date.From`, `Date.ToText` and `Value.IsError`. Dialog previews also stay on built-in.
+- Formula functions without a Polars mapping, such as `Text.Similarity`, `Text.Proper`, `Date.From` and `Value.IsError`. Dialog previews also stay on built-in.
 
 **Known differences:**
 - Polars sorts text in plain character order, while the built-in engine uses natural, accent-insensitive order. This also decides the minimum and maximum shown for text columns in the profile.

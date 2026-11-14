@@ -406,6 +406,28 @@ fn diff_days(from: Expr, to: Expr) -> Expr {
     ((to_ms_f(to) - to_ms_f(from)) / lit(DAY_MS as f64) + lit(0.5)).floor().cast(DataType::Int64)
 }
 
+fn to_strftime(f: &str) -> String {
+    const TOKENS: [(&str, &str); 8] = [("yyyy", "%Y"), ("MMMM", "%B"), ("MMM", "%b"), ("MM", "%m"), ("dd", "%d"), ("HH", "%H"), ("mm", "%M"), ("ss", "%S")];
+    let mut out = String::new();
+    let mut rest = f;
+    'scan: while let Some(c) = rest.chars().next() {
+        for (token, spec) in TOKENS {
+            if let Some(tail) = rest.strip_prefix(token) {
+                out.push_str(spec);
+                rest = tail;
+                continue 'scan;
+            }
+        }
+        if c == '%' {
+            out.push_str("%%");
+        } else {
+            out.push(c);
+        }
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
 fn call(n: &Value, cx: &Cx) -> R<(Expr, K)> {
     let f = s(n, "fn");
     let raw = n["args"].as_array().cloned().unwrap_or_default();
@@ -513,6 +535,30 @@ fn call(n: &Value, cx: &Cx) -> R<(Expr, K)> {
             let (d, k) = date(0)?;
             let m = signed_int_arg(n, 1, &f)?;
             (d.dt().offset_by(lit(format!("{m}mo"))), k)
+        }
+        "Text.Repeat" => {
+            let times = int_arg(n, 1, &f)?;
+            if times > 1000 {
+                return Err(format!("{f} with more than 1000 repeats runs on the built-in engine"));
+            }
+            let x = t(0)?;
+            if times <= 0 {
+                (x.str().head(lit(0i64)), K::Text)
+            } else {
+                (concat_str(vec![x; times as usize], "", false), K::Text)
+            }
+        }
+        "Date.ToText" => {
+            let fmt = if raw.len() > 1 {
+                if raw[1]["k"] != "lit" {
+                    return Err(format!("{f} needs a fixed format in Polars"));
+                }
+                raw[1]["v"].as_str().ok_or_else(|| format!("{f} needs a fixed format in Polars"))?.to_string()
+            } else {
+                String::new()
+            };
+            let fmt = if fmt.is_empty() { "yyyy-MM-dd".to_string() } else { fmt };
+            (date(0)?.0.cast(DataType::Datetime(TimeUnit::Milliseconds, None)).dt().strftime(&to_strftime(&fmt)), K::Text)
         }
         "Date.DiffDays" => (diff_days(date(0)?.0, date(1)?.0), K::Num),
         "#date" => {
