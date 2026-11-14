@@ -273,12 +273,19 @@ pub fn profile(id: &str, name: &str) -> R<Value> {
     let ty = floe_type(c.dtype());
     let n = c.len();
     let errors = df.column(&format!("{ERR_PREFIX}{name}")).ok().and_then(|e| e.bool().ok().map(|b| b.sum().unwrap_or(0) as usize)).unwrap_or(0);
-    let non_null = c.drop_nulls();
+    let mut non_null = c.drop_nulls();
     let mut empty = c.null_count().saturating_sub(errors);
+    let keep: Option<BooleanChunked> = non_null.str().ok().map(|s| s.iter().map(|v| v.map(|x| !x.is_empty())).collect());
+    if let Some(k) = keep {
+        let kept = k.sum().unwrap_or(0) as usize;
+        if kept < non_null.len() {
+            empty += non_null.len() - kept;
+            non_null = non_null.filter(&k).s()?;
+        }
+    }
     let mut min_len = None;
     let mut max_len = None;
     if let Ok(s) = non_null.str() {
-        empty += s.iter().filter(|v| matches!(v, Some(""))).count();
         let lens: Vec<usize> = s.iter().flatten().map(|x| x.chars().count()).collect();
         min_len = lens.iter().min().copied();
         max_len = lens.iter().max().copied();

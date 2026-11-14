@@ -47,6 +47,11 @@ fn key(v: &Value) -> String {
 }
 
 fn setup() -> Option<(Value, String)> {
+    static READY: std::sync::OnceLock<Option<(Value, String)>> = std::sync::OnceLock::new();
+    READY.get_or_init(write_inputs).clone()
+}
+
+fn write_inputs() -> Option<(Value, String)> {
     let fx = fixtures()?;
     let dir = std::env::temp_dir().join(format!("floe_ops_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
