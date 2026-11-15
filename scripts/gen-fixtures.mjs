@@ -29,6 +29,7 @@ const INPUTS = {
   'customers.csv': ['customer_id,name,segment', 'C1,Ana Silva,Consumer', 'C2,Ben Novak,SMB', 'C3,Chloé Martin,Enterprise', 'C9,Nobody,SMB'].join('\n'),
   'de.csv': ['datum;betrag;menge', '03.04.2026;1.234,50;2', '15.04.2026;12,5;3', '01.05.2026;abc;1'].join('\n'),
   'report.csv': ['ACME report,,', 'generated,,', 'Region,Product,Units', 'EU,Widget,10', ',Gadget,5', 'US,Widget,7', ',Gadget,', 'APAC,Widget,3'].join('\n'),
+  'casing.csv': ['g,v', '1,b', '1,B', '1,a', '1,b', '1,B', '2,é', '2,z', '2,Z', '3,x', '3,', '3,x'].join('\n'),
   'tags.csv': ['id,tags,name', '1,"a, b, c",  Ana  ', '2,b,BEN', '3,,chloé martin'].join('\n'),
   'halves.csv': [
     'id,x,a,b',
@@ -93,6 +94,10 @@ const CASES = [
   ['pivot var', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'qty', agg: 'var', index: ['region'] }]],
   ['window percent change and rolling functions', 'orders.csv', [types, { type: 'Window', op: 'pct_change', col: 'qty', partition: ['region'], orderBy: 'order_date', name: 'pc' }, { type: 'Window', op: 'rolling_sum', col: 'qty', n: 2, partition: ['region'], orderBy: 'order_date', name: 'rs' }, { type: 'Window', op: 'rolling_min', col: 'discount', n: 3, orderBy: 'order_date', name: 'rmin' }, { type: 'Window', op: 'rolling_max', col: 'discount', n: 3, orderBy: 'order_date', name: 'rmax' }, { type: 'Window', op: 'rolling_std', col: 'qty', n: 3, orderBy: 'order_date', name: 'rsd' }, { type: 'Window', op: 'rolling_std', col: 'qty', n: 1, orderBy: 'order_date', name: 'rsd1' }, { type: 'Window', op: 'rolling_sum', col: 'qty', n: 4, orderBy: 'order_date', desc: true, name: 'rs4' }]],
   ['percent change with a zero base', 'halves.csv', [{ type: 'ChangeType', onError: 'null', changes: [{ col: 'id', type: 'int' }] }, { type: 'AddColumn', name: 'z', formula: '[id] - 1' }, { type: 'Window', op: 'pct_change', col: 'z', name: 'pc' }]],
+  ['mode on text breaks ties by code point order', 'casing.csv', [{ type: 'GroupBy', keys: ['g'], aggs: [{ fn: 'mode', col: 'v', name: 'm' }, { fn: 'count_rows', name: 'n' }] }]],
+  ['mode on text over the whole table and several columns', 'orders.csv', [types, { type: 'GroupBy', keys: ['region'], aggs: [{ fn: 'mode', col: 'status', name: 'm_status' }, { fn: 'mode', col: 'customer_id', name: 'm_cust' }] }, { type: 'GroupBy', keys: [], aggs: [{ fn: 'mode', col: 'm_cust', name: 'all_cust' }] }]],
+  ['pivot mode on numbers and text', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'qty', agg: 'mode', index: ['region'] }]],
+  ['pivot mode on text values', 'orders.csv', [types, { type: 'Pivot', on: 'region', values: 'customer_id', agg: 'mode', index: ['status'] }]],
   ['append diagonal', 'orders.csv', [{ type: 'SelectColumns', cols: ['customer_id', 'region'] }, { type: 'Append', others: ['customers'], mode: 'diagonal' }]],
 ];
 

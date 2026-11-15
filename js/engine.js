@@ -132,6 +132,12 @@
     return ss / (a.length - 1);
   }
 
+  function cmpCodePoints(a, b) {
+    const x = Array.from(a), y = Array.from(b), n = Math.min(x.length, y.length);
+    for (let i = 0; i < n; i++) { const d = x[i].codePointAt(0) - y[i].codePointAt(0); if (d) return d; }
+    return x.length - y.length;
+  }
+
   function percentileOf(vals, p) {
     const a = vals.filter((v) => typeof v === 'number').sort((x, y) => x - y);
     if (!a.length) return null;
@@ -153,7 +159,7 @@
       const counts = new Map();
       for (const v of vals) { if (v === null || v === undefined || isErr(v)) continue; const k = keyOf(v), e = counts.get(k); if (e) e.n++; else counts.set(k, { v, n: 1 }); }
       let best = null;
-      for (const e of counts.values()) if (best === null || e.n > best.n || (e.n === best.n && compareValues(e.v, best.v, true) < 0)) best = e;
+      for (const e of counts.values()) if (best === null || e.n > best.n || (e.n === best.n && (typeof e.v === 'string' && typeof best.v === 'string' ? cmpCodePoints(e.v, best.v) : compareValues(e.v, best.v, true)) < 0)) best = e;
       return best ? best.v : null;
     } },
     percentile: { label: 'Percentile', type: () => 'number', fn: (vals, sep, a) => percentileOf(vals, a && a.p) },
