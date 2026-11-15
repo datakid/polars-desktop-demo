@@ -82,7 +82,8 @@
       ['pct_change', 'rolling_sum', 'rolling_min', 'rolling_max', 'rolling_std'].forEach((op) => assertEq(ok({ type: 'Window', op, col: 'qty', name: 'w' }).n, op === 'pct_change' ? 1 : 3));
       const refused = (k) => !PQ.Plan.lower(proj([src, k]), 'q1', files).ok;
       assert(refused({ type: 'GroupBy', keys: [], aggs: [{ fn: 'percentile', col: 'qty', p: 101 }] }), 'percentile above 100');
-      assert(refused({ type: 'Pivot', on: 'region', values: 'qty', agg: 'mode', index: [] }), 'pivot mode');
+      assert(!refused({ type: 'Pivot', on: 'region', values: 'qty', agg: 'mode', index: [] }), 'pivot mode');
+      assert(refused({ type: 'Pivot', on: 'region', values: 'qty', agg: 'percentile', index: [] }), 'pivot percentile');
       assert(refused({ type: 'Window', op: 'rolling_std', col: 'qty', n: 61 }), 'rolling std wider than 60');
       assert(refused({ type: 'Window', op: 'moving_avg', col: 'qty', n: 501 }), 'moving average wider than 500');
       assert(!refused({ type: 'Window', op: 'rolling_sum', col: 'qty', n: 500 }), 'rolling sum of 500');
@@ -135,6 +136,14 @@
     const r = E.X.GroupBy(t, { keys: ['k'], aggs: [{ fn: 'mode', col: 'v', name: 'm' }, { fn: 'percentile', col: 'v', p: 50, name: 'p50' }, { fn: 'percentile', col: 'v', p: 25, name: 'p25' }, { fn: 'percentile', col: 'v', name: 'dflt' }] });
     assertEq(r.toRows(), [['a', 2, 2, 1.75, 2], ['b', 4, 4.5, 4.25, 4.5], ['c', null, null, null, null]]);
     assertEq(r.names, ['k', 'm', 'p50', 'p25', 'dflt']);
+  });
+  test('GroupBy: mode on text breaks ties by code point order, not locale order', () => {
+    const t = T.fromRows(['g', 'v'], [[1, 'b'], [1, 'B'], [1, 'a'], [2, 'é'], [2, 'z'], [2, 'Z'], [3, 'x'], [3, null], [3, 'x']], ['int', 'text']);
+    assertEq(E.X.GroupBy(t, { keys: ['g'], aggs: [{ fn: 'mode', col: 'v', name: 'm' }] }).toRows(), [[1, 'B'], [2, 'Z'], [3, 'x']]);
+  });
+  test('Pivot: mode keeps the value type and picks the most frequent value per cell', () => {
+    const t = T.fromRows(['k', 'm', 'v'], [['a', 'x', 'p'], ['a', 'x', 'q'], ['a', 'x', 'q'], ['a', 'y', 'r']], ['text', 'text', 'text']);
+    assertEq(E.X.Pivot(t, { on: 'm', values: 'v', agg: 'mode', index: ['k'] }).toRows(), [['a', 'q', 'r']]);
   });
   test('GroupBy: percentile default name carries the percentage', () => {
     const t = T.fromRows(['v'], [[1], [2], [3]], ['int']);

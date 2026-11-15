@@ -467,12 +467,7 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
                     "median" => num().median(),
                     "std" => num().std(1),
                     "var" => num().var(1),
-                    "mode" => {
-                        if matches!(kind_of(s.get(c.as_str()).unwrap()), K::Text) {
-                            return Err("Mode of text runs on the built-in engine".into());
-                        }
-                        e.clone().drop_nulls().mode(true).sort(SortOptions::default()).first()
-                    }
+                    "mode" => e.clone().drop_nulls().mode(true).sort(SortOptions::default()).first(),
                     "percentile" => num().quantile(lit(a["p"].as_f64().unwrap_or(50.0).clamp(0.0, 100.0) / 100.0), QuantileMethod::Linear),
                     "min" => e.min(),
                     "max" => e.max(),
@@ -641,6 +636,7 @@ fn pivot(lf: LazyFrame, op: &Value, s: &Schema) -> R<LazyFrame> {
                     "sum" => e.cast(DataType::Float64).sum(),
                     "mean" => e.cast(DataType::Float64).mean(),
                     "median" => e.cast(DataType::Float64).median(),
+                    "mode" => e.clone().drop_nulls().mode(true).sort(SortOptions::default()).first(),
                     "std" => e.cast(DataType::Float64).std(1),
                     "var" => e.cast(DataType::Float64).var(1),
                     "count_rows" => cond.clone().cast(DataType::Int64).sum(),

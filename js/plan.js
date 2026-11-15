@@ -7,7 +7,7 @@
   const TEXT_OPS = new Set(['upper', 'lower', 'trim', 'clean']);
   const WINDOW_OPS = new Set(['cumsum', 'row_number', 'rank', 'dense_rank', 'diff', 'cummax', 'cummin', 'pct_change', 'rolling_sum', 'rolling_min', 'rolling_max', 'rolling_std', 'lag', 'lead', 'pct_of_total', 'moving_avg']);
   const AGGS = new Set(['count_rows', 'count', 'count_distinct', 'sum', 'mean', 'median', 'std', 'var', 'mode', 'percentile', 'min', 'max', 'first', 'last', 'concat']);
-  const PIVOT_AGGS = new Set(['sum', 'mean', 'count_rows', 'min', 'max', 'first', 'last', 'median', 'std', 'var']);
+  const PIVOT_AGGS = new Set(['sum', 'mean', 'count_rows', 'min', 'max', 'first', 'last', 'median', 'std', 'var', 'mode']);
 
   class Refuse extends Error { }
   const refuse = (msg) => { throw new Refuse(msg); };
