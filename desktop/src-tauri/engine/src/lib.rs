@@ -354,6 +354,39 @@ pub fn distinct(id: &str, name: &str) -> R<Value> {
     Ok(json!({ "values": out }))
 }
 
+fn tmp_path(path: &str) -> std::path::PathBuf {
+    let target = std::path::Path::new(path);
+    let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
+    match target.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir.join(format!(".{name}.floe-tmp")),
+        _ => std::path::PathBuf::from(format!(".{name}.floe-tmp")),
+    }
+}
+
+fn write_export(df: &mut DataFrame, args: &Value, tmp: &std::path::Path, path: &str) -> R<()> {
+    let format = args["format"].as_str().unwrap_or("csv");
+    if !matches!(format, "csv" | "parquet" | "arrow" | "xlsx") {
+        return Err(format!("Unknown export format {format}"));
+    }
+    if format == "xlsx" {
+        let target = tmp.to_str().ok_or_else(|| format!("{path}: path is not valid UTF-8"))?;
+        return source::write_xlsx(df, target, args["sheet"].as_str().unwrap_or("Data"));
+    }
+    let mut f = std::fs::File::create(tmp).map_err(|e| format!("{path}: {e}"))?;
+    match format {
+        "csv" => {
+            CsvWriter::new(&mut f).include_header(true).with_date_format(Some("%Y-%m-%d".into())).with_datetime_format(Some("%Y-%m-%d %H:%M:%S".into())).finish(df).s()?;
+        }
+        "parquet" => {
+            ParquetWriter::new(&mut f).finish(df).s()?;
+        }
+        _ => {
+            IpcWriter::new(&mut f).finish(df).s()?;
+        }
+    }
+    Ok(())
+}
+
 pub fn export(args: &Value) -> R<Value> {
     let mut cx = Ctx { preview: None, truncated: false };
     let lf = build(&args["plan"], &mut cx)?;
@@ -362,23 +395,14 @@ pub fn export(args: &Value) -> R<Value> {
     df = df.select(keep).s()?;
     let path = args["path"].as_str().ok_or("export: missing path")?;
     let rows = df.height();
-    let tmp = format!("{path}.floe-tmp");
-    {
-        let mut f = std::fs::File::create(&tmp).map_err(|e| format!("{path}: {e}"))?;
-        match args["format"].as_str().unwrap_or("csv") {
-            "csv" => CsvWriter::new(&mut f).include_header(true).with_date_format(Some("%Y-%m-%d".into())).with_datetime_format(Some("%Y-%m-%d %H:%M:%S".into())).finish(&mut df).s()?,
-            "parquet" => {
-                ParquetWriter::new(&mut f).finish(&mut df).s()?;
-            }
-            "arrow" => IpcWriter::new(&mut f).finish(&mut df).s()?,
-            "xlsx" => {
-                drop(f);
-                source::write_xlsx(&df, &tmp, args["sheet"].as_str().unwrap_or("Data"))?;
-            }
-            other => return Err(format!("Unknown export format {other}")),
-        }
-    }
-    std::fs::rename(&tmp, path).or_else(|_| std::fs::copy(&tmp, path).map(|_| ()).and_then(|_| std::fs::remove_file(&tmp))).map_err(|e| format!("{path}: {e}"))?;
+    let tmp = tmp_path(path);
+    let done = write_export(&mut df, args, &tmp, path).and_then(|_| {
+        std::fs::rename(&tmp, path)
+            .or_else(|_| std::fs::copy(&tmp, path).map(|_| ()))
+            .map_err(|e| format!("{path}: {e}"))
+    });
+    let _ = std::fs::remove_file(&tmp);
+    done?;
     Ok(json!({ "rows": rows, "path": path }))
 }
 

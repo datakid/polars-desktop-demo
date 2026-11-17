@@ -275,3 +275,27 @@ fn status_reports_the_pinned_polars_version() {
     let status = floe_engine::status();
     assert_eq!(status["info"]["polars"].as_str(), Some(pinned));
 }
+
+#[test]
+fn failed_export_leaves_no_temp_file() {
+    let Some((fx, dir)) = setup() else {
+        eprintln!("tests/fixtures/parity.json missing — run `node scripts/gen-fixtures.mjs` from the repo root");
+        return;
+    };
+    let case = fx["fixtures"].as_array().unwrap().iter().find(|c| c["name"] == "types and per-cell errors").unwrap();
+    let mut plan = case["plan"].clone();
+    rewrite_paths(&mut plan, &dir);
+    let work = format!("{dir}/export-failures");
+    std::fs::create_dir_all(&work).unwrap();
+    let blocked = format!("{work}/blocked.csv");
+    std::fs::create_dir_all(&blocked).unwrap();
+    for format in ["csv", "parquet", "arrow", "xlsx"] {
+        let r = floe_engine::call("export", &json!({ "plan": plan, "path": blocked, "format": format, "sheet": "Data" }));
+        assert!(r.is_err(), "{format}: exporting onto a directory must fail");
+    }
+    let unknown = floe_engine::call("export", &json!({ "plan": plan, "path": format!("{work}/unknown.out"), "format": "nope", "sheet": "Data" }));
+    assert!(unknown.is_err(), "unknown format must fail");
+    let left: Vec<String> = std::fs::read_dir(&work).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".floe-tmp")).collect();
+    assert!(left.is_empty(), "temp files left behind: {left:?}");
+}
+
