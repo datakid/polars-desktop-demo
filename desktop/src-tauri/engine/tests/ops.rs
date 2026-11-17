@@ -262,3 +262,16 @@ fn exports_round_trip() {
         }
     }
 }
+
+#[test]
+fn status_reports_the_pinned_polars_version() {
+    let manifest = include_str!("../Cargo.toml");
+    let pinned = manifest
+        .lines()
+        .find(|l| l.trim_start().starts_with("polars = "))
+        .and_then(|l| l.split("version = \"=").nth(1))
+        .and_then(|rest| rest.split('"').next())
+        .expect("polars pin in Cargo.toml");
+    let status = floe_engine::status();
+    assert_eq!(status["info"]["polars"].as_str(), Some(pinned));
+}

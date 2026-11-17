@@ -20,6 +20,7 @@ impl<T> S<T> for PolarsResult<T> {
 }
 
 pub const ERR_PREFIX: &str = "__err_";
+pub const POLARS_VERSION: &str = "0.55.2";
 
 pub fn is_num(d: &DataType) -> bool {
     matches!(
@@ -138,7 +139,7 @@ fn with_store<T>(f: impl FnOnce(&mut Store) -> T) -> T {
 }
 
 pub fn status() -> Value {
-    json!({ "available": true, "info": { "polars": "0.46", "version": env!("CARGO_PKG_VERSION"), "engine": "floe-engine" } })
+    json!({ "available": true, "info": { "polars": POLARS_VERSION, "version": env!("CARGO_PKG_VERSION"), "engine": "floe-engine" } })
 }
 
 pub fn cancel() {
