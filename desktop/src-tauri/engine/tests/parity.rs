@@ -27,6 +27,13 @@ fn same(a: &Value, b: &Value) -> bool {
     }
 }
 
+fn fixture_form(v: &Value) -> Value {
+    match v {
+        Value::Object(o) if o.len() == 1 && o.contains_key("__date") => json!({ "d": o["__date"] }),
+        other => other.clone(),
+    }
+}
+
 #[test]
 fn parity_with_builtin_engine() {
     let Some(fx) = fixtures() else {
@@ -60,7 +67,7 @@ fn parity_with_builtin_engine() {
             failures.push(format!("{name}: schema\n    got      {}\n    expected {}", r["schema"], exp["schema"]));
             continue;
         }
-        let got = floe_engine::rows(r["resultId"].as_str().unwrap(), 200).unwrap();
+        let got: Vec<Vec<Value>> = floe_engine::rows(r["resultId"].as_str().unwrap(), 200).unwrap().iter().map(|row| row.iter().map(fixture_form).collect()).collect();
         for (i, (g, e)) in got.iter().zip(exp["rows"].as_array().unwrap()).enumerate() {
             let e = e.as_array().unwrap();
             if g.len() != e.len() || !g.iter().zip(e).all(|(a, b)| same(a, b)) {

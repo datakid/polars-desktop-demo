@@ -299,3 +299,24 @@ fn failed_export_leaves_no_temp_file() {
     assert!(left.is_empty(), "temp files left behind: {left:?}");
 }
 
+#[test]
+fn rows_and_profile_share_one_date_wire_format() {
+    let Some((fx, dir)) = setup() else {
+        eprintln!("tests/fixtures/parity.json missing — run `node scripts/gen-fixtures.mjs` from the repo root");
+        return;
+    };
+    let case = fx["fixtures"].as_array().unwrap().iter().find(|c| c["name"] == "types and per-cell errors").unwrap();
+    let mut plan = case["plan"].clone();
+    rewrite_paths(&mut plan, &dir);
+    let r = floe_engine::call("evaluate", &json!({ "plan": plan, "mode": "full", "previewRows": 1000 })).unwrap();
+    let id = r["resultId"].as_str().unwrap();
+    let schema = r["schema"].as_array().unwrap();
+    let ix = schema.iter().position(|c| c["type"] == "date").expect("a date column");
+    let name = schema[ix]["name"].as_str().unwrap();
+    let rows = floe_engine::rows(id, 50).unwrap();
+    let cell = rows.iter().map(|row| &row[ix]).find(|v| v.is_object()).expect("a date cell");
+    assert!(cell.get("__date").is_some(), "rows date cell: {cell}");
+    let profile = floe_engine::call("profile", &json!({ "resultId": id, "col": name })).unwrap();
+    assert!(profile["profile"]["min"].get("__date").is_some(), "profile min: {}", profile["profile"]["min"]);
+}
+

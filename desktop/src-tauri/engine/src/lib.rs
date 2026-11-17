@@ -261,8 +261,7 @@ pub fn rows(id: &str, limit: usize) -> R<Vec<Vec<Value>>> {
                 row.push(json!("#ERR"));
                 continue;
             }
-            let v = wire(c.get(r).unwrap_or(AnyValue::Null));
-            row.push(if (ty == "date" || ty == "datetime") && v.is_number() { json!({ "d": v }) } else { v });
+            row.push(date_wrap(wire(c.get(r).unwrap_or(AnyValue::Null)), ty));
         }
     }
     Ok(out)
