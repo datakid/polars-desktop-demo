@@ -101,7 +101,10 @@
       const states = q.steps.slice(0, upto + 1).map((s, i) => (i === upto ? { ok: true, rows: r.n, cols: r.schema.length, schema: r.schema, ms: r.ms, cached: false, truncated: r.truncated } : { ok: true, rows: 0, cols: 0, ms: 0, cached: false, native: true }));
       const out = { resultId: r.resultId, n: r.n, schema: r.schema, quality: r.quality, states, ms: r.ms, truncated: r.truncated, failedAt: -1, fp: null, engine: 'polars', note: 'Polars runs the whole query at once, so row counts are shown for the selected step only.' };
       out.firstPage = guard(gen, await page(r.resultId, 0, 200));
-      out.suggestions = await UI.Engine.callWorker('evaluate', { qid: msg.qid, upto: msg.upto, mode: 'preview' }).then((x) => { out.fp = x.fp || null; return x.suggestions || []; }, () => []);
+      let derived = null;
+      out.suggestions = [];
+      out.fp = null;
+      out.derive = () => derived || (derived = UI.Engine.callWorker('evaluate', { qid: msg.qid, upto: msg.upto, mode: 'preview' }).then((x) => { out.fp = x.fp || null; out.suggestions = x.suggestions || []; return out; }, () => out));
       return out;
     }
     if (op === 'exportQuery') {

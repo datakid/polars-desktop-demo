@@ -323,6 +323,7 @@
         App.result = r;
         App.grid.setResult({ resultId: r.resultId, schema: r.schema, n: r.n, quality: r.quality, firstPage: r.firstPage }, opts.keepScroll);
         renderSuggestions(r.suggestions || []);
+        if (typeof r.derive === 'function') r.derive().then(() => { if (App.result !== r) return; renderSuggestions(r.suggestions || []); if (Store.ui.rightTab === 'overview') renderRight(); });
       } else {
         App.result = null;
         App.grid.setResult(null);

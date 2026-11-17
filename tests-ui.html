@@ -106,6 +106,40 @@ f.addEventListener('load', async () => {
     UI().Store.undoOne();
     await sleep(600);
     if (JSON.stringify(names()) !== JSON.stringify(before)) throw new Error('undo after reorder failed');
+    await sleep(800);
+    const inject = (src) => new Promise((res, rej) => { const el = w.document.createElement('script'); el.src = src; el.onload = res; el.onerror = () => rej(new Error(src + ' failed to load')); w.document.head.appendChild(el); });
+    const saved = { native: UI().NativeEngine, worker: UI().Engine.callWorker, files: UI().App.files, project: UI().Engine.lastProject };
+    const stubCalls = [];
+    w.__TAURI__ = { core: { invoke: async (cmd) => {
+      stubCalls.push(cmd);
+      if (cmd === 'engine_call') return { resultId: 'pl_stub', n: 3, schema: [{ name: 'a', type: 'int' }], quality: [], ms: 1, truncated: false };
+      if (cmd === 'engine_page') return w.Arrow.tableToIPC(w.Arrow.tableFromArrays({ a: w.Int32Array.from([1, 2, 3]) }), 'stream');
+      throw new Error('unexpected command ' + cmd);
+    } } };
+    try {
+      if (!w.Arrow) await inject('vendor/arrow.es2015.min.js');
+      if (!w.PQ.Plan) await inject('js/plan.js');
+      await inject('js/native-engine.js');
+      const N = UI().NativeEngine;
+      N.ready = true; N.disabled = false; N.info = { polars: 'stub', version: '0' };
+      const project = { settings: { previewRows: 1000, locale: 'en-US' }, params: [], queries: [{ id: 'q1', name: 'Orders', steps: [{ id: 's0', name: 'Source', kind: { type: 'Source', source: { kind: 'file', fileId: 'f1', fileName: 'orders.csv', csv: { delimiter: ',' } } } }] }] };
+      UI().App.files = [{ id: 'f1', path: '/data/orders.csv' }];
+      UI().Engine.lastProject = project;
+      let workerCalls = 0;
+      UI().Engine.callWorker = () => { workerCalls++; return new Promise(() => { }); };
+      const msg = { qid: 'q1', upto: 0, mode: 'preview' };
+      if (!N.shouldRun('evaluate', msg, project)) throw new Error('stub plan was not lowered: ' + UI().Engine.nativeReason);
+      const out = await Promise.race([N.call('evaluate', msg), sleep(3000).then(() => 'TIMEOUT')]);
+      if (out === 'TIMEOUT') throw new Error('Polars evaluate waited for the built-in worker');
+      if (workerCalls !== 0) throw new Error('built-in worker ran during Polars evaluate: ' + workerCalls);
+      if (out.resultId !== 'pl_stub' || out.n !== 3 || !out.firstPage || out.firstPage.length !== 3) throw new Error('unexpected Polars result ' + JSON.stringify(out).slice(0, 200));
+      out.derive(); out.derive();
+      if (workerCalls !== 1) throw new Error('derive must start exactly one worker evaluate, got ' + workerCalls);
+      console.log('E2E polars evaluate does not block on the worker; worker calls', workerCalls, 'native commands', stubCalls.join(','));
+    } finally {
+      UI().NativeEngine = saved.native; UI().Engine.callWorker = saved.worker; UI().App.files = saved.files; UI().Engine.lastProject = saved.project;
+      delete w.__TAURI__;
+    }
     console.log('E2E DONE');
   } catch (e) { console.log('E2E FAIL', e.message, e.stack); }
 });
