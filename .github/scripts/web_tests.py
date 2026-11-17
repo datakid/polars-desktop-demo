@@ -9,7 +9,7 @@ chromium = os.environ.get("PW_CHROMIUM")
 timeout_ms = int(os.environ.get("TEST_TIMEOUT_MS", "240000"))
 
 with sync_playwright() as p:
-    options = {"args": ["--no-sandbox"]}
+    options = {"args": ["--no-sandbox", "--js-flags=--expose-gc"]}
     if chromium:
         options["executable_path"] = chromium
     browser = p.chromium.launch(**options)

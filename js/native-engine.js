@@ -33,7 +33,7 @@
     UI.Engine.nativeReason = r.ok ? null : r.reason;
     return r;
   }
-  const pending = new Map();
+  const pending = new WeakMap();
 
   N.shouldRun = function (op, msg, project) {
     if (!N.available()) { UI.Engine.nativeReason = N.disabled ? 'Polars is turned off' : null; return false; }

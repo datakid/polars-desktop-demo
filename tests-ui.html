@@ -136,6 +136,13 @@ f.addEventListener('load', async () => {
       out.derive(); out.derive();
       if (workerCalls !== 1) throw new Error('derive must start exactly one worker evaluate, got ' + workerCalls);
       console.log('E2E polars evaluate does not block on the worker; worker calls', workerCalls, 'native commands', stubCalls.join(','));
+      const collect = w.gc || self.gc;
+      if (!collect) throw new Error('garbage collection is not exposed; run the browser with --js-flags=--expose-gc');
+      let ref;
+      (() => { const abandoned = { qid: 'q1', upto: 0, mode: 'preview' }; N.shouldRun('evaluate', abandoned, project); ref = new w.WeakRef(abandoned); })();
+      for (let i = 0; i < 40 && ref.deref(); i++) { await sleep(50); collect(); }
+      if (ref.deref()) throw new Error('an abandoned evaluate request is still held by the native engine');
+      console.log('E2E abandoned native request released');
     } finally {
       UI().NativeEngine = saved.native; UI().Engine.callWorker = saved.worker; UI().App.files = saved.files; UI().Engine.lastProject = saved.project;
       delete w.__TAURI__;
