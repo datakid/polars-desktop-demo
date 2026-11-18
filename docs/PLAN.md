@@ -21,7 +21,7 @@ The rule that keeps this safe: **tracks W and D never depend on P.** P sits behi
 2. **"Export to Python (Polars script)" stays on both platforms.** It generates code. It isn't an engine and works everywhere.
 3. **The desktop runs the built-in engine by default.** If the Polars engine is present (track P), each query uses Polars when it can and the built-in engine otherwise. The user can always see which one ran.
 4. **Formula semantics live in one place: JavaScript.** If track P happens, JS lowers each query into a small JSON plan (with formula ASTs already parsed), and Rust only executes that plan. Rust never parses formulas or re-implements step logic it doesn't need. This cuts the Rust code to roughly 1,500 lines and keeps behaviour consistent.
-5. **No local Rust toolchain is assumed.** All Rust is compiled by `.github/workflows/desktop.yml`. Local `cargo` is a nice-to-have.
+5. **No local Rust toolchain is assumed.** All Rust is compiled by `.github/workflows/ci.yml` (and `release.yml` for tagged builds). Local `cargo` is a nice-to-have.
 
 ---
 
@@ -33,7 +33,7 @@ Verified in the editor sandbox:
 Written but **not yet run or compiled**:
 - `scripts/build-web.mjs`, `vercel.json` (build into `dist/`), `.vercelignore`.
 - `desktop/src-tauri/*` (Rust shell: dialogs, file I/O with path grants, drag & drop, file associations, single instance, macOS menu, close guard).
-- `.github/workflows/desktop.yml`, `.github/workflows/web-check.yml`.
+- `.github/workflows/ci.yml`, `.github/workflows/release.yml`.
 
 Polars code that still exists:
 - `js/native-engine.js`: an adapter for a Polars engine that was never built. It does nothing unless the shell's `engine_status` reports `available: true`; today the shell always reports `false`.
@@ -47,8 +47,8 @@ Polars code that still exists:
 **Goal:** a green Vercel deploy before changing anything else.
 
 1. Locally: `node scripts/build-web.mjs --target web`. It should print `[floe build] web 1.0.0 (<hash>) → dist · N files`.
-2. `npx serve dist -l 4173`, then open `http://localhost:4173/`, `/demo.html` and `/tests.html` (expect `78 passed`).
-3. Push to GitHub. `web-check.yml` must pass.
+2. `npx serve dist -l 4173`, then open `http://localhost:4173/`, `/demo.html` and `/tests.html` (expect `114 passed`).
+3. Push to GitHub. The `web` job in `ci.yml` must pass.
 4. Vercel:
    - Import the repo with root directory = repo root.
    - Framework preset "Other".
@@ -359,7 +359,7 @@ desktop/src-tauri/
 ```
 **Pin Polars to one exact version** when you start (e.g. `polars = { version = "=0.xx.y", default-features = false, features = [...] }`). Then confirm every feature name against that version's docs. Expected features: `lazy`, `csv`, `parquet`, `ipc`, `json`, `strings`, `regex`, `temporal`, `dtype-date`, `dtype-datetime`, `dtype-struct`, `is_in`, `pivot`, `cum_agg`, `rank`, `round_series`, `rolling_window`, `sql`, `concat_str`, `diagonal_concat`, `cross_join`, `semi_anti_join`, `unique_counts`, `mode`.
 
-**CI:** add a matrix flag in `desktop.yml`: `features: ["", "polars-engine"]`. That's two builds per OS.
+**CI:** add a matrix flag in `ci.yml`: `features: ["", "polars-engine"]`. That's two builds per OS.
 - The Polars build appends `--features polars-engine` to `args` and names its artifacts `Floe-<ver>-polars-*`.
 - The plain build always ships. The Polars build ships when green.
 

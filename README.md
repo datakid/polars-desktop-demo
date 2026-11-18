@@ -37,7 +37,7 @@
   - Pages come back as Arrow IPC. Exports are written straight to the chosen path.
   - Anything Polars can't run falls back to the built-in engine automatically, and the indicator shows `Built-in ↺` with the reason.
 - **Web ships no native-engine code.** `native-engine.js` is loaded only inside Tauri and is excluded from the web build.
-- Engine tests: 86 (8 new plan-lowering tests).
+- Engine tests at the 1.1 release: 86 (8 new plan-lowering tests).
   - Rust: `engine/tests/plan.rs` (unit tests).
   - `engine/tests/parity.rs` runs 27 shared cases generated from the built-in engine by `scripts/gen-fixtures.mjs` and requires Polars to give the same schema and rows, including half-way rounding cases.
   - `engine/tests/ops.rs` checks the column profile, distinct values, grid pages and exports against the built-in engine.
