@@ -485,13 +485,13 @@ mod engine_cmds {
                 return Err(format!("Floe has no permission to write {p}. Use Save As."));
             }
         }
-        tauri::async_runtime::spawn_blocking(move || std::panic::catch_unwind(|| floe_engine::call(&op, &args)).unwrap_or_else(|_| Err("Polars engine crashed on this query".into())))
+        tauri::async_runtime::spawn_blocking(move || floe_engine::guarded(|| floe_engine::call(&op, &args)))
             .await
             .map_err(|e| e.to_string())?
     }
     #[tauri::command]
     pub async fn engine_page(result_id: String, offset: usize, count: usize) -> Result<Response, String> {
-        let bytes = tauri::async_runtime::spawn_blocking(move || floe_engine::page(&result_id, offset, count)).await.map_err(|e| e.to_string())??;
+        let bytes = tauri::async_runtime::spawn_blocking(move || floe_engine::guarded(|| floe_engine::page(&result_id, offset, count))).await.map_err(|e| e.to_string())??;
         Ok(Response::new(bytes))
     }
 }

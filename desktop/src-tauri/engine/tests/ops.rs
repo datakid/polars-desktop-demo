@@ -342,3 +342,20 @@ fn page_keeps_int64_values_exact() {
     let values: Vec<Option<i64>> = col.i64().unwrap().iter().collect();
     assert_eq!(values, vec![Some(9007199254740993), Some(-9007199254740993), Some(7)]);
 }
+
+#[test]
+fn a_panic_in_the_engine_becomes_an_error() {
+    let failed = floe_engine::guarded::<()>(|| panic!("boom")).unwrap_err();
+    assert!(failed.contains("crashed") && failed.contains("boom"), "{failed}");
+    assert_eq!(floe_engine::guarded(|| Ok(7)), Ok(7));
+}
+
+#[test]
+fn release_profile_unwinds_so_engine_panics_can_be_caught() {
+    let manifest = include_str!("../../Cargo.toml");
+    let section = manifest.split("[profile.release]").nth(1).expect("release profile");
+    let section = section.split("\n[").next().unwrap();
+    assert!(!section.contains("panic = \"abort\""), "release profile aborts on panic");
+    assert!(section.contains("panic = \"unwind\""), "release profile must unwind");
+}
+

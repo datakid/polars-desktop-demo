@@ -37,5 +37,5 @@ tauri-plugin-single-instance = "2"
 codegen-units = 1
 lto = true
 opt-level = "s"
-panic = "abort"
+panic = "unwind"
 strip = true

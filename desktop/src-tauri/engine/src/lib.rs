@@ -405,6 +405,13 @@ pub fn export(args: &Value) -> R<Value> {
     Ok(json!({ "rows": rows, "path": path }))
 }
 
+pub fn guarded<T>(f: impl FnOnce() -> R<T>) -> R<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|payload| {
+        let detail = payload.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| payload.downcast_ref::<String>().cloned()).unwrap_or_default();
+        Err(if detail.is_empty() { "Polars engine crashed on this query".to_string() } else { format!("Polars engine crashed on this query: {detail}") })
+    })
+}
+
 pub fn call(op: &str, args: &Value) -> R<Value> {
     match op {
         "evaluate" => evaluate(args),
