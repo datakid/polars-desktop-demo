@@ -358,3 +358,34 @@ fn release_profile_unwinds_so_engine_panics_can_be_caught() {
     assert!(!section.contains("panic = \"abort\""), "release profile aborts on panic");
     assert!(section.contains("panic = \"unwind\""), "release profile must unwind");
 }
+
+#[test]
+fn page_keeps_the_utc_instant_of_a_zoned_datetime() {
+    let dir = std::env::temp_dir().join(format!("floe_zoned_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("zoned.parquet");
+    let zone = TimeZone::opt_try_new(Some("America/New_York")).unwrap();
+    let instants = [1735689600000i64, 1751328000000];
+    let t = Series::new("t".into(), &instants).cast(&DataType::Datetime(TimeUnit::Milliseconds, zone)).unwrap();
+    let mut df = DataFrame::new_infer_height(vec![t.into()]).unwrap();
+    ParquetWriter::new(std::fs::File::create(&file).unwrap()).finish(&mut df).unwrap();
+    let plan = json!({
+        "v": 1,
+        "locale": "en-US",
+        "source": { "kind": "parquet", "path": file.to_string_lossy().replace('\\', "/") },
+        "ops": []
+    });
+    let r = floe_engine::call("evaluate", &json!({ "plan": plan, "mode": "full", "previewRows": 1000 })).unwrap();
+    assert_eq!(r["schema"][0]["type"], "datetime");
+    let id = r["resultId"].as_str().unwrap();
+    let bytes = floe_engine::page(id, 0, 10).unwrap();
+    let page = IpcStreamReader::new(std::io::Cursor::new(bytes)).finish().unwrap();
+    let col = page.column("t").unwrap();
+    assert_eq!(col.dtype(), &DataType::Datetime(TimeUnit::Milliseconds, None));
+    let got: Vec<Option<i64>> = col.datetime().unwrap().phys.iter().collect();
+    assert_eq!(got, instants.iter().map(|v| Some(*v)).collect::<Vec<_>>());
+    let profile = floe_engine::call("profile", &json!({ "resultId": id, "col": "t" })).unwrap();
+    assert_eq!(profile["profile"]["min"]["__date"], json!(instants[0]));
+    assert_eq!(profile["profile"]["max"]["__date"], json!(instants[1]));
+}
+
