@@ -76,7 +76,7 @@ a { color: var(--accent-ink); }
 *::-webkit-scrollbar-thumb:hover { background-color: var(--faint); }
 *::-webkit-scrollbar-track { background: transparent; }
 @supports not selector(::-webkit-scrollbar) { * { scrollbar-width: thin; scrollbar-color: var(--border-2) transparent; } }
-#app { display: grid; grid-template-rows: auto auto 1fr auto; height: 100vh; padding: 0 10px 6px; gap: 8px; }
+#app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 1fr auto; height: 100vh; padding: 0 10px 6px; gap: 8px; }
 #title-bar { display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 4px; user-select: none; }
 body.native.os-mac #title-bar { padding-left: 76px; }
 .brand { display: flex; align-items: center; gap: 9px; }

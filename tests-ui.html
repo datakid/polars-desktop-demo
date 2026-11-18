@@ -165,6 +165,24 @@ f.addEventListener('load', async () => {
       UI().NativeEngine = saved.native; UI().Engine.callWorker = saved.worker; UI().App.files = saved.files; UI().Engine.lastProject = saved.project;
       delete w.__TAURI__;
     }
+    const frame = document.getElementById('f');
+    const probe = async (width, height) => {
+      frame.style.width = width + 'px'; frame.style.height = height + 'px';
+      await sleep(500);
+      const doc = w.document;
+      const over = doc.documentElement.scrollWidth - width;
+      if (over > 0) throw new Error('the page is ' + over + 'px wider than a ' + width + 'px screen');
+      const tabs = doc.querySelector('#pane-tabs').getBoundingClientRect();
+      if (tabs.right > width + 0.5) throw new Error('the pane tabs end at ' + Math.round(tabs.right) + ' on a ' + width + 'px screen');
+      for (const open of ['paramsDialog', 'cliDialog']) {
+        UI()[open](); await sleep(300);
+        const foot = doc.querySelector('.modal .modal-f').getBoundingClientRect();
+        if (foot.bottom > height + 0.5 || foot.top < 0) throw new Error(open + ' footer spans ' + Math.round(foot.top) + '-' + Math.round(foot.bottom) + ' on a ' + height + 'px screen');
+        doc.querySelector('.modal .close').click(); await sleep(250);
+      }
+      console.log('E2E phone ' + width + 'x' + height + ' fits, scrollWidth ' + doc.documentElement.scrollWidth);
+    };
+    try { await probe(390, 844); await probe(360, 640); } finally { frame.style.width = ''; frame.style.height = ''; }
     console.log('E2E DONE');
   } catch (e) { console.log('E2E FAIL', e.message, e.stack); }
 });
