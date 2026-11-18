@@ -112,8 +112,8 @@ f.addEventListener('load', async () => {
     const stubCalls = [];
     w.__TAURI__ = { core: { invoke: async (cmd) => {
       stubCalls.push(cmd);
-      if (cmd === 'engine_call') return { resultId: 'pl_stub', n: 3, schema: [{ name: 'a', type: 'int' }], quality: [], ms: 1, truncated: false };
-      if (cmd === 'engine_page') return w.Arrow.tableToIPC(w.Arrow.tableFromArrays({ a: w.Int32Array.from([1, 2, 3]) }), 'stream');
+      if (cmd === 'engine_call') return { resultId: 'pl_stub', n: 3, schema: [{ name: 'a', type: 'int' }, { name: 'big', type: 'int' }], quality: [], ms: 1, truncated: false };
+      if (cmd === 'engine_page') return w.Arrow.tableToIPC(w.Arrow.tableFromArrays({ a: w.Int32Array.from([1, 2, 3]), big: w.BigInt64Array.from([9007199254740993n, 5n, -9007199254740993n]) }), 'stream');
       throw new Error('unexpected command ' + cmd);
     } } };
     try {
@@ -133,6 +133,9 @@ f.addEventListener('load', async () => {
       if (out === 'TIMEOUT') throw new Error('Polars evaluate waited for the built-in worker');
       if (workerCalls !== 0) throw new Error('built-in worker ran during Polars evaluate: ' + workerCalls);
       if (out.resultId !== 'pl_stub' || out.n !== 3 || !out.firstPage || out.firstPage.length !== 3) throw new Error('unexpected Polars result ' + JSON.stringify(out).slice(0, 200));
+      const bigCells = out.firstPage.map((r) => r[1]);
+      if (JSON.stringify(bigCells) !== JSON.stringify(['9007199254740993', 5, '-9007199254740993'])) throw new Error('int64 cells were not kept exact: ' + JSON.stringify(bigCells));
+      console.log('E2E int64 cells', JSON.stringify(bigCells));
       out.derive(); out.derive();
       if (workerCalls !== 1) throw new Error('derive must start exactly one worker evaluate, got ' + workerCalls);
       console.log('E2E polars evaluate does not block on the worker; worker calls', workerCalls, 'native commands', stubCalls.join(','));

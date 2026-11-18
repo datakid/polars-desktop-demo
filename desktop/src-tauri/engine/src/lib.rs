@@ -212,7 +212,7 @@ pub fn page(id: &str, offset: usize, count: usize) -> R<Vec<u8>> {
         .map(|c| match c.dtype() {
             DataType::Date => c.cast(&DataType::Datetime(TimeUnit::Milliseconds, None)).unwrap_or_else(|_| c.clone()),
             DataType::Datetime(_, _) => c.cast(&DataType::Datetime(TimeUnit::Milliseconds, None)).unwrap_or_else(|_| c.clone()),
-            d if is_int(d) => c.cast(&DataType::Float64).unwrap_or_else(|_| c.clone()),
+            d if is_int(d) && !matches!(d, DataType::Int64 | DataType::UInt64) => c.cast(&DataType::Float64).unwrap_or_else(|_| c.clone()),
             DataType::Float32 => c.cast(&DataType::Float64).unwrap_or_else(|_| c.clone()),
             _ => c.clone(),
         })

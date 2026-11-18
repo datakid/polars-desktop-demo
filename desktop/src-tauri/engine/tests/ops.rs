@@ -149,6 +149,7 @@ fn cell(v: AnyValue) -> Value {
         AnyValue::String(s) => json!(s),
         AnyValue::StringOwned(s) => json!(s.as_str()),
         AnyValue::Float64(f) => json!(f),
+        AnyValue::Int64(i) => json!(i),
         AnyValue::Datetime(x, tu, _) => json!({
             "d": match tu {
                 TimeUnit::Nanoseconds => x / 1_000_000,
@@ -320,3 +321,24 @@ fn rows_and_profile_share_one_date_wire_format() {
     assert!(profile["profile"]["min"].get("__date").is_some(), "profile min: {}", profile["profile"]["min"]);
 }
 
+#[test]
+fn page_keeps_int64_values_exact() {
+    let dir = std::env::temp_dir().join(format!("floe_big_int_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("big.parquet");
+    let mut df = df!("id" => [9007199254740993i64, -9007199254740993, 7], "label" => ["a", "b", "c"]).unwrap();
+    ParquetWriter::new(std::fs::File::create(&file).unwrap()).finish(&mut df).unwrap();
+    let plan = json!({
+        "v": 1,
+        "locale": "en-US",
+        "source": { "kind": "parquet", "path": file.to_string_lossy().replace('\\', "/") },
+        "ops": []
+    });
+    let r = floe_engine::call("evaluate", &json!({ "plan": plan, "mode": "full", "previewRows": 1000 })).unwrap();
+    let bytes = floe_engine::page(r["resultId"].as_str().unwrap(), 0, 10).unwrap();
+    let page = IpcStreamReader::new(std::io::Cursor::new(bytes)).finish().unwrap();
+    let col = page.column("id").unwrap();
+    assert_eq!(col.dtype(), &DataType::Int64);
+    let values: Vec<Option<i64>> = col.i64().unwrap().iter().collect();
+    assert_eq!(values, vec![Some(9007199254740993), Some(-9007199254740993), Some(7)]);
+}

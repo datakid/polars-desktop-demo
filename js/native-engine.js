@@ -54,6 +54,7 @@
   };
 
   const ERR = '__err_';
+  const SAFE_MAX = BigInt(Number.MAX_SAFE_INTEGER);
   function decodePage(buf, schema) {
     const table = Arrow.tableFromIPC(new Uint8Array(buf));
     const cols = schema.map((c) => table.getChild(c.name));
@@ -67,7 +68,7 @@
         let v = cols[c] ? cols[c].get(r) : null;
         if (v === undefined) v = null;
         if (v !== null) {
-          if (typeof v === 'bigint') v = Number(v);
+          if (typeof v === 'bigint') v = t === 'date' || t === 'datetime' || (v >= -SAFE_MAX && v <= SAFE_MAX) ? Number(v) : v.toString();
           if (t === 'date' || t === 'datetime') v = new Date(typeof v === 'number' ? v : Number(v));
           else if (typeof v === 'object' && !(v instanceof Date)) v = String(v);
         }
