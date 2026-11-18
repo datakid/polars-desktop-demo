@@ -18,6 +18,16 @@
   test('formula: null propagation in comparison → else branch', () => assertEq(PQ.Formula.evaluate('if [sales] > 0 then 1 else 0', tbl()).values[2], 0));
   test('formula: text functions', () => assertEq(PQ.Formula.evaluate('Text.Upper(Text.Start([name], 2)) & "-" & Text.From([id])', tbl()).values, ['AN-1', 'BE-2', 'CH-3', 'DM-4', 'EV-5']));
   test('formula: in list', () => assertEq(PQ.Formula.evaluate('[region] in {"EU", "APAC"}', tbl()).values, [true, false, true, true, true]));
+  test('distinct values: capped at 1000 with exact counts and a full distinct list', () => {
+    const rows = []; for (let i = 0; i < 1500; i++) rows.push([i % 1200]);
+    const t = T.fromRows(['a'], rows, ['int']);
+    const v = PQ.Engine.distinctValues(t, 'a', 1000);
+    assertEq(v.length, 1000);
+    assert(v.every((x) => x.count >= 1), 'a returned value has no rows');
+    assertEq(v[0], { value: 0, count: 2 });
+    assertEq(v[999], { value: 999, count: 1 });
+    assertEq(PQ.Engine.distinctAll(t, 'a').length, 1200);
+  });
   test('formula: parameters', () => assertEq(PQ.Formula.evaluate('[id] * @Min', tbl(), ctx.params).values, [10, 20, 30, 40, 50]));
   test('formula: try otherwise', () => assertEq(PQ.Formula.evaluate('try 10 / ([id] - 3) otherwise -1', tbl()).values, [-5, -10, -1, 10, 5]));
   test('formula: division by zero is a cell error, not a crash', () => assert(PQ.isErr(PQ.Formula.evaluate('1 / ([id] - 3)', tbl()).values[2])));

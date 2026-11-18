@@ -174,7 +174,7 @@
 
   H.page = (m) => ({ rows: E.page(need(m.resultId), m.offset, m.count) });
   H.profile = (m) => ({ profile: E.profile(need(m.resultId), m.col) });
-  H.distinct = (m) => ({ values: E.distinctValues(need(m.resultId), m.col, 1000) });
+  H.distinct = (m) => { const all = E.distinctAll(need(m.resultId), m.col); return { values: all.slice(0, 1000), capped: all.length > 1000 }; };
   H.inspectFile = (m) => {
     const rec = PQ.Files.get(m.fileId);
     if (!rec) throw new Error('File not found');

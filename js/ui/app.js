@@ -896,9 +896,9 @@
     const apply = h('button.btn.sm.primary', 'Apply filter');
     const more = h('button.btn.sm', 'Custom…');
     box.append(h('div.row', UI.icon('fa-filter', 'muted'), h('b', { style: { fontSize: '12px' } }, 'Filter ' + c.name)), search, vals, h('div.row', h('span.grow.faint', { style: { fontSize: '10.5px' } }, App.lastRun && App.lastRun.truncated ? 'Values from preview sample' : ''), more, apply));
-    let list = [], checked = new Set();
-    UI.Engine.call('distinct', { resultId: App.result.resultId, col: c.name }).then(({ values }) => {
-      list = values; checked = new Set(values.map((_, i) => i));
+    let list = [], checked = new Set(), capped = false;
+    UI.Engine.call('distinct', { resultId: App.result.resultId, col: c.name }).then(({ values, capped: isCapped }) => {
+      list = values; capped = !!isCapped; checked = new Set(values.map((_, i) => i));
       draw();
     }).catch((err) => { UI.clear(vals).appendChild(h('div.muted', { style: { padding: '6px', fontSize: '12px' } }, err.message)); });
     const draw = () => {
@@ -915,7 +915,7 @@
         lab.querySelector('input').addEventListener('change', (e) => { e.target.checked ? checked.add(i) : checked.delete(i); });
         vals.appendChild(lab);
       });
-      if (list.length >= 1000) vals.appendChild(h('div.faint', { style: { fontSize: '11px', padding: '4px' } }, 'First 1,000 values'));
+      if (capped) vals.appendChild(h('div.faint', { style: { fontSize: '11px', padding: '4px' } }, 'First 1,000 values'));
     };
     search.addEventListener('input', draw);
     apply.addEventListener('click', () => {

@@ -32,6 +32,7 @@ const INPUTS = {
   'casing.csv': ['g,v', '1,b', '1,B', '1,a', '1,b', '1,B', '2,é', '2,z', '2,Z', '3,x', '3,', '3,x'].join('\n'),
   'tags.csv': ['id,tags,name', '1,"a, b, c",  Ana  ', '2,b,BEN', '3,,chloé martin'].join('\n'),
   'mixed.csv': ['id,v,k,t', '1,1,5,a', '2,,5,', '3,x,5,b', '4,4,5,', '5,,5,a'].join('\n'),
+  'many.csv': ['id,g'].concat(Array.from({ length: 1300 }, (_, i) => i + ',' + (i % 3))).join('\n'),
   'halves.csv': [
     'id,x,a,b',
     '1,0.5,2025-01-01 12:00:00,2025-01-01 00:00:00',
@@ -65,6 +66,7 @@ const CASES = [
   ['preview: filter runs on the sample', 'orders.csv', [types, { type: 'Filter', mode: 'advanced', formula: '[qty] >= 3' }], undefined, { mode: 'preview', previewRows: 5 }],
   ['preview: group by runs on the sample', 'orders.csv', [types, { type: 'GroupBy', keys: ['region'], aggs: [{ fn: 'sum', col: 'qty' }, { fn: 'count_rows' }] }], undefined, { mode: 'preview', previewRows: 5 }],
   ['preview: promote headers on the sample', 'report.csv', [{ type: 'PromoteHeaders', row: 2 }, { type: 'FillDown', cols: ['Region'] }], { header: false }, { mode: 'preview', previewRows: 5 }],
+  ['distinct values are capped at 1000', 'many.csv', [{ type: 'ChangeType', onError: 'error', changes: [{ col: 'id', type: 'int' }, { col: 'g', type: 'int' }] }]],
   ['distinct and duplicates', 'orders.csv', [{ type: 'Distinct', subset: ['customer_id'] }]],
   ['keep duplicates', 'orders.csv', [{ type: 'KeepDuplicates', subset: ['region'] }]],
   ['keep rows top/remove/alternate', 'orders.csv', [{ type: 'KeepRows', mode: 'remove_top', n: 1 }, { type: 'KeepRows', mode: 'alternate', keep: 1, skip: 1, offset: 0 }, { type: 'KeepRows', mode: 'top', n: 3 }]],

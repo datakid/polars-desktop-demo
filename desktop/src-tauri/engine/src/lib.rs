@@ -358,7 +358,7 @@ pub fn distinct(id: &str, name: &str) -> R<Value> {
     if errors > 0 {
         out.push(json!({ "value": { "__err": true }, "count": errors }));
     }
-    Ok(json!({ "values": out }))
+    Ok(json!({ "values": out, "capped": counts.height() > 1000 }))
 }
 
 fn tmp_path(path: &str) -> std::path::PathBuf {

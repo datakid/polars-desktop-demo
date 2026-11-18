@@ -1016,11 +1016,13 @@
     return rows;
   };
 
-  E.distinctValues = function (t, colName, limit) {
+  E.distinctAll = function (t, colName) {
     const col = t.get(colName), seen = new Map();
-    for (const v of col) { const k = keyOf(v); if (!seen.has(k)) { seen.set(k, { v: wire(v), n: 0 }); if (seen.size > (limit || 1000)) break; } seen.get(k).n++; }
+    for (const v of col) { const k = keyOf(v); const e = seen.get(k); if (e) e.n++; else seen.set(k, { v: wire(v), n: 1 }); }
     return [...seen.values()].sort((a, b) => compareValues(a.v && a.v.__err ? null : a.v, b.v && b.v.__err ? null : b.v, true)).map((x) => ({ value: x.v, count: x.n }));
   };
+
+  E.distinctValues = function (t, colName, limit) { return E.distinctAll(t, colName).slice(0, limit || 1000); };
 
   E.mergeStats = function (left, right, on, how, castKeys) {
     const kf = castKeys ? textKey : keyOf;
