@@ -50,6 +50,22 @@
       assertEq(r.plan.ops[0].expr, { k: 'bin', op: '>', a: { k: 'col', name: 'qty' }, b: { k: 'lit', v: 10 } });
       assertEq(r.plan.ops[1].aggs[0].name, 'Sum of qty');
     });
+    test('plan: every file path reaches the engine under the key path', () => {
+      const fileSrc = (fileId, fileName, extra) => ({ type: 'Source', source: Object.assign({ kind: 'file', fileId, fileName }, extra || {}) });
+      const sub = (id, kind) => ({ id, name: id, steps: [{ id: id + '0', name: 'Source', kind }] });
+      const q1 = { id: 'q1', name: 'Orders', steps: [{ id: 's0', name: 'Source', kind: src }, { id: 's1', name: 'Merge', kind: { type: 'Merge', right: 'b', how: 'left', on: [['a', 'a']] } }, { id: 's2', name: 'Append', kind: { type: 'Append', others: ['c', 'd'] } }] };
+      const project = proj([src], { queries: [q1, sub('b', fileSrc('f2', 'b.parquet')), sub('c', fileSrc('f3', 'c.xlsx', { item: { type: 'sheet', name: 'S1' } })), sub('d', fileSrc('f4', 'd.arrow'))] });
+      const r = PQ.Plan.lower(project, 'q1', { files: { f1: '/data/orders.csv', f2: '/data/b.parquet', f3: '/data/c.xlsx', f4: '/data/d.arrow' } });
+      assert(r.ok, r.reason);
+      const seen = [];
+      (function walk(v, key) {
+        if (typeof v === 'string' && v.startsWith('/data/')) seen.push([key, v]);
+        else if (Array.isArray(v)) v.forEach((x) => walk(x, key));
+        else if (v && typeof v === 'object') Object.keys(v).forEach((k) => walk(v[k], k));
+      })(r.plan, '');
+      assertEq(seen.map((x) => x[1]).sort(), ['/data/b.parquet', '/data/c.xlsx', '/data/d.arrow', '/data/orders.csv']);
+      assert(seen.every((x) => x[0] === 'path'), 'a file path is carried under another key: ' + JSON.stringify(seen));
+    });
     test('plan: file without a disk path is refused', () => { const r = PQ.Plan.lower(proj([src]), 'q1', {}); assert(!r.ok && /isn’t linked to a file on disk/.test(r.reason), r.reason); });
     test('plan: unsupported step names the step', () => { const r = PQ.Plan.lower(proj([src, { type: 'Sample', mode: 'n', n: 5 }]), 'q1', files); assert(!r.ok && /^Step 2 “Sampled Rows”: isn’t supported/.test(r.reason), r.reason); });
     test('plan: unsupported formula function is refused', () => { const r = PQ.Plan.lower(proj([src, { type: 'AddColumn', name: 'x', formula: 'Text.Similarity([a], [b])' }]), 'q1', files); assert(!r.ok && /Text\.Similarity/.test(r.reason), r.reason); });
