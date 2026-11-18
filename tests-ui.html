@@ -110,8 +110,11 @@ f.addEventListener('load', async () => {
     const inject = (src) => new Promise((res, rej) => { const el = w.document.createElement('script'); el.src = src; el.onload = res; el.onerror = () => rej(new Error(src + ' failed to load')); w.document.head.appendChild(el); });
     const saved = { native: UI().NativeEngine, worker: UI().Engine.callWorker, files: UI().App.files, project: UI().Engine.lastProject };
     const stubCalls = [];
+    let stubHang = false;
     w.__TAURI__ = { core: { invoke: async (cmd) => {
       stubCalls.push(cmd);
+      if (cmd === 'engine_cancel') return undefined;
+      if (cmd === 'engine_call' && stubHang) return new Promise(() => { });
       if (cmd === 'engine_call') return { resultId: 'pl_stub', n: 3, schema: [{ name: 'a', type: 'int' }, { name: 'big', type: 'int' }], quality: [], ms: 1, truncated: false };
       if (cmd === 'engine_page') return w.Arrow.tableToIPC(w.Arrow.tableFromArrays({ a: w.Int32Array.from([1, 2, 3]), big: w.BigInt64Array.from([9007199254740993n, 5n, -9007199254740993n]) }), 'stream');
       throw new Error('unexpected command ' + cmd);
@@ -146,6 +149,18 @@ f.addEventListener('load', async () => {
       for (let i = 0; i < 40 && ref.deref(); i++) { await sleep(50); collect(); }
       if (ref.deref()) throw new Error('an abandoned evaluate request is still held by the native engine');
       console.log('E2E abandoned native request released');
+      stubHang = true;
+      const callsBefore = workerCalls;
+      const hungMsg = { qid: 'q1', upto: 0, mode: 'preview' };
+      N.shouldRun('evaluate', hungMsg, project);
+      const hung = N.call('evaluate', hungMsg).then(() => 'RESOLVED', (e) => e);
+      await sleep(100);
+      N.cancel();
+      const settled = await Promise.race([hung, sleep(2000).then(() => 'TIMEOUT')]);
+      if (settled === 'TIMEOUT') throw new Error('cancel did not release the pending Polars evaluate');
+      if (settled === 'RESOLVED' || !settled.cancelled) throw new Error('cancelled evaluate must reject with a cancelled error: ' + (settled && settled.message));
+      if (workerCalls !== callsBefore) throw new Error('cancelled evaluate fell back to the built-in worker');
+      console.log('E2E cancel releases a running Polars evaluate without falling back');
     } finally {
       UI().NativeEngine = saved.native; UI().Engine.callWorker = saved.worker; UI().App.files = saved.files; UI().Engine.lastProject = saved.project;
       delete w.__TAURI__;

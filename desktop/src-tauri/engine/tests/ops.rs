@@ -358,4 +358,3 @@ fn release_profile_unwinds_so_engine_panics_can_be_caught() {
     assert!(!section.contains("panic = \"abort\""), "release profile aborts on panic");
     assert!(section.contains("panic = \"unwind\""), "release profile must unwind");
 }
-

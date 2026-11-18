@@ -211,6 +211,7 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 - Parquet filter pushdown uses row-group min/max statistics only. It doesn't use page indexes or bloom filters, and it is off when a timestamp or nested column is read, because those types are inferred from the values. Previews don't prune either. They already stop after the first row groups.
 - On desktop, Parquet files that fall back to the built-in engine are still read whole by the shell.
 - `Text.Similarity` has no Polars equivalent; codegen emits a placeholder.
+- Cancel releases the UI at once and discards the result, but a Polars query that is already running keeps its CPU until it finishes. Polars 0.55 has an interruptible collect, but a panic inside it aborts the whole process, so Floe does not use it. A plan that is cancelled between steps stops before the next step is built.
 - Database sources.
 
 ## Roadmap

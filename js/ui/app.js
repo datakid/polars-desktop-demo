@@ -363,7 +363,7 @@
     if (!label) { el.classList.add('hidden'); clearInterval(busyTimer); return; }
     el.classList.remove('hidden');
     const t0 = performance.now();
-    UI.clear(el).append(h('span.spinner'), h('span#busy-label', label), h('span#busy-time.faint', ''), cancellable ? h('button.btn.sm', { on: { click: () => UI.Engine.cancel() }, title: 'Stops the engine process immediately (Esc)' }, 'Cancel') : null);
+    UI.clear(el).append(h('span.spinner'), h('span#busy-label', label), h('span#busy-time.faint', ''), cancellable ? h('button.btn.sm', { on: { click: () => UI.Engine.cancel() }, title: 'Stops waiting for the engine (Esc)' }, 'Cancel') : null);
     clearInterval(busyTimer);
     busyTimer = setInterval(() => { const x = $('#busy-time'); if (x) x.textContent = UI.fmtMs(performance.now() - t0); }, 100);
   };

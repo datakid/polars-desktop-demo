@@ -111,6 +111,7 @@ pub fn fmt_any(v: AnyValue) -> Option<String> {
 pub struct Ctx {
     pub preview: Option<usize>,
     pub truncated: bool,
+    pub gen: u64,
 }
 
 pub fn build(plan: &Value, cx: &mut Ctx) -> R<LazyFrame> {
@@ -118,6 +119,9 @@ pub fn build(plan: &Value, cx: &mut Ctx) -> R<LazyFrame> {
     let (mut lf, consumed) = source::read(&plan["source"], ops.first(), cx)?;
     let locale = plan["locale"].as_str().unwrap_or("en-US").to_string();
     for op in ops.into_iter().skip(if consumed { 1 } else { 0 }) {
+        if generation() != cx.gen {
+            return Err("Cancelled".into());
+        }
         lf = ops::apply(lf, &op, &locale, cx).map_err(|e| format!("{}: {e}", op["op"].as_str().unwrap_or("step")))?;
     }
     Ok(lf)
@@ -146,6 +150,10 @@ pub fn cancel() {
     with_store(|s| s.gen += 1);
 }
 
+pub fn generation() -> u64 {
+    with_store(|s| s.gen)
+}
+
 fn visible(df: &DataFrame) -> Vec<String> {
     df.get_column_names().iter().map(|n| n.to_string()).filter(|n| !n.starts_with(ERR_PREFIX)).collect()
 }
@@ -172,10 +180,10 @@ fn quality(df: &DataFrame) -> Vec<Value> {
 
 pub fn evaluate(args: &Value) -> R<Value> {
     let t0 = Instant::now();
-    let gen = with_store(|s| s.gen);
+    let gen = generation();
     let mode = args["mode"].as_str().unwrap_or("preview");
     let preview = if mode == "full" { None } else { Some(args["previewRows"].as_u64().unwrap_or(1000) as usize) };
-    let mut cx = Ctx { preview, truncated: false };
+    let mut cx = Ctx { preview, truncated: false, gen };
     let lf = build(&args["plan"], &mut cx)?;
     let df = lf.collect().s()?;
     if with_store(|s| s.gen) != gen {
@@ -387,9 +395,12 @@ fn write_export(df: &mut DataFrame, args: &Value, tmp: &std::path::Path, path: &
 }
 
 pub fn export(args: &Value) -> R<Value> {
-    let mut cx = Ctx { preview: None, truncated: false };
+    let mut cx = Ctx { preview: None, truncated: false, gen: generation() };
     let lf = build(&args["plan"], &mut cx)?;
     let mut df = lf.collect().s()?;
+    if generation() != cx.gen {
+        return Err("Cancelled".into());
+    }
     let keep = visible(&df);
     df = df.select(keep).s()?;
     let path = args["path"].as_str().ok_or("export: missing path")?;

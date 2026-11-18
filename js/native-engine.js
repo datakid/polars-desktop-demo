@@ -83,6 +83,16 @@
     return inv('engine_page', { resultId, offset, count }).then((buf) => decodePage(buf, schemas.get(resultId) || []));
   }
 
+  const waiters = new Set();
+  const cancelledError = () => { const e = new Error('Cancelled by user'); e.cancelled = true; return e; };
+  function invoke(gen, cmd, args) {
+    return new Promise((resolve, reject) => {
+      const stop = () => reject(cancelledError());
+      waiters.add(stop);
+      inv(cmd, args).then((v) => { waiters.delete(stop); if (gen !== N.gen) stop(); else resolve(v); }, (e) => { waiters.delete(stop); if (gen !== N.gen) stop(); else reject(e); });
+    });
+  }
+
   function guard(gen, v) {
     if (gen !== N.gen) { const e = new Error('Cancelled by user'); e.cancelled = true; throw e; }
     return v;
@@ -93,7 +103,7 @@
     if (op === 'evaluate') {
       const plan = pending.get(msg); pending.delete(msg);
       const project = UI.Engine.lastProject;
-      const r = guard(gen, await inv('engine_call', { op: 'evaluate', args: { plan, mode: msg.mode || 'preview', previewRows: project.settings.previewRows } }));
+      const r = await invoke(gen, 'engine_call', { op: 'evaluate', args: { plan, mode: msg.mode || 'preview', previewRows: project.settings.previewRows } });
       N.results.add(r.resultId);
       schemas.set(r.resultId, r.schema);
       while (N.results.size > 12) { const old = N.results.values().next().value; N.results.delete(old); schemas.delete(old); }
@@ -114,7 +124,7 @@
       const ext = msg.format === 'arrow' ? 'arrow' : msg.format;
       const path = await inv('pick_save', { defaultName: PQ.snake(q.name) + '.' + ext });
       if (!path) { const e = new Error('Cancelled'); e.cancelled = true; throw e; }
-      const r = guard(gen, await inv('engine_call', { op: 'export', args: { plan, format: msg.format, path, sheet: q.name } }));
+      const r = await invoke(gen, 'engine_call', { op: 'export', args: { plan, format: msg.format, path, sheet: q.name } });
       return { rows: r.rows, path, written: true };
     }
     if (op === 'page') return { rows: await page(msg.resultId, msg.offset, msg.count) };
@@ -130,6 +140,6 @@
     throw new Error('Polars: unsupported op ' + op);
   };
 
-  N.cancel = function () { N.gen++; if (N.ready) inv('engine_cancel').catch(() => {}); };
+  N.cancel = function () { N.gen++; waiters.forEach((stop) => stop()); waiters.clear(); if (N.ready) inv('engine_cancel').catch(() => {}); };
   N.setEnabled = function (on) { N.disabled = !on; try { localStorage.setItem('floe.nativeEngine', on ? 'on' : 'off'); } catch (e) { } };
 })();
