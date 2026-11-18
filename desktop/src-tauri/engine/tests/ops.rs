@@ -64,7 +64,7 @@ fn write_inputs() -> Option<(Value, String)> {
 fn evaluate(case: &Value, dir: &str) -> Result<Value, String> {
     let mut plan = case["plan"].clone();
     rewrite_paths(&mut plan, dir);
-    floe_engine::call("evaluate", &json!({ "plan": plan, "mode": "full", "previewRows": 1000 }))
+    floe_engine::call("evaluate", &json!({ "plan": plan, "mode": case["mode"].as_str().unwrap_or("full"), "previewRows": case["previewRows"].as_u64().unwrap_or(1000) }))
 }
 
 fn profile_diff(got: &Value, exp: &Value) -> Option<String> {

@@ -52,7 +52,7 @@ fn parity_with_builtin_engine() {
         let mut plan = case["plan"].clone();
         rewrite_paths(&mut plan, &dir);
         let exp = &case["expected"];
-        let r = match floe_engine::call("evaluate", &json!({ "plan": plan, "mode": "full", "previewRows": 1000 })) {
+        let r = match floe_engine::call("evaluate", &json!({ "plan": plan, "mode": case["mode"].as_str().unwrap_or("full"), "previewRows": case["previewRows"].as_u64().unwrap_or(1000) })) {
             Ok(r) => r,
             Err(e) => {
                 failures.push(format!("{name}: engine error: {e}"));

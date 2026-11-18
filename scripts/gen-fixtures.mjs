@@ -31,6 +31,7 @@ const INPUTS = {
   'report.csv': ['ACME report,,', 'generated,,', 'Region,Product,Units', 'EU,Widget,10', ',Gadget,5', 'US,Widget,7', ',Gadget,', 'APAC,Widget,3'].join('\n'),
   'casing.csv': ['g,v', '1,b', '1,B', '1,a', '1,b', '1,B', '2,é', '2,z', '2,Z', '3,x', '3,', '3,x'].join('\n'),
   'tags.csv': ['id,tags,name', '1,"a, b, c",  Ana  ', '2,b,BEN', '3,,chloé martin'].join('\n'),
+  'mixed.csv': ['id,v,k,t', '1,1,5,a', '2,,5,', '3,x,5,b', '4,4,5,', '5,,5,a'].join('\n'),
   'halves.csv': [
     'id,x,a,b',
     '1,0.5,2025-01-01 12:00:00,2025-01-01 00:00:00',
@@ -60,6 +61,10 @@ const CASES = [
   ['merge full coalesces keys', 'orders.csv', [{ type: 'SelectColumns', cols: ['order_id', 'customer_id'] }, { type: 'Merge', right: 'customers', how: 'full', on: [['customer_id', 'customer_id']], expand: ['name'] }]],
   ['merge anti', 'orders.csv', [{ type: 'Merge', right: 'customers', how: 'anti', on: [['customer_id', 'customer_id']] }]],
   ['unpivot then pivot', 'orders.csv', [types, { type: 'SelectColumns', cols: ['order_id', 'qty', 'price'] }, { type: 'Unpivot', ids: ['order_id'], var: 'Attribute', val: 'Value' }, { type: 'Pivot', on: 'Attribute', index: ['order_id'], values: 'Value', agg: 'sum' }]],
+  ['error, null and empty in one column', 'mixed.csv', [{ type: 'ChangeType', onError: 'error', changes: [{ col: 'id', type: 'int' }, { col: 'v', type: 'int' }, { col: 'k', type: 'int' }] }]],
+  ['preview: filter runs on the sample', 'orders.csv', [types, { type: 'Filter', mode: 'advanced', formula: '[qty] >= 3' }], undefined, { mode: 'preview', previewRows: 5 }],
+  ['preview: group by runs on the sample', 'orders.csv', [types, { type: 'GroupBy', keys: ['region'], aggs: [{ fn: 'sum', col: 'qty' }, { fn: 'count_rows' }] }], undefined, { mode: 'preview', previewRows: 5 }],
+  ['preview: promote headers on the sample', 'report.csv', [{ type: 'PromoteHeaders', row: 2 }, { type: 'FillDown', cols: ['Region'] }], { header: false }, { mode: 'preview', previewRows: 5 }],
   ['distinct and duplicates', 'orders.csv', [{ type: 'Distinct', subset: ['customer_id'] }]],
   ['keep duplicates', 'orders.csv', [{ type: 'KeepDuplicates', subset: ['region'] }]],
   ['keep rows top/remove/alternate', 'orders.csv', [{ type: 'KeepRows', mode: 'remove_top', n: 1 }, { type: 'KeepRows', mode: 'alternate', keep: 1, skip: 1, offset: 0 }, { type: 'KeepRows', mode: 'top', n: 3 }]],
@@ -124,12 +129,13 @@ const customers = { id: 'customers', name: 'customers', load: { target: 'none' }
 
 const fixtures = [];
 let refused = 0;
-for (const [label, input, steps, csv] of CASES) {
+for (const [label, input, steps, csv, opts] of CASES) {
+  const mode = (opts && opts.mode) || 'full', previewRows = (opts && opts.previewRows) || 1000;
   const q = { id: 'q', name: 'q', load: { target: 'none' }, steps: [{ id: 's0', name: 'Source', kind: srcOf(input, csv) }].concat(steps.map((k, i) => ({ id: 's' + (i + 1), name: PQ.Steps.label(k.type), kind: k }))) };
-  const project = { settings: { previewRows: 1000, locale: 'en-US' }, params: [], queries: [q, customers] };
+  const project = { settings: { previewRows, locale: 'en-US' }, params: [], queries: [q, customers] };
   E.setProject(project);
   E.clearCache();
-  const r = E.evaluate('q', undefined, 'full');
+  const r = E.evaluate('q', undefined, mode);
   if (!r.table) throw new Error(label + ': built-in failed at step ' + (r.failedAt + 1) + ': ' + r.states[r.failedAt].error);
   const low = PQ.Plan.lower(project, 'q', { files });
   if (!low.ok) { refused++; console.warn('refused:', label, '—', low.reason); continue; }
@@ -139,7 +145,7 @@ for (const [label, input, steps, csv] of CASES) {
     profiles[c] = deepWire(E.profile(r.table, c));
     distinct[c] = deepWire(E.distinctValues(r.table, c, 1000));
   }
-  fixtures.push({ name: label, plan: low.plan, expected: { n: r.table.n, schema: r.table.schema(), rows: r.table.toRows(200).map((row) => row.map(wire)), profiles, distinct } });
+  fixtures.push({ name: label, mode, previewRows, plan: low.plan, expected: { n: r.table.n, schema: r.table.schema(), rows: r.table.toRows(200).map((row) => row.map(wire)), profiles, distinct } });
 }
 
 mkdirSync(dirname(out), { recursive: true });
