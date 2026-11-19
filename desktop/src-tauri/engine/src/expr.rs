@@ -475,6 +475,17 @@ fn call(n: &Value, cx: &Cx) -> R<(Expr, K)> {
         "Number.RoundUp" => (i64e(num(0)?.cast(DataType::Float64).ceil()), K::Num),
         "Number.RoundDown" => (i64e(num(0)?.cast(DataType::Float64).floor()), K::Num),
         "Number.Abs" => (num(0)?.abs(), K::Num),
+        "Number.Clamp" => {
+            let (x, lo, hi) = (num(0)?.cast(DataType::Float64), num(1)?.cast(DataType::Float64), num(2)?.cast(DataType::Float64));
+            let floored = when(x.clone().lt(lo.clone())).then(lo.clone()).otherwise(x.clone());
+            let clamped = when(floored.clone().gt(hi.clone())).then(hi.clone()).otherwise(floored);
+            let missing = x.is_null().or(lo.is_null()).or(hi.is_null());
+            (when(missing).then(lit(NULL).cast(DataType::Float64)).otherwise(clamped), K::Num)
+        }
+        "Text.RegexExtract" => {
+            let group = if raw.len() > 2 { int_arg(n, 2, &f)?.max(0) as usize } else { 0 };
+            (t(0)?.str().extract(t(1)?, group), K::Text)
+        }
         "Number.Mod" => {
             let (x, y) = (num(0)?.cast(DataType::Float64), num(1)?.cast(DataType::Float64));
             let m = ((x % y.clone()) + y.clone()) % y.clone();

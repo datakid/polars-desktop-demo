@@ -67,6 +67,8 @@ const CASES = [
   ['preview: group by runs on the sample', 'orders.csv', [types, { type: 'GroupBy', keys: ['region'], aggs: [{ fn: 'sum', col: 'qty' }, { fn: 'count_rows' }] }], undefined, { mode: 'preview', previewRows: 5 }],
   ['preview: promote headers on the sample', 'report.csv', [{ type: 'PromoteHeaders', row: 2 }, { type: 'FillDown', cols: ['Region'] }], { header: false }, { mode: 'preview', previewRows: 5 }],
   ['distinct values are capped at 1000', 'many.csv', [{ type: 'ChangeType', onError: 'error', changes: [{ col: 'id', type: 'int' }, { col: 'g', type: 'int' }] }]],
+  ['number clamp including inverted bounds and nulls', 'orders.csv', [types, { type: 'AddColumn', name: 'c1', formula: 'Number.Clamp([qty], 2, 5)' }, { type: 'AddColumn', name: 'c2', formula: 'Number.Clamp([qty], 5, 2)' }, { type: 'AddColumn', name: 'c3', formula: 'Number.Clamp([qty] * 30, 0, 100)' }]],
+  ['text regex extract with groups, misses and nulls', 'orders.csv', [{ type: 'AddColumn', name: 'num', formula: 'Text.RegexExtract([customer_id], \"C([0-9]+)\", 1)' }, { type: 'AddColumn', name: 'whole', formula: 'Text.RegexExtract([customer_id], \"C[0-9]+\")' }, { type: 'AddColumn', name: 'none', formula: 'Text.RegexExtract([status], \"x([a-z]+)\", 1)' }, { type: 'AddColumn', name: 'part', formula: 'Text.RegexExtract([status], \"(sh|re)([a-z]+)\", 2)' }]],
   ['distinct and duplicates', 'orders.csv', [{ type: 'Distinct', subset: ['customer_id'] }]],
   ['keep duplicates', 'orders.csv', [{ type: 'KeepDuplicates', subset: ['region'] }]],
   ['keep rows top/remove/alternate', 'orders.csv', [{ type: 'KeepRows', mode: 'remove_top', n: 1 }, { type: 'KeepRows', mode: 'alternate', keep: 1, skip: 1, offset: 0 }, { type: 'KeepRows', mode: 'top', n: 3 }]],
