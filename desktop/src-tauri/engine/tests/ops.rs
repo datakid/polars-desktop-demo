@@ -389,3 +389,29 @@ fn page_keeps_the_utc_instant_of_a_zoned_datetime() {
     assert_eq!(profile["profile"]["max"]["__date"], json!(instants[1]));
 }
 
+#[test]
+fn scans_receive_filters_and_projections() {
+    let dir = std::env::temp_dir().join(format!("floe_pushdown_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let parquet = dir.join("wide.parquet");
+    let mut df = df!("id" => [1i64, 2, 3, 4], "qty" => [1i64, 5, 7, 2], "name" => ["a", "b", "c", "d"], "price" => [1.5f64, 2.5, 3.5, 4.5]).unwrap();
+    ParquetWriter::new(std::fs::File::create(&parquet).unwrap()).finish(&mut df).unwrap();
+    let csv = dir.join("wide.csv");
+    std::fs::write(&csv, "id,qty,name,price\n1,1,a,1.5\n2,5,b,2.5\n3,7,c,3.5\n").unwrap();
+    let filter = json!({ "op": "filter", "expr": { "k": "bin", "op": ">=", "a": { "k": "col", "name": "qty" }, "b": { "k": "lit", "v": 3 } } });
+    let select = json!({ "op": "select", "cols": ["id", "qty"] });
+    let sources = [
+        json!({ "kind": "parquet", "path": parquet.to_string_lossy().replace('\\', "/") }),
+        json!({ "kind": "csv", "path": csv.to_string_lossy().replace('\\', "/"), "delimiter": ",", "header": true, "skipRows": 0 }),
+    ];
+    for source in sources {
+        let plan = json!({ "v": 1, "locale": "en-US", "source": source, "ops": [filter.clone(), select.clone()] });
+        let mut cx = floe_engine::Ctx { preview: None, truncated: false, gen: floe_engine::generation() };
+        let lf = floe_engine::build(&plan, &mut cx).unwrap();
+        let text = lf.describe_optimized_plan().unwrap();
+        println!("{}\n{text}", source["kind"]);
+        assert!(text.contains("SELECTION"), "{} scan has no selection:\n{text}", source["kind"]);
+        assert!(text.contains("PROJECT 2/4 COLUMNS") || text.contains("PROJECT 2/"), "{} scan has no projection:\n{text}", source["kind"]);
+    }
+}
+
