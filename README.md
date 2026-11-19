@@ -27,7 +27,7 @@
   node scripts/floe.mjs plan project.floe --query <name>
   ```
   Exit codes: 0 ok · 1 query failed · 2 usage · 3 input missing. `npm link` installs it as `floe`.
-- Tests: 116 golden tests in `tests.html`, the UI end-to-end test in `tests-ui.html`, and 18 Rust tests in `engine/tests` (`plan.rs` 5, `ops.rs` 11, `cancel.rs` 1, `parity.rs` 1, which runs 57 fixtures against the built-in engine and compares every column's profile and distinct values).
+- Tests: 116 golden tests in `tests.html`, the UI end-to-end test in `tests-ui.html`, and 19 Rust tests in `engine/tests` (`plan.rs` 5, `ops.rs` 12, `cancel.rs` 1, `parity.rs` 1, which runs 57 fixtures against the built-in engine and compares every column's profile and distinct values).
 
 ## What's new in 1.1
 - **Engine indicator** in the status bar: `● Built-in · 42 ms · Sample 1,000`. Click it (or press Enter on it) for engine, location, last run, data scope and, on desktop, why that engine ran. The dot shows idle, busy, starting or error. On phones it shrinks to the dot and engine name.
@@ -211,6 +211,7 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 - Parquet filter pushdown uses row-group min/max statistics only. It doesn't use page indexes or bloom filters, and it is off when a timestamp or nested column is read, because those types are inferred from the values. Previews don't prune either. They already stop after the first row groups.
 - On desktop, Parquet files that fall back to the built-in engine are still read whole by the shell.
 - `Text.Similarity` has no Polars equivalent; codegen emits a placeholder.
+- Full runs and exports collect the whole result in memory. Streaming execution and streaming sinks need the Polars `streaming` feature, which is not enabled, and a streaming export has no cheap row count for the "exported N rows" message.
 - Cancel releases the UI at once and discards the result, but a Polars query that is already running keeps its CPU until it finishes. Polars 0.55 has an interruptible collect, but a panic inside it aborts the whole process, so Floe does not use it. A plan that is cancelled between steps stops before the next step is built.
 - Database sources.
 
