@@ -562,29 +562,8 @@ fn split(mut lf: LazyFrame, op: &Value, s: &Schema) -> R<LazyFrame> {
             count = if any > 0 { ps.len() } else { 1 };
         }
         let count = count.clamp(1, 200);
-        let chars = src.clone().str().len_chars().cast(DataType::Int64);
-        let norm = |p: i64| -> Expr {
-            if p < 0 {
-                let v = chars.clone() + lit(p);
-                when(v.clone().lt(lit(0i64))).then(lit(0i64)).otherwise(v)
-            } else {
-                when(lit(p).gt(chars.clone())).then(chars.clone()).otherwise(lit(p))
-            }
-        };
-        let signed = ps.iter().any(|p| *p < 0);
         (0..count)
             .map(|k| match ps.get(k) {
-                Some(&p) if signed => {
-                    let start = norm(p);
-                    let len = match ps.get(k + 1) {
-                        Some(&nx) => {
-                            let d = norm(nx) - start.clone();
-                            when(d.clone().lt(lit(0i64))).then(lit(0i64)).otherwise(d).cast(DataType::UInt64)
-                        }
-                        None => lit(NULL).cast(DataType::UInt64),
-                    };
-                    src.clone().str().slice(start, len)
-                }
                 Some(&p) => {
                     let len = match ps.get(k + 1) {
                         Some(&nx) => lit((nx - p) as u64),

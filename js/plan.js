@@ -97,6 +97,7 @@
         if (k.mode === 'positions') {
           const ps = String(k.positions || '').split(',').map((x) => parseInt(x.trim(), 10)).filter((x) => !isNaN(x)).sort((a, b) => a - b);
           if (!ps.length) refuse('Enter one or more character positions');
+          if (ps[0] < 0) refuse('Negative split positions run on the built-in engine');
           return { op: 'split', col: k.col, mode: 'positions', positions: ps, delimiter: ',', count: k.count ? +k.count : 0, trim: k.trim !== false };
         }
         return { op: 'split', col: k.col, mode: k.mode || 'each', delimiter: k.delimiter === undefined || k.delimiter === '' ? ',' : k.delimiter, count: k.count ? +k.count : 0, trim: k.trim !== false };
