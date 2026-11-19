@@ -275,6 +275,11 @@ pub fn rows(id: &str, limit: usize) -> R<Vec<Vec<Value>>> {
     Ok(out)
 }
 
+fn extreme(scalar: Scalar, ty: &str) -> Value {
+    let one = scalar.into_series("v".into());
+    date_wrap(wire(one.get(0).unwrap_or(AnyValue::Null)), ty)
+}
+
 pub fn profile(id: &str, name: &str) -> R<Value> {
     let df = get(id)?;
     let c = df.column(name).s()?.as_materialized_series().clone();
@@ -294,9 +299,9 @@ pub fn profile(id: &str, name: &str) -> R<Value> {
     let mut min_len = None;
     let mut max_len = None;
     if let Ok(s) = non_null.str() {
-        let lens: Vec<usize> = s.iter().flatten().map(|x| x.chars().count()).collect();
-        min_len = lens.iter().min().copied();
-        max_len = lens.iter().max().copied();
+        let lens = s.str_len_chars();
+        min_len = lens.min().map(|v| v as usize);
+        max_len = lens.max().map(|v| v as usize);
     }
     let counts = non_null.value_counts(true, false, "count".into(), false).s()?;
     let distinct = counts.height();
@@ -308,26 +313,21 @@ pub fn profile(id: &str, name: &str) -> R<Value> {
     let (mut mean, mut stdev, mut hist) = (Value::Null, Value::Null, Value::Null);
     let (mut min, mut max) = (Value::Null, Value::Null);
     if non_null.len() > 0 {
-        let sorted = non_null.sort(SortOptions::default()).s()?;
-        min = date_wrap(wire(sorted.get(0).unwrap_or(AnyValue::Null)), ty);
-        max = date_wrap(wire(sorted.get(sorted.len() - 1).unwrap_or(AnyValue::Null)), ty);
+        min = extreme(non_null.min_reduce().s()?, ty);
+        max = extreme(non_null.max_reduce().s()?, ty);
     }
     if is_num(c.dtype()) {
         let f = non_null.cast(&DataType::Float64).s()?;
         let f = f.f64().s()?;
-        let v: Vec<f64> = f.iter().flatten().collect();
-        if !v.is_empty() {
-            let m = v.iter().sum::<f64>() / v.len() as f64;
-            mean = json!(m);
-            if v.len() > 1 {
-                stdev = json!((v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / (v.len() - 1) as f64).sqrt());
-            }
-            let lo = v.iter().cloned().fold(f64::INFINITY, f64::min);
-            let hi = v.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        if f.len() > f.null_count() {
+            mean = f.mean().map(|m| json!(m)).unwrap_or(Value::Null);
+            stdev = f.std(1).map(|d| json!(d)).unwrap_or(Value::Null);
+            let lo = f.iter().flatten().fold(f64::INFINITY, f64::min);
+            let hi = f.iter().flatten().fold(f64::NEG_INFINITY, f64::max);
             if hi > lo {
                 let mut bins = vec![0usize; 20];
                 let w = (hi - lo) / 20.0;
-                for x in &v {
+                for x in f.iter().flatten() {
                     bins[(((x - lo) / w) as usize).min(19)] += 1;
                 }
                 hist = json!({ "min": lo, "max": hi, "bins": bins });
