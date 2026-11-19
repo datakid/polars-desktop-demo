@@ -248,6 +248,12 @@
   test('CSV sniffing: semicolon + decimal comma', () => { const s = samples.find((x) => x.name === 'sales_2026-06.csv'); const sn = PQ.IO.sniffCSV(s.text); assertEq([sn.delimiter, sn.locale, sn.header], [';', 'de-DE', true]); });
   test('Excel writer round-trip', () => { const buf = PQ.IO.toXLSX(tbl(), 'T'); const wb = XLSX.read(new Uint8Array(buf), { type: 'array' }); assertEq(XLSX.utils.sheet_to_json(wb.Sheets.T, { header: 1 })[1], [1, 'Ana', 'EU', 100]); });
 
+  test('python export: rounding keeps the app half-up rule and an integer result for 0 digits', () => {
+    const script = (digits) => { const p = proj(); p.name = 'Demo'; p.queries[0].steps.push({ id: 'r', name: 'R', kind: { type: 'RoundNumbers', cols: ['a', 'b'], digits } }); return PQ.Steps.toPython(p); };
+    const two = script(2), zero = script(0);
+    assert(two.includes('.cast(pl.Float64) * 100 + 0.5).floor() / 100)') && !two.includes('.round('), two);
+    assert(zero.includes('.cast(pl.Float64) + 0.5).floor().cast(pl.Int64))') && !zero.includes('.round('), zero);
+  });
   test('Python export: std, var and the new window functions', () => {
     const p = proj(); p.name = 'Demo';
     p.queries[0].steps.push({ id: 'g', name: 'G', kind: { type: 'GroupBy', keys: ['label'], aggs: [{ fn: 'std', col: 'z', name: 's' }, { fn: 'var', col: 'z', name: 'v' }] } });

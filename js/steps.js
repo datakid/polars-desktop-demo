@@ -168,7 +168,10 @@
       case 'ReplaceErrors': return `  # ReplaceErrors: Polars casts non-strictly, so errors are already null\n    .with_columns(pl.col(${pyList(k.cols)}).fill_null(${pyVal(k.value)}))`;
       case 'RemoveErrors': case 'KeepErrors': return `  # ${k.type}: per-cell errors are a Floe concept; nulls from failed casts are the Polars equivalent`;
       case 'TextTransform': return `.with_columns(pl.col(${pyList(k.cols)}).cast(pl.String)${{ upper: '.str.to_uppercase()', lower: '.str.to_lowercase()', trim: '.str.strip_chars()', clean: '.str.replace_all(r"\\s+", " ").str.strip_chars()', proper: '.str.to_titlecase()' }[k.op]})`;
-      case 'RoundNumbers': return `.with_columns(pl.col(${pyList(k.cols)}).round(${k.digits || 0}))`;
+      case 'RoundNumbers': {
+        const d = Math.max(0, Math.min(12, +k.digits || 0)), f = Math.pow(10, d), base = `pl.col(${pyList(k.cols)}).cast(pl.Float64)`;
+        return d === 0 ? `.with_columns((${base} + 0.5).floor().cast(pl.Int64))` : `.with_columns((${base} * ${f} + 0.5).floor() / ${f})`;
+      }
       case 'SplitColumn': {
         if (k.mode === 'rows') return `.with_columns(pl.col(${py(k.col)}).str.split(${py(k.delimiter || ',')})).explode(${py(k.col)})${k.trim !== false ? `.with_columns(pl.col(${py(k.col)}).str.strip_chars())` : ''}`;
         const n = +k.count || 2;
