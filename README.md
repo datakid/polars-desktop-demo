@@ -27,7 +27,7 @@
   node scripts/floe.mjs plan project.floe --query <name>
   ```
   Exit codes: 0 ok · 1 query failed · 2 usage · 3 input missing. `npm link` installs it as `floe`.
-- Engine tests: 96. That includes the Parquet planning, projection and CLI tests, plus 3 pushdown tests that check every case against an unpruned filter.
+- Tests: 116 golden tests in `tests.html`, the UI end-to-end test in `tests-ui.html`, and 18 Rust tests in `engine/tests` (`plan.rs` 5, `ops.rs` 11, `cancel.rs` 1, `parity.rs` 1, which runs 57 fixtures against the built-in engine and compares every column's profile and distinct values).
 
 ## What's new in 1.1
 - **Engine indicator** in the status bar: `● Built-in · 42 ms · Sample 1,000`. Click it (or press Enter on it) for engine, location, last run, data scope and, on desktop, why that engine ran. The dot shows idle, busy, starting or error. On phones it shrinks to the dot and engine name.
@@ -186,7 +186,7 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 
 **Polars covers:**
 - Sources: CSV (UTF-8), Parquet, Arrow IPC, Excel sheets and ranges, entered data, query references.
-- Columns: choose/remove/reorder, rename, change type (locale-aware, with per-cell error flags), split (delimiter, first, last, into rows, by positions), merge columns, custom and conditional columns, index, duplicate.
+- Columns: choose/remove/reorder, rename, change type (locale-aware, with per-cell error flags), split (delimiter, first, last, into rows, by positions including negative ones), merge columns, custom and conditional columns, index, duplicate.
 - Rows: filter, sort, distinct, keep duplicates, keep rows, promote headers, fill down/up.
 - Values: replace values, replace/remove/keep errors, text transforms (except Proper), round.
 - Reshaping and combining: group by (count, distinct count, sum, average, median, standard deviation, variance, mode, percentile, min, max, first, last, concatenate), unpivot, pivot, merge (all join types), append, window columns (running total, running max and min, row number, rank, dense rank, change and % change from previous, previous and next value, percent of total, moving average, rolling sum, min, max and std deviation).
@@ -194,8 +194,8 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 
 **Runs on built-in (with the reason shown):**
 - Sources: JSON, folders, Excel tables, named ranges, multi-sheet sources, merged-cell fill, non-UTF-8 CSV, pasted files.
-- Steps: Sample, ClusterValues, Validate, ExpandJson, Transpose, DemoteHeaders, Custom SQL, Proper case, split by negative positions.
-- Formula functions without a Polars mapping, such as `Text.Similarity`, `Text.Proper`, `Date.From` and `Value.IsError`. Dialog previews also stay on built-in.
+- Steps: Sample, ClusterValues, Validate, ExpandJson, Transpose, DemoteHeaders, Custom SQL, Proper case. Sample, ExpandJson, Transpose and Custom SQL need Polars features (`random`, `extract_jsonpath`, `transpose`, `sql`) that are not enabled yet; ClusterValues, Validate and Text.Similarity have no Polars equivalent and stay on the built-in engine.
+- Formula functions without a Polars mapping: `Text.Similarity`, `Text.Fingerprint`, `Text.RemoveDiacritics`, `Text.Proper`, `Date.From` and `Value.IsError`. Dialog previews also stay on built-in.
 
 **Known differences:**
 - Polars sorts text in plain character order, while the built-in engine uses natural, accent-insensitive order. This also decides the minimum and maximum shown for text columns in the profile.
