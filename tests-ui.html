@@ -111,9 +111,10 @@ f.addEventListener('load', async () => {
     const saved = { native: UI().NativeEngine, worker: UI().Engine.callWorker, files: UI().App.files, project: UI().Engine.lastProject };
     const stubCalls = [];
     let stubHang = false;
-    w.__TAURI__ = { core: { invoke: async (cmd) => {
+    w.__TAURI__ = { core: { invoke: async (cmd, a) => {
       stubCalls.push(cmd);
       if (cmd === 'engine_cancel') return undefined;
+      if (cmd === 'engine_call' && a.op === 'explain') return { text: 'SCAN [/data/orders.csv]\nPROJECT */8 COLUMNS' };
       if (cmd === 'engine_call' && stubHang) return new Promise(() => { });
       if (cmd === 'engine_call') return { resultId: 'pl_stub', n: 3, schema: [{ name: 'a', type: 'int' }, { name: 'big', type: 'int' }], quality: [], ms: 1, truncated: false };
       if (cmd === 'engine_page') return w.Arrow.tableToIPC(w.Arrow.tableFromArrays({ a: w.Int32Array.from([1, 2, 3]), big: w.BigInt64Array.from([9007199254740993n, 5n, -9007199254740993n]) }), 'stream');
@@ -139,6 +140,8 @@ f.addEventListener('load', async () => {
       const bigCells = out.firstPage.map((r) => r[1]);
       if (JSON.stringify(bigCells) !== JSON.stringify(['9007199254740993', 5, '-9007199254740993'])) throw new Error('int64 cells were not kept exact: ' + JSON.stringify(bigCells));
       console.log('E2E int64 cells', JSON.stringify(bigCells));
+      const explained = await N.explain('q1', 0);
+      if (!explained.text || !explained.text.startsWith('SCAN')) throw new Error('explain did not return the plan: ' + JSON.stringify(explained));
       out.derive(); out.derive();
       if (workerCalls !== 1) throw new Error('derive must start exactly one worker evaluate, got ' + workerCalls);
       console.log('E2E polars evaluate does not block on the worker; worker calls', workerCalls, 'native commands', stubCalls.join(','));

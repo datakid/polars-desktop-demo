@@ -816,10 +816,15 @@
       if (lr.note) kv.push(row('Note', lr.note));
     }
     if (native && N.ready) kv.push(row('Why', !lr ? '—' : lr.engine === 'polars' ? 'Every step in this query is supported by Polars.' : N.disabled ? 'Polars is turned off.' : lr.reason || 'Built-in engine.'));
+    const planBox = h('pre.engine-plan', { style: { margin: 0, maxHeight: '220px', overflow: 'auto', fontSize: '11px', whiteSpace: 'pre-wrap' }, hidden: true });
+    const planBtn = native && N.ready && N.explain && lr && lr.engine === 'polars' ? h('button.btn.sm', { on: { click: async () => {
+      planBox.hidden = false; planBox.textContent = 'Reading the plan…';
+      try { const r = await N.explain(lr.qid, lr.upto); planBox.textContent = r.text || r.reason || 'No plan available.'; } catch (e) { planBox.textContent = String((e && e.message) || e); }
+    } } }, 'Show optimized plan') : null;
     const prefer = native && N.ready ? h('label.check', h('input', { type: 'checkbox', checked: !N.disabled, on: { change: (e) => { N.setEnabled(e.target.checked); App.refresh({ keepScroll: true }); } } }), 'Prefer Polars when the query supports it') : null;
     const m = UI.modal({
       title: 'Engine', icon: 'fa-microchip',
-      body: h('div.col', h('dl.kv.engine-kv', kv.flat()), prefer, !native ? h('p.faint', { style: { margin: 0, fontSize: '12px' } }, 'The desktop app can also run queries on Polars, a native engine for large files.') : null),
+      body: h('div.col', h('dl.kv.engine-kv', kv.flat()), planBtn, planBtn ? planBox : null, prefer, !native ? h('p.faint', { style: { margin: 0, fontSize: '12px' } }, 'The desktop app can also run queries on Polars, a native engine for large files.') : null),
       footer: Store.query() ? [h('button.btn', { on: { click: () => { m.close(true); if (lr && lr.mode === 'full') App.setMode('preview'); else App.runFull(); } } }, lr && lr.mode === 'full' ? 'Back to sample' : 'Run on full data')] : null,
     });
   }

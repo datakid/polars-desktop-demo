@@ -140,6 +140,12 @@
     throw new Error('Polars: unsupported op ' + op);
   };
 
+  N.explain = async function (qid, upto) {
+    const r = lower(UI.Engine.lastProject, qid, upto);
+    if (!r.ok) return { reason: r.reason };
+    return inv('engine_call', { op: 'explain', args: { plan: r.plan } });
+  };
+
   N.cancel = function () { N.gen++; waiters.forEach((stop) => stop()); waiters.clear(); if (N.ready) inv('engine_cancel').catch(() => {}); };
   N.setEnabled = function (on) { N.disabled = !on; try { localStorage.setItem('floe.nativeEngine', on ? 'on' : 'off'); } catch (e) { } };
 })();

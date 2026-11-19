@@ -415,3 +415,20 @@ fn scans_receive_filters_and_projections() {
     }
 }
 
+#[test]
+fn explain_returns_the_optimized_plan() {
+    let dir = std::env::temp_dir().join(format!("floe_explain_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let csv = dir.join("e.csv");
+    std::fs::write(&csv, "a,b\n1,x\n5,y\n").unwrap();
+    let plan = json!({
+        "v": 1,
+        "locale": "en-US",
+        "source": { "kind": "csv", "path": csv.to_string_lossy().replace('\\', "/"), "delimiter": ",", "header": true, "skipRows": 0 },
+        "ops": [{ "op": "select", "cols": ["a"] }]
+    });
+    let r = floe_engine::call("explain", &json!({ "plan": plan })).unwrap();
+    let text = r["text"].as_str().unwrap();
+    assert!(text.contains("SCAN") && text.contains("PROJECT 1/2 COLUMNS"), "{text}");
+}
+

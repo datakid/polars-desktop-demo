@@ -423,12 +423,19 @@ pub fn guarded<T>(f: impl FnOnce() -> R<T>) -> R<T> {
     })
 }
 
+pub fn explain(args: &Value) -> R<Value> {
+    let mut cx = Ctx { preview: None, truncated: false, gen: generation() };
+    let lf = build(&args["plan"], &mut cx)?;
+    Ok(json!({ "text": lf.describe_optimized_plan().s()? }))
+}
+
 pub fn call(op: &str, args: &Value) -> R<Value> {
     match op {
         "evaluate" => evaluate(args),
         "export" => export(args),
         "profile" => profile(args["resultId"].as_str().unwrap_or(""), args["col"].as_str().unwrap_or("")),
         "distinct" => distinct(args["resultId"].as_str().unwrap_or(""), args["col"].as_str().unwrap_or("")),
+        "explain" => explain(args),
         other => Err(format!("Unknown engine op {other}")),
     }
 }
