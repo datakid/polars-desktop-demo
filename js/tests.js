@@ -18,6 +18,13 @@
   test('formula: null propagation in comparison → else branch', () => assertEq(PQ.Formula.evaluate('if [sales] > 0 then 1 else 0', tbl()).values[2], 0));
   test('formula: text functions', () => assertEq(PQ.Formula.evaluate('Text.Upper(Text.Start([name], 2)) & "-" & Text.From([id])', tbl()).values, ['AN-1', 'BE-2', 'CH-3', 'DM-4', 'EV-5']));
   test('formula: in list', () => assertEq(PQ.Formula.evaluate('[region] in {"EU", "APAC"}', tbl()).values, [true, false, true, true, true]));
+  test('window: null order keys sort last in both directions', () => {
+    const t = T.fromRows(['k', 'v'], [[1, 10], [null, 20], [3, 30], [null, 40], [5, 50]], ['int', 'int']);
+    const run = (op, desc) => PQ.Engine.X.Window(t, { op, col: 'v', orderBy: 'k', desc, name: 'w' }).get('w');
+    assertEq(run('row_number', false), [1, 4, 2, 5, 3]);
+    assertEq(run('row_number', true), [3, 4, 2, 5, 1]);
+    assertEq(run('cumsum', true), [90, 110, 80, 150, 50]);
+  });
   test('distinct values: capped at 1000 with exact counts and a full distinct list', () => {
     const rows = []; for (let i = 0; i < 1500; i++) rows.push([i % 1200]);
     const t = T.fromRows(['a'], rows, ['int']);

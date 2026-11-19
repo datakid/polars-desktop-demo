@@ -33,6 +33,7 @@ const INPUTS = {
   'tags.csv': ['id,tags,name', '1,"a, b, c",  Ana  ', '2,b,BEN', '3,,chloé martin'].join('\n'),
   'mixed.csv': ['id,v,k,t', '1,1,5,a', '2,,5,', '3,x,5,b', '4,4,5,', '5,,5,a'].join('\n'),
   'many.csv': ['id,g'].concat(Array.from({ length: 1300 }, (_, i) => i + ',' + (i % 3))).join('\n'),
+  'ties.csv': ['id,g,v,amt', '1,a,5,10', '2,a,,20', '3,a,3,30', '4,b,,40', '5,b,7,50', '6,b,1,60', '7,b,,70'].join('\n'),
   'halves.csv': [
     'id,x,a,b',
     '1,0.5,2025-01-01 12:00:00,2025-01-01 00:00:00',
@@ -70,6 +71,7 @@ const CASES = [
   ['number clamp including inverted bounds and nulls', 'orders.csv', [types, { type: 'AddColumn', name: 'c1', formula: 'Number.Clamp([qty], 2, 5)' }, { type: 'AddColumn', name: 'c2', formula: 'Number.Clamp([qty], 5, 2)' }, { type: 'AddColumn', name: 'c3', formula: 'Number.Clamp([qty] * 30, 0, 100)' }]],
   ['text regex extract with groups, misses and nulls', 'orders.csv', [{ type: 'AddColumn', name: 'num', formula: 'Text.RegexExtract([customer_id], \"C([0-9]+)\", 1)' }, { type: 'AddColumn', name: 'whole', formula: 'Text.RegexExtract([customer_id], \"C[0-9]+\")' }, { type: 'AddColumn', name: 'none', formula: 'Text.RegexExtract([status], \"x([a-z]+)\", 1)' }, { type: 'AddColumn', name: 'part', formula: 'Text.RegexExtract([status], \"(sh|re)([a-z]+)\", 2)' }]],
   ['split by negative character positions', 'orders.csv', [{ type: 'SplitColumn', col: 'status', mode: 'positions', positions: '-5, -2', count: 2 }, { type: 'SplitColumn', col: 'discount', mode: 'positions', positions: '-2', count: 1 }, { type: 'SplitColumn', col: 'region', mode: 'positions', positions: '-1, 1', count: 2 }]],
+  ['window order keys with nulls, ascending and descending', 'ties.csv', [{ type: 'ChangeType', onError: 'error', changes: [{ col: 'id', type: 'int' }, { col: 'v', type: 'int' }, { col: 'amt', type: 'int' }] }, { type: 'Window', op: 'row_number', partition: ['g'], orderBy: 'v', desc: true, name: 'rn_desc' }, { type: 'Window', op: 'row_number', partition: ['g'], orderBy: 'v', name: 'rn_asc' }, { type: 'Window', op: 'cumsum', col: 'amt', partition: ['g'], orderBy: 'v', desc: true, name: 'cs_desc' }, { type: 'Window', op: 'lag', col: 'amt', partition: ['g'], n: 1, orderBy: 'v', desc: true, name: 'lag_desc' }]],
   ['distinct and duplicates', 'orders.csv', [{ type: 'Distinct', subset: ['customer_id'] }]],
   ['keep duplicates', 'orders.csv', [{ type: 'KeepDuplicates', subset: ['region'] }]],
   ['keep rows top/remove/alternate', 'orders.csv', [{ type: 'KeepRows', mode: 'remove_top', n: 1 }, { type: 'KeepRows', mode: 'alternate', keep: 1, skip: 1, offset: 0 }, { type: 'KeepRows', mode: 'top', n: 3 }]],

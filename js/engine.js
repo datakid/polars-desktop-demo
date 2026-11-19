@@ -692,7 +692,14 @@
     const ord = s.orderBy ? t.get(s.orderBy) : null;
     const n = Math.max(1, +s.n || 1);
     for (let g of groups) {
-      if (ord) g = g.slice().sort((a, b) => compareValues(ord[a], ord[b], true) * (s.desc ? -1 : 1) || a - b);
+      if (ord) {
+        const dir = s.desc ? -1 : 1, nil = (v) => v === null || v === undefined || isErr(v);
+        g = g.slice().sort((a, b) => {
+          const x = ord[a], y = ord[b], xn = nil(x), yn = nil(y);
+          if (xn || yn) return xn && yn ? a - b : xn ? 1 : -1;
+          return compareValues(x, y, true) * dir || a - b;
+        });
+      }
       switch (s.op) {
         case 'cumsum': { let acc = 0; for (const r of g) { if (typeof src[r] === 'number') acc += src[r]; out[r] = acc; } break; }
         case 'row_number': g.forEach((r, i) => (out[r] = i + 1)); break;
