@@ -91,8 +91,10 @@
       assert(r.ok, r.reason);
       assertEq(r.plan.ops[0], { op: 'split', col: 'name', mode: 'positions', positions: [0, 3, 5], delimiter: ',', count: 0, trim: true });
     });
-    test('plan: split by positions with negative or missing positions is refused', () => {
-      assert(!PQ.Plan.lower(proj([src, { type: 'SplitColumn', col: 'name', mode: 'positions', positions: '-2, 3' }]), 'q1', files).ok);
+    test('plan: split by positions lowers negative positions sorted and refuses missing ones', () => {
+      const neg = PQ.Plan.lower(proj([src, { type: 'SplitColumn', col: 'name', mode: 'positions', positions: '3, -2' }]), 'q1', files);
+      assert(neg.ok, neg.reason);
+      assertEq(neg.plan.ops[0].positions, [-2, 3]);
       assert(!PQ.Plan.lower(proj([src, { type: 'SplitColumn', col: 'name', mode: 'positions', positions: '' }]), 'q1', files).ok);
     });
     test('plan: std, var and the new window functions lower', () => {
