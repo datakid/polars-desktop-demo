@@ -432,3 +432,67 @@ fn explain_returns_the_optimized_plan() {
     assert!(text.contains("SCAN") && text.contains("PROJECT 1/2 COLUMNS"), "{text}");
 }
 
+#[test]
+fn streamed_csv_counts_rows_with_quoted_newlines() {
+    let dir = std::env::temp_dir().join(format!("floe_csv_rows_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("in.csv");
+    let text = "id,t\n1,\"a\nb\"\n2,\"say \"\"hi\"\"\"\n3,plain\n";
+    std::fs::write(&src, text).unwrap();
+    let plan = json!({
+        "v": 1,
+        "locale": "en-US",
+        "source": { "kind": "csv", "path": src.to_string_lossy().replace('\\', "/"), "delimiter": ",", "header": true, "skipRows": 0 },
+        "ops": []
+    });
+    let out = dir.join("out.csv");
+    let r = floe_engine::call("export", &json!({ "plan": plan, "format": "csv", "path": out.to_string_lossy().replace('\\', "/"), "sheet": "Data" })).unwrap();
+    assert_eq!(r["rows"], 3);
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), text);
+}
+
+#[test]
+fn streamed_csv_matches_the_buffered_writer() {
+    let Some((fx, dir)) = setup() else {
+        eprintln!("tests/fixtures/parity.json missing — run `node scripts/gen-fixtures.mjs` from the repo root");
+        return;
+    };
+    let case = fx["fixtures"].as_array().unwrap().iter().find(|c| c["name"] == "types and per-cell errors").unwrap();
+    let mut plan = case["plan"].clone();
+    rewrite_paths(&mut plan, &dir);
+    let mut cx = floe_engine::Ctx { preview: None, truncated: false, gen: floe_engine::generation() };
+    let mut df = floe_engine::build(&plan, &mut cx).unwrap().collect().unwrap();
+    let keep: Vec<PlSmallStr> = df.get_column_names().into_iter().filter(|n| !n.starts_with(floe_engine::ERR_PREFIX)).cloned().collect();
+    df = df.select(keep).unwrap();
+    let mut buffered = Vec::new();
+    CsvWriter::new(&mut buffered).include_header(true).with_date_format(Some("%Y-%m-%d".into())).with_datetime_format(Some("%Y-%m-%d %H:%M:%S".into())).finish(&mut df).unwrap();
+    let work = format!("{dir}/streamed-csv");
+    std::fs::create_dir_all(&work).unwrap();
+    let out = format!("{work}/orders.csv");
+    let r = floe_engine::call("export", &json!({ "plan": plan, "format": "csv", "path": out, "sheet": "Data" })).unwrap();
+    assert_eq!(r["rows"], df.height());
+    assert_eq!(std::fs::read(&out).unwrap(), buffered);
+}
+
+#[test]
+fn a_panic_inside_a_full_run_is_contained() {
+    let lf = df!("a" => [1i64, 2, 3]).unwrap().lazy().map(|_| panic!("boom"), AllowedOptimizations::default(), None, Some("boom"));
+    let failed = floe_engine::guarded(|| floe_engine::collect_full(lf)).unwrap_err();
+    assert!(failed.contains("boom"), "{failed}");
+}
+
+#[test]
+fn full_runs_do_not_depend_on_the_callers_stack() {
+    let worker = std::thread::Builder::new()
+        .stack_size(512 << 10)
+        .spawn(|| {
+            let mut lf = df!("a" => [1i64, 2, 3, 4]).unwrap().lazy();
+            for i in 0..40 {
+                lf = lf.with_column((col("a") + lit(i as i64)).alias("a")).filter(col("a").gt(lit(-1i64)));
+            }
+            floe_engine::collect_full(lf).unwrap().height()
+        })
+        .unwrap();
+    assert_eq!(worker.join().unwrap(), 4);
+}
+

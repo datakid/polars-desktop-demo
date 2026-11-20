@@ -212,7 +212,7 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 - On desktop, Parquet files that fall back to the built-in engine are still read whole by the shell.
 - `Text.Similarity` has no Polars equivalent; codegen emits a placeholder.
 - Integers above 2^53 are exact only when they arrive typed as integers (for example an int64 Parquet column): result pages keep them exact and show them as text. Converting text to an integer, and the profile and distinct values, go through a 64-bit float in both engines, so such values are rounded there.
-- Full runs and exports collect the whole result in memory. Streaming execution and streaming sinks need the Polars `streaming` feature, which is not enabled, and a streaming export has no cheap row count for the "exported N rows" message.
+- Full runs use Polars' streaming engine and fall back to the in-memory engine if it fails. CSV, Parquet and Arrow exports are written as a stream, so their memory does not grow with the data (see `docs/BENCH.md`). A full run still keeps its result in memory so the grid can page it, and Excel exports collect the whole result.
 - Cancel releases the UI at once and discards the result, but a Polars query that is already running keeps its CPU until it finishes. Polars 0.55 has an interruptible collect, but a panic inside it aborts the whole process, so Floe does not use it. A plan that is cancelled between steps stops before the next step is built.
 - Database sources.
 

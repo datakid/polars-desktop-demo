@@ -185,7 +185,7 @@ pub fn evaluate(args: &Value) -> R<Value> {
     let preview = if mode == "full" { None } else { Some(args["previewRows"].as_u64().unwrap_or(1000) as usize) };
     let mut cx = Ctx { preview, truncated: false, gen };
     let lf = build(&args["plan"], &mut cx)?;
-    let df = lf.collect().s()?;
+    let df = if preview.is_none() { collect_full(lf)? } else { lf.collect().s()? };
     if with_store(|s| s.gen) != gen {
         return Err("Cancelled".into());
     }
@@ -394,23 +394,104 @@ fn write_export(df: &mut DataFrame, args: &Value, tmp: &std::path::Path, path: &
     Ok(())
 }
 
+fn on_large_stack<T: Send + 'static>(work: impl FnOnce() -> R<T> + Send + 'static) -> R<T> {
+    std::thread::Builder::new()
+        .name("floe-streaming".into())
+        .stack_size(128 << 20)
+        .spawn(move || guarded(work))
+        .map_err(|e| e.to_string())?
+        .join()
+        .unwrap_or_else(|_| Err("Polars engine crashed on this query".to_string()))
+}
+
+pub fn collect_full(lf: LazyFrame) -> R<DataFrame> {
+    let streamed = lf.clone();
+    match on_large_stack(move || streamed.collect_with_engine(Engine::Streaming).s().map(|r| r.unwrap_single())) {
+        Ok(df) => Ok(df),
+        Err(_) => lf.collect().s(),
+    }
+}
+
+fn count_csv_rows(file: &std::path::Path) -> R<usize> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(file).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; 1 << 20];
+    let (mut quoted, mut records) = (false, 0usize);
+    loop {
+        let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        for &b in &buf[..n] {
+            match b {
+                b'"' => quoted = !quoted,
+                b'\n' if !quoted => records += 1,
+                _ => {}
+            }
+        }
+    }
+    Ok(records.saturating_sub(1))
+}
+
+fn count_rows(format: &str, file: &std::path::Path) -> R<usize> {
+    let target = file.to_str().ok_or("path is not valid UTF-8")?;
+    let lf = match format {
+        "parquet" => LazyFrame::scan_parquet(PlRefPath::new(target), ScanArgsParquet::default()).s()?,
+        "arrow" => LazyFrame::scan_ipc(PlRefPath::new(target), IpcScanOptions::default(), UnifiedScanArgs::default()).s()?,
+        _ => return count_csv_rows(file),
+    };
+    let counted = lf.select([len().alias("n")]).collect().s()?;
+    Ok(counted.column("n").s()?.get(0).s()?.try_extract::<u64>().s()? as usize)
+}
+
+fn sink_to(mut lf: LazyFrame, format: &str, tmp: &std::path::Path) -> R<usize> {
+    let schema = lf.collect_schema().s()?;
+    let keep: Vec<Expr> = schema.iter_names().filter(|n| !n.starts_with(ERR_PREFIX)).map(|n| col(n.clone())).collect();
+    let target = tmp.to_str().ok_or("path is not valid UTF-8")?;
+    let destination = SinkDestination::File { target: SinkTarget::Path(PlRefPath::new(target)) };
+    let write_format = match format {
+        "csv" => FileWriteFormat::Csv(CsvWriterOptions {
+            serialize_options: Arc::new(SerializeOptions { date_format: Some("%Y-%m-%d".into()), datetime_format: Some("%Y-%m-%d %H:%M:%S".into()), ..Default::default() }),
+            ..Default::default()
+        }),
+        "parquet" => FileWriteFormat::Parquet(Arc::new(ParquetWriteOptions::default())),
+        _ => FileWriteFormat::Ipc(IpcWriterOptions::default()),
+    };
+    lf.select(keep).sink(destination, write_format, UnifiedSinkArgs::default()).s()?.collect_with_engine(Engine::Streaming).s()?;
+    count_rows(format, tmp)
+}
+
+fn publish(tmp: &std::path::Path, path: &str) -> R<()> {
+    std::fs::rename(tmp, path).or_else(|_| std::fs::copy(tmp, path).map(|_| ())).map_err(|e| format!("{path}: {e}"))
+}
+
 pub fn export(args: &Value) -> R<Value> {
     let mut cx = Ctx { preview: None, truncated: false, gen: generation() };
     let lf = build(&args["plan"], &mut cx)?;
+    let path = args["path"].as_str().ok_or("export: missing path")?;
+    let format = args["format"].as_str().unwrap_or("csv");
+    let tmp = tmp_path(path);
+    if matches!(format, "csv" | "parquet" | "arrow") {
+        let streamed = {
+            let (plan, target, kind) = (lf.clone(), tmp.clone(), format.to_string());
+            on_large_stack(move || sink_to(plan, &kind, &target))
+        };
+        if let Ok(rows) = streamed {
+            let done = if generation() != cx.gen { Err("Cancelled".to_string()) } else { publish(&tmp, path) };
+            let _ = std::fs::remove_file(&tmp);
+            done?;
+            return Ok(json!({ "rows": rows, "path": path }));
+        }
+        let _ = std::fs::remove_file(&tmp);
+    }
     let mut df = lf.collect().s()?;
     if generation() != cx.gen {
         return Err("Cancelled".into());
     }
     let keep = visible(&df);
     df = df.select(keep).s()?;
-    let path = args["path"].as_str().ok_or("export: missing path")?;
     let rows = df.height();
-    let tmp = tmp_path(path);
-    let done = write_export(&mut df, args, &tmp, path).and_then(|_| {
-        std::fs::rename(&tmp, path)
-            .or_else(|_| std::fs::copy(&tmp, path).map(|_| ()))
-            .map_err(|e| format!("{path}: {e}"))
-    });
+    let done = write_export(&mut df, args, &tmp, path).and_then(|_| publish(&tmp, path));
     let _ = std::fs::remove_file(&tmp);
     done?;
     Ok(json!({ "rows": rows, "path": path }))
