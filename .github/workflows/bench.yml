@@ -1,0 +1,68 @@
+name: Engine benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: Input rows for the six pipelines
+        default: '1000000'
+      export_rows:
+        description: Input rows for the export and evaluate memory runs
+        default: '4000000'
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: Polars and built-in engine benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Generate the data and the lowered plans
+        run: node --max-old-space-size=6000 scripts/gen-bench-plans.mjs ${{ inputs.rows }} "$RUNNER_TEMP/bench"
+
+      - name: Build the benchmark in release mode
+        run: |
+          cargo test --release --locked --no-run --message-format=json --manifest-path desktop/src-tauri/engine/Cargo.toml --test bench_stream > "$RUNNER_TEMP/build.json"
+          python .github/scripts/find_executable.py "$RUNNER_TEMP/build.json" bench_stream > "$RUNNER_TEMP/bench.bin"
+          cat "$RUNNER_TEMP/bench.bin"
+
+      - name: Run the Polars engine benchmark
+        run: python .github/scripts/bench_polars.py "$(cat "$RUNNER_TEMP/bench.bin")" "$RUNNER_TEMP/bench/plans.json" "$RUNNER_TEMP/bench/polars.json" ${{ inputs.export_rows }}
+
+      - name: Run the built-in engine benchmark in headless Chromium
+        run: |
+          node scripts/build-web.mjs --target web
+          pip install playwright
+          playwright install --with-deps chromium
+          python -m http.server 8767 --bind 127.0.0.1 --directory dist > /dev/null 2>&1 &
+          sleep 2
+          python .github/scripts/bench_builtin.py "http://127.0.0.1:8767/bench.html?rows=${{ inputs.rows }}" "$RUNNER_TEMP/bench/builtin.json"
+
+      - name: Write the report
+        run: |
+          python .github/scripts/bench_report.py "$RUNNER_TEMP/bench/polars.json" "$RUNNER_TEMP/bench/builtin.json" > "$RUNNER_TEMP/report.md"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY'
+          import os
+          text = open(os.environ["RUNNER_TEMP"] + "/report.md").read()
+          encoded = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print("::notice title=Benchmark report::" + encoded)
+          PY

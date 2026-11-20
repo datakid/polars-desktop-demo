@@ -79,3 +79,25 @@ fn bench_evaluate() {
     };
     println!("BENCH evaluate {mode} rows={rows} ms={}", started.elapsed().as_millis());
 }
+
+#[test]
+#[ignore]
+fn bench_pipelines() {
+    let path = std::env::var("BENCH_PLANS").expect("BENCH_PLANS points at the plans.json written by scripts/gen-bench-plans.mjs");
+    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let evaluate = |plan: &serde_json::Value, mode: &str| {
+        let started = std::time::Instant::now();
+        let r = floe_engine::call("evaluate", &json!({ "plan": plan, "mode": mode, "previewRows": 1000 })).unwrap();
+        (started.elapsed().as_secs_f64() * 1000.0, r["n"].as_u64().unwrap())
+    };
+    for (label, plan) in doc["plans"].as_object().unwrap() {
+        let mut preview: Vec<f64> = (0..3).map(|_| evaluate(plan, "preview").0).collect();
+        let (cold, rows) = evaluate(plan, "full");
+        let (warm, _) = evaluate(plan, "full");
+        let preview_cold = preview[0];
+        preview.remove(0);
+        preview.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        println!("BENCH pipeline\t{label}\t{preview_cold:.1}\t{:.1}\t{cold:.1}\t{warm:.1}\t{rows}", preview[preview.len() / 2]);
+    }
+}
+

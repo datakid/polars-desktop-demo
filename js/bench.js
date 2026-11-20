@@ -49,6 +49,8 @@
   };
   const customers = q('customers', [], src('customers', 'customers.csv', { csv: { delimiter: ',', header: true } }));
 
+  self.BENCH_DEFS = { PIPES, customers, ordersCsv, customersCsv };
+
   function run(qid, mode) {
     E.setProject({ settings: { previewRows: 1000, locale: 'en-US' }, params: [], queries: Object.values(PIPES).concat([customers]) });
     E.clearCache();
@@ -92,6 +94,7 @@
     $('size').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; [...$('size').children].forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b ? 'true' : 'false'); }); });
     $('run').addEventListener('click', () => bench(size()));
     $('copy').addEventListener('click', () => navigator.clipboard.writeText(JSON.stringify(self.BENCH || {}, null, 2)));
-    bench(size());
+    const asked = +new URLSearchParams(location.search).get('rows');
+    bench(asked > 0 ? asked : size());
   });
 })();
