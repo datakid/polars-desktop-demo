@@ -296,6 +296,36 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
             body.set_column_names(&new_names).s()?;
             Ok(body.lazy())
         }
+        "sample" => {
+            let df = lf.collect().s()?;
+            let n = df.height();
+            let k = if op["mode"] == "percent" {
+                let pct = op["percent"].as_f64().filter(|v| v.is_finite()).unwrap_or(0.0).clamp(0.0, 100.0);
+                ((n as f64 * pct) / 100.0 + 0.5).floor() as usize
+            } else {
+                op["n"].as_f64().filter(|v| v.is_finite()).unwrap_or(0.0).floor().max(0.0) as usize
+            }
+            .min(n);
+            if k >= n {
+                return Ok(df.lazy());
+            }
+            let seed = op["seed"].as_f64().filter(|v| v.is_finite()).map(|v| (v.trunc().rem_euclid(4294967296.0)) as u32).unwrap_or(0);
+            let mut state = if seed == 0 { 0x9e3779b9u32 } else { seed };
+            let mut next = move || {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as f64 / 4294967296.0
+            };
+            let mut order: Vec<u32> = (0..n as u32).collect();
+            for i in 0..k {
+                let j = i + (next() * (n - i) as f64).floor() as usize;
+                order.swap(i, j);
+            }
+            let mut picked = order[..k].to_vec();
+            picked.sort_unstable();
+            Ok(df.take(&IdxCa::from_vec("i".into(), picked)).s()?.lazy())
+        }
         "fill" => {
             let cols = strs(&op["cols"]);
             need(&s, &cols)?;

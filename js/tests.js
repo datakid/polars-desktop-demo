@@ -74,9 +74,16 @@
       assert(seen.every((x) => x[0] === 'path'), 'a file path is carried under another key: ' + JSON.stringify(seen));
     });
     test('plan: file without a disk path is refused', () => { const r = PQ.Plan.lower(proj([src]), 'q1', {}); assert(!r.ok && /isn’t linked to a file on disk/.test(r.reason), r.reason); });
-    test('plan: unsupported step names the step', () => { const r = PQ.Plan.lower(proj([src, { type: 'Sample', mode: 'n', n: 5 }]), 'q1', files); assert(!r.ok && /^Step 2 “Sampled Rows”: isn’t supported/.test(r.reason), r.reason); });
+    test('plan: unsupported step names the step', () => { const r = PQ.Plan.lower(proj([src, { type: 'Transpose' }]), 'q1', files); assert(!r.ok && /^Step 2 “Transposed Table”: isn’t supported/.test(r.reason), r.reason); });
+    test('plan: sample lowers with the default seed and a numeric seed', () => {
+      const d = PQ.Plan.lower(proj([src, { type: 'Sample', mode: 'percent', percent: 25 }]), 'q1', files);
+      assert(d.ok, d.reason);
+      assertEq(d.plan.ops[0], { op: 'sample', mode: 'percent', percent: 25, n: 0, seed: 42 });
+      const n = PQ.Plan.lower(proj([src, { type: 'Sample', mode: 'n', n: 5, seed: -3 }]), 'q1', files);
+      assertEq(n.plan.ops[0], { op: 'sample', mode: 'n', percent: 0, n: 5, seed: -3 });
+    });
     test('plan: unsupported formula function is refused', () => { const r = PQ.Plan.lower(proj([src, { type: 'AddColumn', name: 'x', formula: 'Text.Similarity([a], [b])' }]), 'q1', files); assert(!r.ok && /Text\.Similarity/.test(r.reason), r.reason); });
-    test('plan: upto stops lowering before unsupported steps', () => { const r = PQ.Plan.lower(proj([src, { type: 'Distinct' }, { type: 'Sample', mode: 'n', n: 5 }]), 'q1', Object.assign({ upto: 1 }, files)); assert(r.ok && r.plan.ops.length === 1, r.reason); });
+    test('plan: upto stops lowering before unsupported steps', () => { const r = PQ.Plan.lower(proj([src, { type: 'Distinct' }, { type: 'Transpose' }]), 'q1', Object.assign({ upto: 1 }, files)); assert(r.ok && r.plan.ops.length === 1, r.reason); });
     test('plan: merge lowers the right query', () => {
       const p = proj([src, { type: 'Merge', right: 'q2', how: 'left', on: [['cid', 'cid']] }]);
       p.queries.push({ id: 'q2', name: 'Customers', steps: [{ id: 'x', name: 'Source', kind: { type: 'Source', source: { kind: 'blank', columns: ['cid', 'n'], rows: [['1', 'a']] } } }] });
