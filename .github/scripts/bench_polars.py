@@ -25,8 +25,8 @@ def run(test, env=None):
 result = {"pipelines": [], "exports": [], "evaluate": []}
 text, _, _ = run("bench_pipelines", {"BENCH_PLANS": plans})
 for line in text.splitlines():
-    if line.startswith("BENCH pipeline"):
-        _, label, pc, pw, fc, fw, rows = line.split("\t")
+    if "BENCH pipeline" in line:
+        _, label, pc, pw, fc, fw, rows = line[line.index("BENCH pipeline"):].split("\t")
         result["pipelines"].append({"pipeline": label, "previewCold": float(pc), "previewWarm": float(pw), "fullCold": float(fc), "fullWarm": float(fw), "rowsOut": int(rows)})
         print(line, flush=True)
 
