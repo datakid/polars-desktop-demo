@@ -28,6 +28,52 @@ Sandbox timings vary by ±30% between runs, so compare medians from your own mac
 |---|---|---|---|---|---|---|---|---|
 | | | | | | | | | |
 
+## Polars engine against the built-in engine (release build, CI)
+
+Run from the Actions tab: Engine benchmark, Run workflow (`.github/workflows/bench.yml`). The job builds the
+engine in release mode on a GitHub-hosted Ubuntu runner, runs the same five pipelines as above on both engines
+(the built-in engine in headless Chromium on the same machine), and checks that both return the same number of rows.
+The six numbers below are one run; runner speed varies, so compare the columns of one run with each other.
+
+#### Pipelines, 1,000,000 input rows
+
+Full-data run, cold then warm. Speed-up is built-in warm over Polars warm.
+
+| Pipeline | Built-in cold | Built-in warm | Polars cold | Polars warm | Speed-up | Rows out |
+|---|---|---|---|---|---|---|
+| A · types + filter | 750 ms | 670 ms | 258 ms | 235 ms | 2.8x | 374,674 (same) |
+| B · A + group by | 1.02 s | 711 ms | 231 ms | 227 ms | 3.1x | 168,270 (same) |
+| C · A + merge + sort | 1.16 s | 1.03 s | 328 ms | 305 ms | 3.4x | 374,674 (same) |
+| D · unpivot + pivot | 1.34 s | 1.49 s | 815 ms | 782 ms | 1.9x | 1,000,000 (same) |
+| F · formula column + filter | 922 ms | 882 ms | 260 ms | 265 ms | 3.3x | 409,974 (same) |
+
+#### Preview (first 1,000 rows)
+
+| Pipeline | Built-in cold | Built-in warm | Polars cold | Polars warm |
+|---|---|---|---|---|
+| A · types + filter | 12 ms | 8 ms | 8 ms | 3 ms |
+| B · A + group by | 2 ms | 2 ms | 3 ms | 2 ms |
+| C · A + merge + sort | 4 ms | 2 ms | 4 ms | 4 ms |
+| D · unpivot + pivot | 2 ms | 2 ms | 6 ms | 4 ms |
+| F · formula column + filter | 4 ms | 2 ms | 4 ms | 3 ms |
+
+#### Exports and full evaluate, 4,000,000 input rows
+
+| Run | Buffered peak | Streamed peak | Buffered time | Streamed time |
+|---|---|---|---|---|
+| Export csv | 385 MB | 298 MB | 0.4 s | 0.4 s |
+| Export parquet | 402 MB | 257 MB | 0.5 s | 0.3 s |
+| Export arrow | 604 MB | 298 MB | 0.4 s | 0.2 s |
+| Full evaluate | 389 MB | 291 MB | 0.2 s | 0.1 s |
+
+What changed between the first and the second run: pipeline F (formula column and filter) ran at 1.53 s warm
+against 0.75 s for the built-in engine, because type conversion chained seven string passes per number and two regex
+passes plus up to seventeen date parses per date. Converting numbers and dates in one native pass brought F to 265 ms and
+the other pipelines down by 30 to 70 percent (B 384 to 227 ms, C 869 to 305 ms, D 1.10 s to 0.78 s). The old
+expressions stay in `src/expr.rs` tests as the reference for a differential test.
+
+Preview runs (the first 1,000 rows) are on par: 2 to 8 ms on both engines.
+
 ## Polars build (desktop)
 Run the same pipelines in the desktop `polars` build with "Prefer Polars" on and off (Engine panel → switch), and record the chip timings here. Target: at least 5× faster on full-data A–C at 1M rows.
 
