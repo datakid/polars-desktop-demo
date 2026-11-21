@@ -49,22 +49,80 @@ pub fn comma_decimal(locale: &str) -> bool {
     matches!(locale, "de-DE" | "fr-FR")
 }
 
-pub fn num_from_text(e: Expr, locale: &str) -> Expr {
-    let s = trim(e);
-    let neg = s.clone().str().contains(lit(r"^\(.*\)$"), false);
-    let pct = s.clone().str().ends_with(lit("%"));
-    let mut t = s.str().replace_all(lit(r"[()%$€£¥\s\u00a0]"), lit(""), false);
-    if comma_decimal(locale) {
-        t = t.str().replace_all(lit("."), lit(""), true).str().replace_all(lit(","), lit("."), true);
-    } else {
-        t = t.str().replace_all(lit(","), lit(""), true);
+fn parse_number(raw: &str, comma_decimal: bool) -> Option<f64> {
+    let s = raw.trim_matches(char::is_whitespace);
+    let negative = s.len() >= 2 && s.starts_with('(') && s.ends_with(')') && !s.contains('\n');
+    let percent = s.ends_with('%');
+    let mut t = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_whitespace() || matches!(c, '(' | ')' | '%' | '$' | '€' | '£' | '¥') {
+            continue;
+        }
+        if comma_decimal {
+            match c {
+                '.' => {}
+                ',' => t.push('.'),
+                _ => t.push(c),
+            }
+        } else if c != ',' {
+            t.push(c);
+        }
     }
-    let t = when(t.clone().str().contains(lit(r"^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$"), false))
-        .then(t)
-        .otherwise(lit(NULL).cast(DataType::String));
-    let x = t.cast(DataType::Float64);
-    let x = when(neg).then(lit(0.0) - x.clone()).otherwise(x);
-    when(pct).then(x.clone() / lit(100.0)).otherwise(x)
+    let b = t.as_bytes();
+    let mut i = 0;
+    if i < b.len() && (b[i] == b'-' || b[i] == b'+') {
+        i += 1;
+    }
+    let whole = i;
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+    }
+    let whole_digits = i - whole;
+    let mut dot = false;
+    let mut fraction_digits = 0;
+    if i < b.len() && b[i] == b'.' {
+        dot = true;
+        i += 1;
+        let start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        fraction_digits = i - start;
+    }
+    if whole_digits == 0 && !(dot && fraction_digits > 0) {
+        return None;
+    }
+    if i < b.len() && (b[i] == b'e' || b[i] == b'E') {
+        i += 1;
+        if i < b.len() && (b[i] == b'-' || b[i] == b'+') {
+            i += 1;
+        }
+        let start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == start {
+            return None;
+        }
+    }
+    if i != b.len() {
+        return None;
+    }
+    let x = t.parse::<f64>().ok()?;
+    let x = if negative { -x } else { x };
+    Some(if percent { x / 100.0 } else { x })
+}
+
+pub fn num_from_text(e: Expr, locale: &str) -> Expr {
+    let comma = comma_decimal(locale);
+    e.map(
+        move |c: Column| {
+            let text = c.as_materialized_series().str()?;
+            let out: Float64Chunked = text.iter().map(|v| v.and_then(|t| parse_number(t, comma))).collect();
+            Ok(out.with_name(c.name().clone()).into_column())
+        },
+        |_, f| Ok(Field::new(f.name().clone(), DataType::Float64)),
+    )
 }
 
 pub fn date_formats(locale: &str) -> Vec<&'static str> {
@@ -78,11 +136,37 @@ pub fn date_formats(locale: &str) -> Vec<&'static str> {
     f
 }
 
+fn prepare_date<'a>(raw: &'a str, time: &regex::Regex) -> std::borrow::Cow<'a, str> {
+    let s = raw.trim_matches(char::is_whitespace);
+    if s.contains(':') {
+        time.replace_all(s, "")
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    }
+}
+
 pub fn date_from_text(e: Expr, locale: &str) -> Expr {
-    let s = trim(e);
-    let s10 = s.clone().str().replace_all(lit(r"[ T]\d{1,2}:\d{2}(:\d{2})?.*$"), lit(""), false);
-    let parts: Vec<Expr> = date_formats(locale).into_iter().map(|f| s10.clone().str().to_date(opts(f))).collect();
-    coalesce(&parts)
+    let formats = date_formats(locale);
+    let time = regex::Regex::new(r"[ T]\d{1,2}:\d{2}(:\d{2})?.*$").unwrap();
+    e.map(
+        move |c: Column| {
+            let text = c.as_materialized_series().str()?;
+            let prepared = StringChunked::from_iter_options(PlSmallStr::EMPTY, text.iter().map(|v| v.map(|t| prepare_date(t, &time))));
+            let mut out = prepared.as_date(Some(formats[0]), false)?.phys;
+            for format in &formats[1..] {
+                if out.null_count() == prepared.null_count() {
+                    break;
+                }
+                let blank = StringChunked::full_null(PlSmallStr::EMPTY, prepared.len());
+                let pending = prepared.zip_with(&out.is_null(), &blank)?;
+                let next = pending.as_date(Some(format), false)?.phys;
+                out = out.zip_with(&out.is_not_null(), &next)?;
+            }
+            out.rename(c.name().clone());
+            Ok(out.into_date().into_column())
+        },
+        |_, f| Ok(Field::new(f.name().clone(), DataType::Date)),
+    )
 }
 
 pub fn dt_from_text(e: Expr, locale: &str) -> Expr {
@@ -601,4 +685,132 @@ pub fn eval(expr: &Value, schema: &Schema, locale: &str) -> R<(Expr, K)> {
     let types = schema_map(schema);
     let cx = Cx { types: &types, locale };
     compile(expr, &cx)
+}
+
+#[cfg(test)]
+mod conversion_tests {
+    use super::*;
+
+    fn reference_trim(e: Expr) -> Expr {
+        e.str().replace_all(lit(r"^[\s\u00a0]+|[\s\u00a0]+$"), lit(""), false)
+    }
+
+    fn reference_number(e: Expr, locale: &str) -> Expr {
+        let s = reference_trim(e);
+        let neg = s.clone().str().contains(lit(r"^\(.*\)$"), false);
+        let pct = s.clone().str().ends_with(lit("%"));
+        let mut t = s.str().replace_all(lit(r"[()%$€£¥\s\u00a0]"), lit(""), false);
+        if comma_decimal(locale) {
+            t = t.str().replace_all(lit("."), lit(""), true).str().replace_all(lit(","), lit("."), true);
+        } else {
+            t = t.str().replace_all(lit(","), lit(""), true);
+        }
+        let t = when(t.clone().str().contains(lit(r"^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$"), false)).then(t).otherwise(lit(NULL).cast(DataType::String));
+        let x = t.cast(DataType::Float64);
+        let x = when(neg).then(lit(0.0) - x.clone()).otherwise(x);
+        when(pct).then(x.clone() / lit(100.0)).otherwise(x)
+    }
+
+    fn reference_date(e: Expr, locale: &str) -> Expr {
+        let s = reference_trim(e);
+        let s10 = s.clone().str().replace_all(lit(r"[ T]\d{1,2}:\d{2}(:\d{2})?.*$"), lit(""), false);
+        let parts: Vec<Expr> = date_formats(locale).into_iter().map(|f| s10.clone().str().to_date(opts(f))).collect();
+        coalesce(&parts)
+    }
+
+    fn number_corpus() -> Vec<Option<String>> {
+        let prefixes = ["", "-", "+", "(", "$", "€ ", " ", "\u{a0}", "--", "(-", "£", "\t", "¥"];
+        let bodies = [
+            "0", "5", "12", "1234", "12.5", ".5", "5.", "1,234", "1,234.56", "1.234,56", "1 234", "1e5", "1E-3", "2.5e+10", "٣", "1٣", "inf", "nan", "1e999", "-1e999",
+            "12345678901234567890", "0.000001", "1,2,3", "1..2", "1.2.3", ".", ",", "", " ", "abc", "1a", "1_000", "١٢٣", "0x10", "1e", "e5", "+-5", "5-", "00012", "1.5e3.2", "9007199254740993", "0.1", "-0", "1,000,000.00", "3,14", "12 345,67",
+        ];
+        let suffixes = ["", "%", ")", " %", ")%", "\n", " \t", "\u{2011}", " USD", "$", "e", "."];
+        let mut out: Vec<Option<String>> = vec![None];
+        for p in prefixes {
+            for b in bodies {
+                for s in suffixes {
+                    out.push(Some(format!("{p}{b}{s}")));
+                }
+            }
+        }
+        out
+    }
+
+    fn same_float(a: Option<f64>, b: Option<f64>) -> bool {
+        match (a, b) {
+            (None, None) => true,
+            (Some(x), Some(y)) => (x == y && x.is_sign_negative() == y.is_sign_negative()) || (x.is_nan() && y.is_nan()) || (x != y && (x - y).abs() <= 4.5e-16 * x.abs().max(y.abs())),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn native_number_conversion_matches_the_expression_it_replaced() {
+        let corpus = number_corpus();
+        for locale in ["en-US", "de-DE"] {
+            let df = DataFrame::new_infer_height(vec![Series::new("s".into(), corpus.clone()).into()]).unwrap();
+            let out = df.lazy().select([reference_number(col("s"), locale).alias("old"), num_from_text(col("s"), locale).alias("new")]).collect().unwrap();
+            let old: Vec<Option<f64>> = out.column("old").unwrap().f64().unwrap().iter().collect();
+            let new: Vec<Option<f64>> = out.column("new").unwrap().f64().unwrap().iter().collect();
+            let bad: Vec<String> = (0..old.len()).filter(|&i| !same_float(old[i], new[i])).take(12).map(|i| format!("{:?} -> old {:?}, new {:?}", corpus[i], old[i], new[i])).collect();
+            assert!(bad.is_empty(), "{locale}: {} strings\n{}", corpus.len(), bad.join("\n"));
+        }
+    }
+
+    fn date_text(pattern: &str, y: i32, m: u32, d: u32, padded: bool) -> String {
+        const SHORT: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const LONG: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        let two = |v: u32| if padded { format!("{v:02}") } else { v.to_string() };
+        pattern
+            .replace("%Y", &format!("{y:04}"))
+            .replace("%y", &format!("{:02}", y % 100))
+            .replace("%B", LONG[m as usize - 1])
+            .replace("%b", SHORT[m as usize - 1])
+            .replace("%m", &two(m))
+            .replace("%d", &two(d))
+    }
+
+    fn date_corpus(locale: &str) -> Vec<Option<String>> {
+        let mut patterns: Vec<&str> = date_formats(locale);
+        patterns.extend(["%d/%m/%Y", "%m/%d/%Y", "%Y%m%d", "%d %b %y", "%b %Y"]);
+        let triples = [(2025, 1, 3), (2025, 12, 31), (1999, 2, 28), (2024, 2, 29), (2023, 2, 29), (2005, 7, 4), (1970, 1, 1), (2069, 9, 9), (2070, 10, 10), (1900, 3, 1), (2099, 11, 30), (2001, 13, 1), (2001, 4, 31), (2020, 6, 15)];
+        let times = ["", " 10:30", "T10:30:45", " 9:05:01 PM", " 23:59:59.123", " 7:5", "T24:00", "  "];
+        let wraps = [("", ""), (" ", ""), ("", " "), ("\t", "\n"), ("\u{a0}", "")];
+        let mut out: Vec<Option<String>> = vec![None];
+        for pattern in &patterns {
+            for (y, m, d) in triples {
+                if !(1..=12).contains(&m) {
+                    out.push(Some(format!("{y:04}-{m:02}-{d:02}")));
+                    continue;
+                }
+                for padded in [true, false] {
+                    let base = date_text(pattern, y, m, d, padded);
+                    for time in times {
+                        for (l, r) in wraps {
+                            out.push(Some(format!("{l}{base}{time}{r}")));
+                        }
+                    }
+                }
+                out.push(Some(date_text(pattern, y, m, d, true).to_lowercase()));
+                out.push(Some(date_text(pattern, y, m, d, true).to_uppercase()));
+            }
+        }
+        for junk in ["", " ", "abc", "2025", "2025-1", "13/13/2025", "0/0/0", "2025-01-03x", "x2025-01-03", "1/2/3", "-1-1-1", "20250103", "Jan", "3 Jan", "Monday 3 January 2025", "2025-01-03 10:30 extra", "2025-01-03\n10:30", "10:30"] {
+            out.push(Some(junk.to_string()));
+        }
+        out
+    }
+
+    #[test]
+    fn native_date_conversion_matches_the_expression_it_replaced() {
+        for locale in ["en-US", "de-DE", "en-GB"] {
+            let corpus = date_corpus(locale);
+            let df = DataFrame::new_infer_height(vec![Series::new("s".into(), corpus.clone()).into()]).unwrap();
+            let out = df.lazy().select([reference_date(col("s"), locale).alias("old"), date_from_text(col("s"), locale).alias("new")]).collect().unwrap();
+            let old: Vec<Option<i32>> = out.column("old").unwrap().date().unwrap().phys.iter().collect();
+            let new: Vec<Option<i32>> = out.column("new").unwrap().date().unwrap().phys.iter().collect();
+            let bad: Vec<String> = (0..old.len()).filter(|&i| old[i] != new[i]).take(12).map(|i| format!("{:?} -> old {:?}, new {:?}", corpus[i], old[i], new[i])).collect();
+            assert!(bad.is_empty(), "{locale}: {} strings, {} differ\n{}", corpus.len(), (0..old.len()).filter(|&i| old[i] != new[i]).count(), bad.join("\n"));
+        }
+    }
 }
