@@ -496,3 +496,28 @@ fn full_runs_do_not_depend_on_the_callers_stack() {
     assert_eq!(worker.join().unwrap(), 4);
 }
 
+#[test]
+fn json_sources_the_built_in_reader_would_treat_differently_are_refused() {
+    let dir = std::env::temp_dir().join(format!("floe_json_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |name: &str, text: &str| {
+        let file = dir.join(format!("{name}.json"));
+        std::fs::write(&file, text).unwrap();
+        let plan = json!({ "v": 1, "locale": "en-US", "source": { "kind": "json", "path": file.to_string_lossy().replace('\\', "/") }, "ops": [] });
+        floe_engine::call("evaluate", &json!({ "plan": plan, "mode": "full", "previewRows": 1000 }))
+    };
+    assert_eq!(run("fine", r#"[{"a":1,"b":"x"},{"a":2,"b":null}]"#).unwrap()["n"], 2);
+    for (name, text) in [
+        ("mixed", r#"[{"a":1},{"a":"x"}]"#),
+        ("empty", "[]"),
+        ("all_null", r#"[{"a":null},{"a":null}]"#),
+        ("index_keys", r#"[{"b":1,"2":2}]"#),
+        ("scalars", "[1,2,3]"),
+        ("object_whose_array_becomes_the_rows", r#"{"id":1,"tags":["x"]}"#),
+        ("broken", r#"[{"a":1},"#),
+        ("late_fraction", &format!("[{}{{\"a\":1.5}}]", "{\"a\":1},".repeat(5001))),
+    ] {
+        assert!(run(name, text).is_err(), "{name} should fall back to the built-in engine");
+    }
+}
+

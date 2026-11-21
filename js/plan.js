@@ -68,7 +68,8 @@
       if (it.type === 'range') return { kind: 'excel', path, sheet: it.sheet || it.name, range: it.range || null };
       refuse(it.type === 'table' ? 'Excel tables run on the built-in engine' : it.type === 'name' ? 'Named ranges run on the built-in engine' : 'Multi-sheet sources run on the built-in engine');
     }
-    refuse((kind === 'json' ? 'JSON' : 'This file type') + ' runs on the built-in engine');
+    if (kind === 'json') return { kind: 'json', path };
+    refuse('This file type runs on the built-in engine');
   }
 
   function op(k, ctx) {

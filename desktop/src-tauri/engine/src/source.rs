@@ -72,6 +72,7 @@ pub fn read(src: &Value, first: Option<&Value>, cx: &mut Ctx) -> R<(LazyFrame, b
             let header = first.filter(|o| o["op"] == "promoteHeaders").map(|o| o["row"].as_u64().unwrap_or(0) as usize);
             Ok((excel(src, header, cx)?, header.is_some()))
         }
+        "json" => Ok((limit(json_frame(path)?.lazy(), cx)?, false)),
         "blank" => {
             let names: Vec<String> = src["columns"].as_array().cloned().unwrap_or_default().iter().map(|v| v.as_str().unwrap_or("").to_string()).collect();
             let rows = src["rows"].as_array().cloned().unwrap_or_default();
@@ -330,3 +331,181 @@ pub fn write_xlsx(df: &DataFrame, path: &str, sheet: &str) -> R<()> {
     wb.save(path).map_err(e)?;
     Ok(())
 }
+
+fn js_number(v: f64) -> String {
+    if v == 0.0 {
+        return "0".into();
+    }
+    let a = v.abs();
+    if !(1e-6..1e21).contains(&a) {
+        let text = format!("{v:e}");
+        return match text.split_once('e') {
+            Some((m, e)) if !e.starts_with('-') => format!("{m}e+{e}"),
+            _ => text,
+        };
+    }
+    format!("{v}")
+}
+
+fn js_stringify(v: &Value, out: &mut String) {
+    match v {
+        Value::Null => out.push_str("null"),
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Number(n) => out.push_str(&js_number(n.as_f64().unwrap_or(0.0))),
+        Value::String(_) => out.push_str(&v.to_string()),
+        Value::Array(a) => {
+            out.push('[');
+            for (i, x) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                js_stringify(x, out);
+            }
+            out.push(']');
+        }
+        Value::Object(m) => {
+            out.push('{');
+            for (i, (k, x)) in m.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&Value::String(k.clone()).to_string());
+                out.push(':');
+                js_stringify(x, out);
+            }
+            out.push('}');
+        }
+    }
+}
+
+fn is_array_index(key: &str) -> bool {
+    !key.is_empty() && key.bytes().all(|b| b.is_ascii_digit()) && (key == "0" || !key.starts_with('0')) && key.parse::<u64>().map(|n| n < 4294967295).unwrap_or(false)
+}
+
+fn newline_then_brace(text: &str) -> bool {
+    text.match_indices('\n').any(|(i, _)| text[i + 1..].trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}').starts_with('{'))
+}
+
+enum Cell {
+    Num(f64),
+    Text(String),
+    Flag(bool),
+}
+
+fn json_rows(text: &str) -> R<Vec<Value>> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text).trim();
+    let parse = |t: &str| serde_json::from_str::<Value>(t).map_err(|e| format!("JSON: {e}"));
+    if text.starts_with('[') {
+        return match parse(text)? {
+            Value::Array(rows) => Ok(rows),
+            _ => Err("JSON: expected an array".into()),
+        };
+    }
+    if text.starts_with('{') && !newline_then_brace(text) {
+        return match parse(text)? {
+            Value::Object(map) => Ok(match map.values().find(|v| v.is_array()) {
+                Some(Value::Array(rows)) => rows.clone(),
+                _ => vec![Value::Object(map)],
+            }),
+            _ => Err("JSON: expected an object".into()),
+        };
+    }
+    text.split('\n').map(|l| l.trim_end_matches('\r')).filter(|l| !l.trim().is_empty()).map(parse).collect()
+}
+
+fn json_frame(path: &str) -> R<DataFrame> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| format!("{path}: JSON is not UTF-8"))?;
+    let rows = json_rows(text)?;
+    if rows.is_empty() {
+        return Err("JSON: no rows".into());
+    }
+    let mut names: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for r in &rows {
+        match r {
+            Value::Object(m) => {
+                for k in m.keys() {
+                    if is_array_index(k) {
+                        return Err("JSON: numeric keys keep the built-in order".into());
+                    }
+                    if seen.insert(k.clone()) {
+                        names.push(k.clone());
+                    }
+                }
+            }
+            Value::Null => {}
+            _ => return Err("JSON: rows that are not objects".into()),
+        }
+    }
+    if names.is_empty() {
+        return Err("JSON: no columns".into());
+    }
+    let mut columns: Vec<Column> = Vec::with_capacity(names.len());
+    for name in &names {
+        let cells: Vec<Option<Cell>> = rows
+            .iter()
+            .map(|r| match r.get(name) {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(b)) => Some(Cell::Flag(*b)),
+                Some(Value::Number(n)) => Some(Cell::Num(n.as_f64().unwrap_or(f64::NAN))),
+                Some(Value::String(t)) => Some(Cell::Text(t.clone())),
+                Some(other) => {
+                    let mut t = String::new();
+                    js_stringify(other, &mut t);
+                    Some(Cell::Text(t))
+                }
+            })
+            .collect();
+        let kind_of = |c: &Cell| match c {
+            Cell::Num(_) => 0,
+            Cell::Text(_) => 1,
+            Cell::Flag(_) => 2,
+        };
+        let decide = |upto: usize| -> R<(i32, bool)> {
+            let mut kind = -1;
+            let mut whole = true;
+            for c in cells.iter().take(upto).flatten() {
+                let k = kind_of(c);
+                if kind == -1 {
+                    kind = k;
+                } else if kind != k {
+                    return Err(format!("JSON: column {name} mixes value types"));
+                }
+                if let Cell::Num(v) = c {
+                    if v.fract() != 0.0 || !v.is_finite() {
+                        whole = false;
+                    }
+                }
+            }
+            if kind == -1 {
+                return Err(format!("JSON: column {name} has no values"));
+            }
+            Ok((kind, whole))
+        };
+        let sampled = decide(5000)?;
+        let all = decide(cells.len())?;
+        if sampled != all {
+            return Err(format!("JSON: column {name} changes type after the first 5000 rows"));
+        }
+        let series = match all {
+            (0, true) => {
+                let mut v: Vec<Option<i64>> = Vec::with_capacity(cells.len());
+                for c in &cells {
+                    v.push(match c {
+                        Some(Cell::Num(x)) if x.abs() < 9.2e18 => Some(*x as i64),
+                        Some(_) => return Err(format!("JSON: column {name} has an integer out of range")),
+                        None => None,
+                    });
+                }
+                Series::new(name.as_str().into(), v)
+            }
+            (0, false) => Series::new(name.as_str().into(), cells.iter().map(|c| if let Some(Cell::Num(x)) = c { Some(*x) } else { None }).collect::<Vec<Option<f64>>>()),
+            (1, _) => Series::new(name.as_str().into(), cells.iter().map(|c| if let Some(Cell::Text(t)) = c { Some(t.as_str()) } else { None }).collect::<Vec<Option<&str>>>()),
+            _ => Series::new(name.as_str().into(), cells.iter().map(|c| if let Some(Cell::Flag(b)) = c { Some(*b) } else { None }).collect::<Vec<Option<bool>>>()),
+        };
+        columns.push(series.into_column());
+    }
+    DataFrame::new_infer_height(columns).s()
+}
+

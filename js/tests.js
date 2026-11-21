@@ -73,6 +73,14 @@
       assertEq(seen.map((x) => x[1]).sort(), ['/data/b.parquet', '/data/c.xlsx', '/data/d.arrow', '/data/orders.csv']);
       assert(seen.every((x) => x[0] === 'path'), 'a file path is carried under another key: ' + JSON.stringify(seen));
     });
+    test('plan: json files lower to a json source whatever their extension', () => {
+      ['rows.json', 'rows.ndjson', 'rows.jsonl'].forEach((name) => {
+        const jsonSrc = { type: 'Source', source: { kind: 'file', fileId: 'f1', fileName: name } };
+        const r = PQ.Plan.lower(proj([jsonSrc]), 'q1', { files: { f1: '/data/' + name } });
+        assert(r.ok, r.reason);
+        assertEq(r.plan.source, { kind: 'json', path: '/data/' + name });
+      });
+    });
     test('plan: file without a disk path is refused', () => { const r = PQ.Plan.lower(proj([src]), 'q1', {}); assert(!r.ok && /isn’t linked to a file on disk/.test(r.reason), r.reason); });
     test('plan: unsupported step names the step', () => { const r = PQ.Plan.lower(proj([src, { type: 'Transpose' }]), 'q1', files); assert(!r.ok && /^Step 2 “Transposed Table”: isn’t supported/.test(r.reason), r.reason); });
     test('plan: sample lowers with the default seed and a numeric seed', () => {
