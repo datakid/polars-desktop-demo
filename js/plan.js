@@ -49,7 +49,18 @@
     if (!src) refuse('This query has no source');
     if (src.kind === 'blank') return { kind: 'blank', columns: PQ.uniquify(src.columns || ['Column1']), rows: (src.rows || []).map((r) => r.map((v) => (v === '' || v === undefined ? null : v === null ? null : String(v)))) };
     if (src.kind === 'query') return { kind: 'query', plan: ctx.sub(src.query) };
-    if (src.kind === 'folder') refuse('Folder sources run on the built-in engine');
+    if (src.kind === 'folder') {
+      const listing = (ctx.folders && ctx.folders[src.folder]) || [];
+      const re = PQ.globToRegex(src.pattern || '*');
+      const picked = listing.filter((f) => re.test(f.name)).sort((a, b) => a.name.localeCompare(b.name));
+      if (!picked.length) refuse('No files in folder “' + src.folder + '” match “' + (src.pattern || '*') + '”');
+      const parts = picked.map((f) => {
+        const one = source(Object.assign({}, src, { kind: 'file', fileId: '#', fileName: f.name, format: undefined }), Object.assign({}, ctx, { files: { '#': f.path } }));
+        if (!['csv', 'parquet', 'ipc', 'json'].includes(one.kind)) refuse('Folders with ' + f.name + ' run on the built-in engine');
+        return { name: f.name, source: one };
+      });
+      return { kind: 'folder', fileColumn: src.fileColumn || 'Source.Name', parts };
+    }
     if (src.kind !== 'file') refuse('Unsupported source');
     const path = ctx.files[src.fileId];
     if (!path) refuse('“' + (src.fileName || 'file') + '” isn’t linked to a file on disk');
@@ -163,7 +174,7 @@
 
   Plan.lower = function (project, qid, opts) {
     opts = opts || {};
-    const ctx = { files: opts.files || {}, params: project.params || [], locale: (project.settings && project.settings.locale) || 'en-US' };
+    const ctx = { files: opts.files || {}, folders: opts.folders || {}, params: project.params || [], locale: (project.settings && project.settings.locale) || 'en-US' };
     try {
       const body = lowerQuery(project, qid, opts.upto, ctx, []);
       return { ok: true, plan: Object.assign({ v: Plan.VERSION, locale: ctx.locale }, body) };

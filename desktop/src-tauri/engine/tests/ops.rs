@@ -542,3 +542,26 @@ fn expand_json_shapes_the_built_in_step_treats_differently_are_refused() {
     }
 }
 
+#[test]
+fn folders_whose_files_cannot_be_combined_the_built_in_way_are_refused() {
+    let dir = std::env::temp_dir().join(format!("floe_folder_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |name: &str, mut df: DataFrame| {
+        let file = dir.join(name);
+        ParquetWriter::new(std::fs::File::create(&file).unwrap()).finish(&mut df).unwrap();
+        file.to_string_lossy().replace('\\', "/")
+    };
+    let numbers = write("n.parquet", df!("v" => [1i64, 2]).unwrap());
+    let words = write("w.parquet", df!("v" => ["a", "b"]).unwrap());
+    let clash = write("c.parquet", df!("Source.Name" => ["x"]).unwrap());
+    let run = |parts: Vec<(&str, &String)>| {
+        let parts: Vec<Value> = parts.into_iter().map(|(n, p)| json!({ "name": n, "source": { "kind": "parquet", "path": p } })).collect();
+        let plan = json!({ "v": 1, "locale": "en-US", "source": { "kind": "folder", "fileColumn": "Source.Name", "parts": parts }, "ops": [] });
+        floe_engine::call("evaluate", &json!({ "plan": plan, "mode": "full", "previewRows": 1000 }))
+    };
+    assert_eq!(run(vec![("n.parquet", &numbers), ("n2.parquet", &numbers)]).unwrap()["n"], 4);
+    assert!(run(vec![("n.parquet", &numbers), ("w.parquet", &words)]).is_err(), "a column typed differently in two files must fall back");
+    assert!(run(vec![("c.parquet", &clash)]).is_err(), "a file that already has the file-name column must fall back");
+    assert!(run(vec![]).is_err(), "a folder without files must fall back");
+}
+

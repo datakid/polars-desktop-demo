@@ -73,6 +73,34 @@ pub fn read(src: &Value, first: Option<&Value>, cx: &mut Ctx) -> R<(LazyFrame, b
             Ok((excel(src, header, cx)?, header.is_some()))
         }
         "json" => Ok((limit(json_frame(path)?.lazy(), cx)?, false)),
+        "folder" => {
+            let parts = src["parts"].as_array().filter(|p| !p.is_empty()).ok_or("folder: no files")?;
+            let column = src["fileColumn"].as_str().unwrap_or("Source.Name").to_string();
+            let mut frames: Vec<LazyFrame> = Vec::with_capacity(parts.len());
+            let mut types: std::collections::HashMap<String, DataType> = std::collections::HashMap::new();
+            for part in parts {
+                let mut inner = Ctx { preview: None, truncated: false, gen: cx.gen };
+                let (mut lf, _) = read(&part["source"], None, &mut inner)?;
+                let schema = lf.collect_schema().s()?;
+                if schema.contains(column.as_str()) {
+                    return Err(format!("folder: a file already has a column named {column}"));
+                }
+                let mut keep: Vec<Expr> = vec![lit(part["name"].as_str().unwrap_or("")).alias(column.as_str())];
+                for (name, dtype) in schema.iter() {
+                    match types.get(name.as_str()) {
+                        Some(seen) if seen != dtype => return Err(format!("folder: column {name} has different types in different files")),
+                        Some(_) => {}
+                        None => {
+                            types.insert(name.to_string(), dtype.clone());
+                        }
+                    }
+                    keep.push(col(name.clone()));
+                }
+                frames.push(lf.select(keep));
+            }
+            let joined = concat_lf_diagonal(frames, UnionArgs::default()).s()?;
+            Ok((limit(joined, cx)?, false))
+        }
         "blank" => {
             let names: Vec<String> = src["columns"].as_array().cloned().unwrap_or_default().iter().map(|v| v.as_str().unwrap_or("").to_string()).collect();
             let rows = src["rows"].as_array().cloned().unwrap_or_default();

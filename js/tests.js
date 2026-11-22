@@ -88,6 +88,19 @@
       const some = PQ.Plan.lower(proj([src, { type: 'ExpandJson', col: 'name', fields: ['b', 'a'] }]), 'q1', files);
       assertEq(some.plan.ops[0], { op: 'expandJson', col: 'name', fields: ['b', 'a'] });
     });
+    test('plan: folder sources lower the matching files in name order', () => {
+      const folderSrc = { type: 'Source', source: { kind: 'folder', folder: 'sales', pattern: '*.csv', csv: { delimiter: ',' } } };
+      const folders = { sales: [{ name: 'b.csv', path: '/d/b.csv' }, { name: 'a.csv', path: '/d/a.csv' }, { name: 'c.parquet', path: '/d/c.parquet' }] };
+      const r = PQ.Plan.lower(proj([folderSrc]), 'q1', Object.assign({}, files, { folders }));
+      assert(r.ok, r.reason);
+      assertEq(r.plan.source.kind, 'folder');
+      assertEq(r.plan.source.fileColumn, 'Source.Name');
+      assertEq(r.plan.source.parts.map((x) => [x.name, x.source.kind, x.source.path]), [['a.csv', 'csv', '/d/a.csv'], ['b.csv', 'csv', '/d/b.csv']]);
+      const none = PQ.Plan.lower(proj([{ type: 'Source', source: { kind: 'folder', folder: 'sales', pattern: '*.json' } }]), 'q1', Object.assign({}, files, { folders }));
+      assert(!none.ok && /No files in folder/.test(none.reason), none.reason);
+      const book = PQ.Plan.lower(proj([{ type: 'Source', source: { kind: 'folder', folder: 'books', pattern: '*.xlsx' } }]), 'q1', Object.assign({}, files, { folders: { books: [{ name: 'e.xlsx', path: '/d/e.xlsx' }] } }));
+      assert(!book.ok, 'excel files in a folder run on the built-in engine');
+    });
     test('plan: file without a disk path is refused', () => { const r = PQ.Plan.lower(proj([src]), 'q1', {}); assert(!r.ok && /isn’t linked to a file on disk/.test(r.reason), r.reason); });
     test('plan: unsupported step names the step', () => { const r = PQ.Plan.lower(proj([src, { type: 'Transpose' }]), 'q1', files); assert(!r.ok && /^Step 2 “Transposed Table”: isn’t supported/.test(r.reason), r.reason); });
     test('plan: sample lowers with the default seed and a numeric seed', () => {

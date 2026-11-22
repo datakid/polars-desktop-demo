@@ -41,6 +41,10 @@ const INPUTS = {
   'pretty.json': '[\n  {"id": 1, "v": "a"},\n  {"id": 2, "v": "b", "w": 1.5}\n]',
   'json_cells.csv': ['id,payload,note', '1,"{""a"":1,""b"":""x"",""n"":{""k"":[1,2.50]}}",first', '2,"{""a"":2.5,""c"":true}",second', '3,,third', '4,5,fourth', '5,"{""b"":""y"",""a"":3}",fifth'].join('\n'),
   'json_cells2.csv': ['id,payload.a,payload', '1,keep,"{""a"":1}"', '2,keep2,"{""a"":2}"'].join('\n'),
+  'sales_2025-10.csv': ['id,qty,region', '5,50,EU', '6,60,US'].join('\n'),
+  'sales_2025-02.csv': ['id,region,qty,note', '3,EU,30,late', '4,APAC,40,'].join('\n'),
+  'sales_2025-01.csv': ['id,region,qty', '1,EU,10', '2,US,20'].join('\n'),
+  'sales_notes.txt': 'not data',
   'halves.csv': [
     'id,x,a,b',
     '1,0.5,2025-01-01 12:00:00,2025-01-01 00:00:00',
@@ -57,7 +61,7 @@ const INPUTS = {
 };
 
 const types = { type: 'ChangeType', onError: 'error', changes: [{ col: 'order_id', type: 'int' }, { col: 'order_date', type: 'date' }, { col: 'qty', type: 'int' }, { col: 'price', type: 'number' }, { col: 'discount', type: 'number' }] };
-const srcOf = (name, csv) => ({ type: 'Source', source: { kind: 'file', fileId: name, fileName: name, csv: Object.assign({ delimiter: name === 'de.csv' ? ';' : ',', header: true }, csv || {}) } });
+const srcOf = (name, csv) => typeof name === 'object' ? ({ type: 'Source', source: Object.assign({ kind: 'folder', csv: { delimiter: ',', header: true } }, name) }) : ({ type: 'Source', source: { kind: 'file', fileId: name, fileName: name, csv: Object.assign({ delimiter: name === 'de.csv' ? ';' : ',', header: true }, csv || {}) } });
 
 const CASES = [
   ['types and per-cell errors', 'orders.csv', [types]],
@@ -91,6 +95,8 @@ const CASES = [
   ['expand json objects with every key', 'json_cells.csv', [{ type: 'ExpandJson', col: 'payload' }]],
   ['expand json objects with chosen keys', 'json_cells.csv', [{ type: 'ExpandJson', col: 'payload', fields: ['b', 'a'] }]],
   ['expand json into a name that already exists', 'json_cells2.csv', [{ type: 'ExpandJson', col: 'payload', fields: ['a'] }]],
+  ['folder of csv files with different columns', { folder: 'sales', pattern: '*.csv' }, []],
+  ['folder with a custom file column and a preview across files', { folder: 'sales', pattern: 'sales_2025-*.csv', fileColumn: 'File' }, [], undefined, { mode: 'preview', previewRows: 3 }],
   ['distinct and duplicates', 'orders.csv', [{ type: 'Distinct', subset: ['customer_id'] }]],
   ['keep duplicates', 'orders.csv', [{ type: 'KeepDuplicates', subset: ['region'] }]],
   ['keep rows top/remove/alternate', 'orders.csv', [{ type: 'KeepRows', mode: 'remove_top', n: 1 }, { type: 'KeepRows', mode: 'alternate', keep: 1, skip: 1, offset: 0 }, { type: 'KeepRows', mode: 'top', n: 3 }]],
@@ -145,11 +151,12 @@ function deepWire(v) {
   return wire(v);
 }
 
-const files = {};
+const files = {}, folders = {};
 for (const [name, text] of Object.entries(INPUTS)) {
   const buf = new TextEncoder().encode(text).buffer;
-  PQ.Files.set(name, { id: name, name, size: buf.byteLength, mtime: 1, folder: '', buf });
+  PQ.Files.set(name, { id: name, name, size: buf.byteLength, mtime: 1, folder: name.startsWith('sales_') ? 'sales' : '', buf });
   files[name] = '@@/' + name;
+  if (name.startsWith('sales_')) (folders.sales = folders.sales || []).push({ name, path: '@@/' + name });
 }
 const customers = { id: 'customers', name: 'customers', load: { target: 'none' }, steps: [{ id: 'c0', name: 'Source', kind: srcOf('customers.csv') }] };
 
@@ -163,7 +170,7 @@ for (const [label, input, steps, csv, opts] of CASES) {
   E.clearCache();
   const r = E.evaluate('q', undefined, mode);
   if (!r.table) throw new Error(label + ': built-in failed at step ' + (r.failedAt + 1) + ': ' + r.states[r.failedAt].error);
-  const low = PQ.Plan.lower(project, 'q', { files });
+  const low = PQ.Plan.lower(project, 'q', { files, folders });
   if (!low.ok) { refused++; console.warn('refused:', label, '—', low.reason); continue; }
   const names = r.table.schema().map((c) => c.name);
   const profiles = {}, distinct = {};

@@ -28,8 +28,13 @@
     (UI.App.files || []).forEach((f) => { if (f.path) m[f.id] = f.path; });
     return m;
   }
+  function folderMap() {
+    const m = {};
+    (UI.App.files || []).forEach((f) => { if (f.path && f.folder) (m[f.folder] = m[f.folder] || []).push({ name: f.name, path: f.path }); });
+    return m;
+  }
   function lower(project, qid, upto) {
-    const r = PQ.Plan.lower(project, qid, { upto, files: filesMap() });
+    const r = PQ.Plan.lower(project, qid, { upto, files: filesMap(), folders: folderMap() });
     UI.Engine.nativeReason = r.ok ? null : r.reason;
     return r;
   }
