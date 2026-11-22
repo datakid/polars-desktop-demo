@@ -33,10 +33,6 @@ pub struct Cx<'a> {
 
 const DAY_MS: i64 = 86_400_000;
 
-fn opts(fmt: &str) -> StrptimeOptions {
-    StrptimeOptions { format: Some(fmt.into()), strict: false, exact: true, cache: true }
-}
-
 pub fn trim(e: Expr) -> Expr {
     e.str().replace_all(lit(r"^[\s\u00a0]+|[\s\u00a0]+$"), lit(""), false)
 }
@@ -145,23 +141,35 @@ fn prepare_date<'a>(raw: &'a str, time: &regex::Regex) -> std::borrow::Cow<'a, s
     }
 }
 
+fn date_time_pattern() -> regex::Regex {
+    regex::Regex::new(r"[ T]\d{1,2}:\d{2}(:\d{2})?.*$").unwrap()
+}
+
+fn prepared_dates(text: &StringChunked, time: &regex::Regex) -> StringChunked {
+    StringChunked::from_iter_options(PlSmallStr::EMPTY, text.iter().map(|v| v.map(|t| prepare_date(t, time))))
+}
+
+fn parse_dates(prepared: &StringChunked, formats: &[&str]) -> PolarsResult<Int32Chunked> {
+    let mut out = prepared.as_date(Some(formats[0]), false)?.phys;
+    for format in &formats[1..] {
+        if out.null_count() == prepared.null_count() {
+            break;
+        }
+        let blank = StringChunked::full_null(PlSmallStr::EMPTY, prepared.len());
+        let pending = prepared.zip_with(&out.is_null(), &blank)?;
+        let next = pending.as_date(Some(format), false)?.phys;
+        out = out.zip_with(&out.is_not_null(), &next)?;
+    }
+    Ok(out)
+}
+
 pub fn date_from_text(e: Expr, locale: &str) -> Expr {
     let formats = date_formats(locale);
-    let time = regex::Regex::new(r"[ T]\d{1,2}:\d{2}(:\d{2})?.*$").unwrap();
+    let time = date_time_pattern();
     e.map(
         move |c: Column| {
             let text = c.as_materialized_series().str()?;
-            let prepared = StringChunked::from_iter_options(PlSmallStr::EMPTY, text.iter().map(|v| v.map(|t| prepare_date(t, &time))));
-            let mut out = prepared.as_date(Some(formats[0]), false)?.phys;
-            for format in &formats[1..] {
-                if out.null_count() == prepared.null_count() {
-                    break;
-                }
-                let blank = StringChunked::full_null(PlSmallStr::EMPTY, prepared.len());
-                let pending = prepared.zip_with(&out.is_null(), &blank)?;
-                let next = pending.as_date(Some(format), false)?.phys;
-                out = out.zip_with(&out.is_not_null(), &next)?;
-            }
+            let mut out = parse_dates(&prepared_dates(text, &time), &formats)?;
             out.rename(c.name().clone());
             Ok(out.into_date().into_column())
         },
@@ -170,14 +178,36 @@ pub fn date_from_text(e: Expr, locale: &str) -> Expr {
 }
 
 pub fn dt_from_text(e: Expr, locale: &str) -> Expr {
-    let s = trim(e);
-    let ms = DataType::Datetime(TimeUnit::Milliseconds, None);
-    let mut parts: Vec<Expr> = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"]
-        .into_iter()
-        .map(|f| s.clone().str().to_datetime(Some(TimeUnit::Milliseconds), None, opts(f), lit("raise")))
-        .collect();
-    parts.push(date_from_text(s, locale).cast(ms));
-    coalesce(&parts)
+    let date_formats = date_formats(locale);
+    let time = date_time_pattern();
+    e.map(
+        move |c: Column| {
+            let text = c.as_materialized_series().str()?;
+            let trimmed = StringChunked::from_iter_options(PlSmallStr::EMPTY, text.iter().map(|v| v.map(|t| t.trim_matches(char::is_whitespace))));
+            let ambiguous = StringChunked::new(PlSmallStr::EMPTY, ["raise"]);
+            let formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"];
+            let mut out = trimmed.as_datetime(Some(formats[0]), TimeUnit::Milliseconds, false, false, None, &ambiguous)?.phys;
+            for format in &formats[1..] {
+                if out.null_count() == trimmed.null_count() {
+                    break;
+                }
+                let blank = StringChunked::full_null(PlSmallStr::EMPTY, trimmed.len());
+                let pending = trimmed.zip_with(&out.is_null(), &blank)?;
+                let next = pending.as_datetime(Some(format), TimeUnit::Milliseconds, false, false, None, &ambiguous)?.phys;
+                out = out.zip_with(&out.is_not_null(), &next)?;
+            }
+            if out.null_count() != trimmed.null_count() {
+                let blank = StringChunked::full_null(PlSmallStr::EMPTY, trimmed.len());
+                let pending = trimmed.zip_with(&out.is_null(), &blank)?;
+                let days = parse_dates(&prepared_dates(&pending, &time), &date_formats)?;
+                let midnight: Int64Chunked = days.iter().map(|d| d.map(|v| v as i64 * 86_400_000)).collect();
+                out = out.zip_with(&out.is_not_null(), &midnight)?;
+            }
+            out.rename(c.name().clone());
+            Ok(out.into_datetime(TimeUnit::Milliseconds, None).into_column())
+        },
+        |_, f| Ok(Field::new(f.name().clone(), DataType::Datetime(TimeUnit::Milliseconds, None))),
+    )
 }
 
 pub fn bool_from_text(e: Expr) -> Expr {
@@ -691,6 +721,10 @@ pub fn eval(expr: &Value, schema: &Schema, locale: &str) -> R<(Expr, K)> {
 mod conversion_tests {
     use super::*;
 
+    fn opts(fmt: &str) -> StrptimeOptions {
+        StrptimeOptions { format: Some(fmt.into()), strict: false, exact: true, cache: true }
+    }
+
     fn reference_trim(e: Expr) -> Expr {
         e.str().replace_all(lit(r"^[\s\u00a0]+|[\s\u00a0]+$"), lit(""), false)
     }
@@ -811,6 +845,57 @@ mod conversion_tests {
             let new: Vec<Option<i32>> = out.column("new").unwrap().date().unwrap().phys.iter().collect();
             let bad: Vec<String> = (0..old.len()).filter(|&i| old[i] != new[i]).take(12).map(|i| format!("{:?} -> old {:?}, new {:?}", corpus[i], old[i], new[i])).collect();
             assert!(bad.is_empty(), "{locale}: {} strings, {} differ\n{}", corpus.len(), (0..old.len()).filter(|&i| old[i] != new[i]).count(), bad.join("\n"));
+        }
+    }
+
+    fn reference_datetime(e: Expr, locale: &str) -> Expr {
+        let s = reference_trim(e);
+        let ms = DataType::Datetime(TimeUnit::Milliseconds, None);
+        let mut parts: Vec<Expr> = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"]
+            .into_iter()
+            .map(|f| s.clone().str().to_datetime(Some(TimeUnit::Milliseconds), None, opts(f), lit("raise")))
+            .collect();
+        parts.push(reference_date(s, locale).cast(ms));
+        coalesce(&parts)
+    }
+
+    fn datetime_corpus() -> Vec<Option<String>> {
+        let patterns = ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y/%m/%d", "%d %b %Y", "%b %d, %Y"];
+        let times = [
+            "", " 10:30", " 10:30:45", "T10:30:45", "T10:30", " 9:05:01", " 23:59:59.123", " 10:30:45 PM", "  10:30:45  ", " 24:00:00", " 10:61", "T10:30:45Z", " 10:30:45+02:00", " 00:00:00", "T7:5", " 12:00 AM",
+        ];
+        let triples = [(2025, 1, 3), (2025, 12, 31), (2024, 2, 29), (2023, 2, 29), (1970, 1, 1), (2069, 9, 9), (2001, 4, 31)];
+        let wraps = [("", ""), (" ", ""), ("\t", "\n")];
+        let mut out: Vec<Option<String>> = vec![None];
+        for pattern in patterns {
+            for (y, m, d) in triples {
+                for padded in [true, false] {
+                    let base = date_text(pattern, y, m, d, padded);
+                    for time in times {
+                        for (l, r) in wraps {
+                            out.push(Some(format!("{l}{base}{time}{r}")));
+                        }
+                    }
+                }
+            }
+        }
+        for junk in ["", " ", "abc", "2025-01-03 10:30:45 extra", "2025-01-03\n10:30", "10:30", "2025-13-45 10:30", "2025-01-03T25:00"] {
+            out.push(Some(junk.to_string()));
+        }
+        out
+    }
+
+    #[test]
+    fn native_datetime_conversion_matches_the_expression_it_replaced() {
+        let corpus = datetime_corpus();
+        for locale in ["en-US", "de-DE"] {
+            let df = DataFrame::new_infer_height(vec![Series::new("s".into(), corpus.clone()).into()]).unwrap();
+            let out = df.lazy().select([reference_datetime(col("s"), locale).alias("old"), dt_from_text(col("s"), locale).alias("new")]).collect().unwrap();
+            let old: Vec<Option<i64>> = out.column("old").unwrap().datetime().unwrap().phys.iter().collect();
+            let new: Vec<Option<i64>> = out.column("new").unwrap().datetime().unwrap().phys.iter().collect();
+            let differing = (0..old.len()).filter(|&i| old[i] != new[i]).count();
+            let bad: Vec<String> = (0..old.len()).filter(|&i| old[i] != new[i]).take(12).map(|i| format!("{:?} -> old {:?}, new {:?}", corpus[i], old[i], new[i])).collect();
+            assert!(bad.is_empty(), "{locale}: {} strings, {differing} differ\n{}", corpus.len(), bad.join("\n"));
         }
     }
 }
