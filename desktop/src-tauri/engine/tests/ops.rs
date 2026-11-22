@@ -521,3 +521,24 @@ fn json_sources_the_built_in_reader_would_treat_differently_are_refused() {
     }
 }
 
+#[test]
+fn expand_json_shapes_the_built_in_step_treats_differently_are_refused() {
+    let dir = std::env::temp_dir().join(format!("floe_expand_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |name: &str, payload: &str| {
+        let file = dir.join(format!("{name}.csv"));
+        std::fs::write(&file, format!("id,payload\n1,\"{}\"\n", payload.replace('"', "\"\""))).unwrap();
+        let plan = json!({
+            "v": 1,
+            "locale": "en-US",
+            "source": { "kind": "csv", "path": file.to_string_lossy().replace('\\', "/"), "delimiter": ",", "header": true, "skipRows": 0 },
+            "ops": [{ "op": "expandJson", "col": "payload", "fields": [] }]
+        });
+        floe_engine::call("evaluate", &json!({ "plan": plan, "mode": "full", "previewRows": 1000 }))
+    };
+    assert_eq!(run("fine", r#"{"a":1}"#).unwrap()["n"], 1);
+    for (name, payload) in [("array", "[1,2]"), ("invalid", "{oops"), ("all_null_field", r#"{"a":null}"#), ("no_objects", "5"), ("index_keys", r#"{"2":1}"#)] {
+        assert!(run(name, payload).is_err(), "{name} should fall back to the built-in engine");
+    }
+}
+

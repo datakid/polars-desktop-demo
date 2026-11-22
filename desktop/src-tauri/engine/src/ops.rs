@@ -296,6 +296,67 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
             body.set_column_names(&new_names).s()?;
             Ok(body.lazy())
         }
+        "expandJson" => {
+            let name = op["col"].as_str().ok_or("expandJson: missing column")?.to_string();
+            need(&s, &[name.clone()])?;
+            if dtype(&s, &name)? != DataType::String {
+                return Err("expandJson: the column is not text".into());
+            }
+            let df = lf.collect().s()?;
+            let mut parsed: Vec<Option<serde_json::Value>> = Vec::with_capacity(df.height());
+            for cell in df.column(&name).s()?.str().s()?.iter() {
+                parsed.push(match cell {
+                    None => None,
+                    Some(text) => match serde_json::from_str::<serde_json::Value>(text) {
+                        Ok(serde_json::Value::Array(_)) => return Err("expandJson: arrays expand into rows on the built-in engine".into()),
+                        Ok(v) => Some(v),
+                        Err(_) => return Err("expandJson: not valid JSON".into()),
+                    },
+                });
+            }
+            let mut fields: Vec<String> = strs(&op["fields"]);
+            if fields.is_empty() {
+                let mut seen = std::collections::HashSet::new();
+                for v in parsed.iter().flatten() {
+                    if let serde_json::Value::Object(m) = v {
+                        for k in m.keys() {
+                            if crate::source::json_key_is_index(k) {
+                                return Err("expandJson: numeric keys keep the built-in order".into());
+                            }
+                            if seen.insert(k.clone()) {
+                                fields.push(k.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            if fields.is_empty() {
+                return Err(format!("Column `{name}` has no JSON objects to expand"));
+            }
+            let keep: Vec<String> = visible(&s).into_iter().filter(|n| *n != name).collect();
+            let position = visible(&s).iter().position(|n| *n == name).unwrap_or(0);
+            let mut existing: std::collections::HashSet<String> = keep.iter().cloned().collect();
+            let mut made: Vec<String> = Vec::new();
+            let mut out = df.drop(&format!("{ERR_PREFIX}{name}")).unwrap_or_else(|_| df.clone()).drop(&name).s()?;
+            for f in &fields {
+                let new_name = unique_name(&format!("{name}.{f}"), &existing);
+                existing.insert(new_name.clone());
+                let cells: Vec<Option<crate::source::Cell>> = parsed
+                    .iter()
+                    .map(|v| match v {
+                        Some(serde_json::Value::Object(m)) => m.get(f).and_then(crate::source::cell_of),
+                        _ => None,
+                    })
+                    .collect();
+                out.with_column(crate::source::typed_series(&new_name, cells)?.into_column()).s()?;
+                made.push(new_name);
+            }
+            let mut order: Vec<String> = keep[..position.min(keep.len())].to_vec();
+            order.extend(made);
+            order.extend(keep[position.min(keep.len())..].iter().cloned());
+            order.extend(out.get_column_names().into_iter().filter(|n| n.starts_with(ERR_PREFIX)).map(|n| n.to_string()));
+            Ok(out.select(order).s()?.lazy())
+        }
         "sample" => {
             let df = lf.collect().s()?;
             let n = df.height();

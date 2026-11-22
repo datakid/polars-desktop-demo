@@ -194,7 +194,7 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 
 **Runs on built-in (with the reason shown):**
 - Sources: folders, Excel tables, named ranges, multi-sheet sources, merged-cell fill, non-UTF-8 CSV, pasted files. JSON runs on Polars when it has the same shape the built-in reader accepts; a JSON column that mixes value types or is all null, a single object whose array property would become the rows, rows that are not objects, integer-like keys and non-UTF-8 text fall back.
-- Steps: ClusterValues, Validate, ExpandJson, Transpose, DemoteHeaders, Custom SQL, Proper case. Transpose and DemoteHeaders produce columns that hold values of different types, which a Polars column cannot; ExpandJson and Custom SQL have no dialect-identical Polars equivalent; ClusterValues, Validate and Text.Similarity have no Polars equivalent and stay on the built-in engine.
+- Steps: ClusterValues, Validate, Transpose, DemoteHeaders, Custom SQL, Proper case. Transpose and DemoteHeaders produce columns that hold values of different types, which a Polars column cannot; Custom SQL has no dialect-identical Polars equivalent; Expand JSON runs on Polars for object cells and falls back for arrays, invalid JSON, mixed-type or all-null fields; ClusterValues, Validate and Text.Similarity have no Polars equivalent and stay on the built-in engine.
 - Formula functions without a Polars mapping: `Text.Similarity`, `Text.Fingerprint`, `Text.RemoveDiacritics`, `Text.Proper`, `Date.From` and `Value.IsError`. Dialog previews also stay on built-in.
 
 **Known differences:**

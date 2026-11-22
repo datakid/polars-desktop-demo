@@ -81,6 +81,13 @@
         assertEq(r.plan.source, { kind: 'json', path: '/data/' + name });
       });
     });
+    test('plan: expand json lowers its column and chosen fields', () => {
+      const all = PQ.Plan.lower(proj([src, { type: 'ExpandJson', col: 'name' }]), 'q1', files);
+      assert(all.ok, all.reason);
+      assertEq(all.plan.ops[0], { op: 'expandJson', col: 'name', fields: [] });
+      const some = PQ.Plan.lower(proj([src, { type: 'ExpandJson', col: 'name', fields: ['b', 'a'] }]), 'q1', files);
+      assertEq(some.plan.ops[0], { op: 'expandJson', col: 'name', fields: ['b', 'a'] });
+    });
     test('plan: file without a disk path is refused', () => { const r = PQ.Plan.lower(proj([src]), 'q1', {}); assert(!r.ok && /isn’t linked to a file on disk/.test(r.reason), r.reason); });
     test('plan: unsupported step names the step', () => { const r = PQ.Plan.lower(proj([src, { type: 'Transpose' }]), 'q1', files); assert(!r.ok && /^Step 2 “Transposed Table”: isn’t supported/.test(r.reason), r.reason); });
     test('plan: sample lowers with the default seed and a numeric seed', () => {

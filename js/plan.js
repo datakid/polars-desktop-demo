@@ -85,6 +85,7 @@
       case 'Distinct': return { op: 'distinct', subset: k.subset && k.subset.length ? k.subset : null };
       case 'KeepDuplicates': return { op: 'keepDuplicates', subset: k.subset && k.subset.length ? k.subset : null };
       case 'KeepRows': return { op: 'slice', mode: k.mode, n: Math.max(0, +k.n || 0), offset: Math.max(0, +k.offset || 0), keep: Math.max(1, +k.keep || 1), skip: Math.max(0, k.skip === undefined ? 1 : +k.skip || 0) };
+      case 'ExpandJson': return { op: 'expandJson', col: k.col, fields: Array.isArray(k.fields) ? k.fields : [] };
       case 'Sample': return { op: 'sample', mode: k.mode === 'percent' ? 'percent' : 'n', percent: +k.percent || 0, n: +k.n || 0, seed: k.seed === undefined || k.seed === '' ? 42 : (Number.isFinite(+k.seed) ? +k.seed : null) };
       case 'PromoteHeaders': return { op: 'promoteHeaders', row: Math.max(0, +k.row || 0) };
       case 'FillDown': return { op: 'fill', cols: k.cols || [], dir: 'down' };

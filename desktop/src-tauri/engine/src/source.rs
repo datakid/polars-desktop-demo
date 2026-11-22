@@ -386,12 +386,6 @@ fn newline_then_brace(text: &str) -> bool {
     text.match_indices('\n').any(|(i, _)| text[i + 1..].trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}').starts_with('{'))
 }
 
-enum Cell {
-    Num(f64),
-    Text(String),
-    Flag(bool),
-}
-
 fn json_rows(text: &str) -> R<Vec<Value>> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text).trim();
     let parse = |t: &str| serde_json::from_str::<Value>(t).map_err(|e| format!("JSON: {e}"));
@@ -443,69 +437,82 @@ fn json_frame(path: &str) -> R<DataFrame> {
     }
     let mut columns: Vec<Column> = Vec::with_capacity(names.len());
     for name in &names {
-        let cells: Vec<Option<Cell>> = rows
-            .iter()
-            .map(|r| match r.get(name) {
-                None | Some(Value::Null) => None,
-                Some(Value::Bool(b)) => Some(Cell::Flag(*b)),
-                Some(Value::Number(n)) => Some(Cell::Num(n.as_f64().unwrap_or(f64::NAN))),
-                Some(Value::String(t)) => Some(Cell::Text(t.clone())),
-                Some(other) => {
-                    let mut t = String::new();
-                    js_stringify(other, &mut t);
-                    Some(Cell::Text(t))
-                }
-            })
-            .collect();
-        let kind_of = |c: &Cell| match c {
-            Cell::Num(_) => 0,
-            Cell::Text(_) => 1,
-            Cell::Flag(_) => 2,
-        };
-        let decide = |upto: usize| -> R<(i32, bool)> {
-            let mut kind = -1;
-            let mut whole = true;
-            for c in cells.iter().take(upto).flatten() {
-                let k = kind_of(c);
-                if kind == -1 {
-                    kind = k;
-                } else if kind != k {
-                    return Err(format!("JSON: column {name} mixes value types"));
-                }
-                if let Cell::Num(v) = c {
-                    if v.fract() != 0.0 || !v.is_finite() {
-                        whole = false;
-                    }
-                }
-            }
-            if kind == -1 {
-                return Err(format!("JSON: column {name} has no values"));
-            }
-            Ok((kind, whole))
-        };
-        let sampled = decide(5000)?;
-        let all = decide(cells.len())?;
-        if sampled != all {
-            return Err(format!("JSON: column {name} changes type after the first 5000 rows"));
-        }
-        let series = match all {
-            (0, true) => {
-                let mut v: Vec<Option<i64>> = Vec::with_capacity(cells.len());
-                for c in &cells {
-                    v.push(match c {
-                        Some(Cell::Num(x)) if x.abs() < 9.2e18 => Some(*x as i64),
-                        Some(_) => return Err(format!("JSON: column {name} has an integer out of range")),
-                        None => None,
-                    });
-                }
-                Series::new(name.as_str().into(), v)
-            }
-            (0, false) => Series::new(name.as_str().into(), cells.iter().map(|c| if let Some(Cell::Num(x)) = c { Some(*x) } else { None }).collect::<Vec<Option<f64>>>()),
-            (1, _) => Series::new(name.as_str().into(), cells.iter().map(|c| if let Some(Cell::Text(t)) = c { Some(t.as_str()) } else { None }).collect::<Vec<Option<&str>>>()),
-            _ => Series::new(name.as_str().into(), cells.iter().map(|c| if let Some(Cell::Flag(b)) = c { Some(*b) } else { None }).collect::<Vec<Option<bool>>>()),
-        };
-        columns.push(series.into_column());
+        let cells: Vec<Option<Cell>> = rows.iter().map(|r| r.get(name).and_then(cell_of)).collect();
+        columns.push(typed_series(name, cells)?.into_column());
     }
     DataFrame::new_infer_height(columns).s()
 }
 
+pub(crate) enum Cell {
+    Num(f64),
+    Text(String),
+    Flag(bool),
+}
+
+pub(crate) fn cell_of(v: &Value) -> Option<Cell> {
+    match v {
+        Value::Null => None,
+        Value::Bool(b) => Some(Cell::Flag(*b)),
+        Value::Number(n) => Some(Cell::Num(n.as_f64().unwrap_or(f64::NAN))),
+        Value::String(t) => Some(Cell::Text(t.clone())),
+        other => {
+            let mut t = String::new();
+            js_stringify(other, &mut t);
+            Some(Cell::Text(t))
+        }
+    }
+}
+
+pub(crate) fn typed_series(name: &str, cells: Vec<Option<Cell>>) -> R<Series> {
+    let kind_of = |c: &Cell| match c {
+        Cell::Num(_) => 0,
+        Cell::Text(_) => 1,
+        Cell::Flag(_) => 2,
+    };
+    let decide = |upto: usize| -> R<(i32, bool)> {
+        let mut kind = -1;
+        let mut whole = true;
+        for c in cells.iter().take(upto).flatten() {
+            let k = kind_of(c);
+            if kind == -1 {
+                kind = k;
+            } else if kind != k {
+                return Err(format!("JSON: column {name} mixes value types"));
+            }
+            if let Cell::Num(v) = c {
+                if v.fract() != 0.0 || !v.is_finite() {
+                    whole = false;
+                }
+            }
+        }
+        if kind == -1 {
+            return Err(format!("JSON: column {name} has no values"));
+        }
+        Ok((kind, whole))
+    };
+    let sampled = decide(5000)?;
+    let all = decide(cells.len())?;
+    if sampled != all {
+        return Err(format!("JSON: column {name} changes type after the first 5000 rows"));
+    }
+    Ok(match all {
+        (0, true) => {
+            let mut v: Vec<Option<i64>> = Vec::with_capacity(cells.len());
+            for c in &cells {
+                v.push(match c {
+                    Some(Cell::Num(x)) if x.abs() < 9.2e18 => Some(*x as i64),
+                    Some(_) => return Err(format!("JSON: column {name} has an integer out of range")),
+                    None => None,
+                });
+            }
+            Series::new(name.into(), v)
+        }
+        (0, false) => Series::new(name.into(), cells.iter().map(|c| if let Some(Cell::Num(x)) = c { Some(*x) } else { None }).collect::<Vec<Option<f64>>>()),
+        (1, _) => Series::new(name.into(), cells.iter().map(|c| if let Some(Cell::Text(t)) = c { Some(t.as_str()) } else { None }).collect::<Vec<Option<&str>>>()),
+        _ => Series::new(name.into(), cells.iter().map(|c| if let Some(Cell::Flag(b)) = c { Some(*b) } else { None }).collect::<Vec<Option<bool>>>()),
+    })
+}
+
+pub(crate) fn json_key_is_index(key: &str) -> bool {
+    is_array_index(key)
+}

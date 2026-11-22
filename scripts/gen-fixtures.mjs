@@ -39,6 +39,8 @@ const INPUTS = {
   'wrapped.json': String.raw`{"count":3,"meta":{"v":1},"data":[{"k":"a","n":1},{"k":"b","n":2.5},{"k":"c","n":3}]}`,
   'single.json': String.raw`{"id":9,"name":"solo","nested":{"a":[1,2]},"ok":false}`,
   'pretty.json': '[\n  {"id": 1, "v": "a"},\n  {"id": 2, "v": "b", "w": 1.5}\n]',
+  'json_cells.csv': ['id,payload,note', '1,"{""a"":1,""b"":""x"",""n"":{""k"":[1,2.50]}}",first', '2,"{""a"":2.5,""c"":true}",second', '3,,third', '4,5,fourth', '5,"{""b"":""y"",""a"":3}",fifth'].join('\n'),
+  'json_cells2.csv': ['id,payload.a,payload', '1,keep,"{""a"":1}"', '2,keep2,"{""a"":2}"'].join('\n'),
   'halves.csv': [
     'id,x,a,b',
     '1,0.5,2025-01-01 12:00:00,2025-01-01 00:00:00',
@@ -86,6 +88,9 @@ const CASES = [
   ['json object wrapping an array', 'wrapped.json', []],
   ['json single object', 'single.json', []],
   ['json pretty printed array', 'pretty.json', [{ type: 'Filter', mode: 'advanced', formula: '[id] >= 1' }]],
+  ['expand json objects with every key', 'json_cells.csv', [{ type: 'ExpandJson', col: 'payload' }]],
+  ['expand json objects with chosen keys', 'json_cells.csv', [{ type: 'ExpandJson', col: 'payload', fields: ['b', 'a'] }]],
+  ['expand json into a name that already exists', 'json_cells2.csv', [{ type: 'ExpandJson', col: 'payload', fields: ['a'] }]],
   ['distinct and duplicates', 'orders.csv', [{ type: 'Distinct', subset: ['customer_id'] }]],
   ['keep duplicates', 'orders.csv', [{ type: 'KeepDuplicates', subset: ['region'] }]],
   ['keep rows top/remove/alternate', 'orders.csv', [{ type: 'KeepRows', mode: 'remove_top', n: 1 }, { type: 'KeepRows', mode: 'alternate', keep: 1, skip: 1, offset: 0 }, { type: 'KeepRows', mode: 'top', n: 3 }]],
