@@ -413,8 +413,32 @@
     if bad:
         raise ValueError(f"{bad} rows fail validation: {message}")
     return lf`;
+  S.HELPERS['def floe_sample'] = `def floe_sample(lf: pl.LazyFrame, count: int | None, percent: float | None, seed: int) -> pl.LazyFrame:
+    \"\"\"Pick the rows Floe's Sample step picks: a seeded xorshift32 shuffle, kept in their original order.\"\"\"
+    df = lf.collect()
+    n = df.height
+    k = int(n * percent / 100 + 0.5) if percent is not None else count
+    k = min(max(k, 0), n)
+    if k >= n:
+        return df.lazy()
+    state = (seed & 0xFFFFFFFF) or 0x9E3779B9
+    order = list(range(n))
+    for i in range(k):
+        state ^= (state << 13) & 0xFFFFFFFF
+        state ^= state >> 17
+        state ^= (state << 5) & 0xFFFFFFFF
+        j = i + int(state / 4294967296 * (n - i))
+        order[i], order[j] = order[j], order[i]
+    return df[sorted(order[:k])].lazy()`;
   S.EXT_CODE = {
-    Sample: (k) => `\n    # Sample needs the whole input; Polars' RNG picks different rows than Floe's preview\n    .pipe(lambda lf: lf.collect().sample(${k.mode === 'percent' ? 'fraction=' + (+k.percent || 0) / 100 : 'n=' + (+k.n || 0)}, seed=${k.seed === undefined || k.seed === '' ? 42 : +k.seed}).lazy())`,
+    Sample: (k, ctx) => {
+      ctx.helpers.add('def floe_sample');
+      const rawSeed = k.seed === undefined || k.seed === '' ? 42 : +k.seed;
+      const seed = Number.isFinite(rawSeed) ? Math.trunc(rawSeed) : 0;
+      if (k.mode === 'percent') return `.pipe(floe_sample, None, ${Math.max(0, Math.min(100, +k.percent || 0))}, ${seed})`;
+      const n = +k.n || 0;
+      return `.pipe(floe_sample, ${n === Infinity ? 2147483648 : Math.max(0, Math.floor(n))}, None, ${seed})`;
+    },
     ClusterValues: (k) => {
       const c = `pl.col(${P.py(k.col)})`;
       if (k.auto && (k.method || 'fingerprint') === 'fingerprint') return `.with_columns(${c}.mode().first().str.strip_chars().over(${pyFingerprint(c)}).alias(${P.py(k.col)}))`;

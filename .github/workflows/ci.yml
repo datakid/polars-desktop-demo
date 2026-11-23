@@ -39,6 +39,11 @@ jobs:
           pip install playwright
           playwright install --with-deps chromium
 
+      - name: Compare the exported Python script with the app
+        run: |
+          pip install polars
+          node scripts/check-python-export.mjs
+
       - name: Run unit and end-to-end tests in headless Chromium
         run: |
           python -m http.server 8766 --bind 127.0.0.1 > /dev/null 2>&1 &

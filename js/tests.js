@@ -305,6 +305,14 @@
     assert(/drop_nulls\(\)\.mode\(\)\.sort\(\)\.first\(\)/.test(py) && /quantile\(0\.9, "linear"\)/.test(py) && /rolling_sum\(4, min_samples=1\)/.test(py) && /rolling_min\(4/.test(py) && /rolling_max\(4/.test(py) && /rolling_std\(4, min_samples=2\)/.test(py) && /\.shift\(1\) != 0/.test(py), py);
     assert(!/undefined/.test(py), 'no undefined in output');
   });
+  test('Python export: Sample replays the app shuffle instead of Polars sampling', () => {
+    const script = (kind) => { const p = proj(); p.name = 'Demo'; p.queries[0].steps.push({ id: 'smp', name: 'S', kind }); return PQ.Steps.toPython(p); };
+    const n = script({ type: 'Sample', mode: 'n', n: 37.9, seed: -5 });
+    assert(n.includes('def floe_sample(') && n.includes('.pipe(floe_sample, 37, None, -5)') && !n.includes('.sample('), 'count mode');
+    const pct = script({ type: 'Sample', mode: 'percent', percent: 250, seed: '' });
+    assert(pct.includes('.pipe(floe_sample, None, 100, 42)'), 'percent is clamped and the default seed is 42');
+    assert(script({ type: 'Sample', mode: 'n', n: 5, seed: Infinity }).includes('.pipe(floe_sample, 5, None, 0)'), 'a seed that is not finite becomes 0 like the app');
+  });
   test('Python export covers every step and parses as plausible Python', () => {
     const p = proj(); p.name = 'Demo';
     p.queries[0].steps.push({ id: 'g', name: 'G', kind: { type: 'GroupBy', keys: ['label'], aggs: [{ fn: 'sum', col: 'z', name: 'z' }] } });
@@ -605,7 +613,7 @@
         { id: 'm', name: 'Sample', kind: { type: 'Sample', mode: 'n', n: 5, seed: 3 } }] },
       { id: 'b', name: 'B', load: { target: 'arrow' }, steps: [{ id: 's', name: 'Source', kind: { type: 'Source', source: { kind: 'file', fileName: 'in.feather' } } }] }] };
     const py = PQ.Steps.toPython(p);
-    ['pl.scan_parquet', 'pl.scan_ipc', 'def assert_valid', '.replace({"a ": "a"})', '.sample(n=5, seed=3)', 'sink_parquet', 'sink_ipc'].forEach((s) => assert(py.includes(s), 'missing ' + s));
+    ['pl.scan_parquet', 'pl.scan_ipc', 'def assert_valid', '.replace({"a ": "a"})', 'def floe_sample', '.pipe(floe_sample, 5, None, 3)', 'sink_parquet', 'sink_ipc'].forEach((s) => assert(py.includes(s), 'missing ' + s));
   });
   await atest('host: overview + clusters ops, cluster suggestion appears', async () => {
     const p = { settings: { previewRows: 1000, locale: 'en-US' }, params: [], queries: [{ id: 'c', name: 'C', steps: [{ id: 's', name: 'Source', kind: { type: 'Source', source: { kind: 'blank', columns: ['city', 'n'], rows: [['Berlin', '1'], ['berlin', '2'], ['Berlin', '3'], ['Lisbon', '4']] } } }] }] };
