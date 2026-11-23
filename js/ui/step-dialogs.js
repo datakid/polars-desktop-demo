@@ -364,7 +364,7 @@
     const rightSel = W.select(others.map((x) => [x.id, x.name]), k.right);
     const how = W.select([['left', 'Left outer — all from first, matching from second'], ['inner', 'Inner — only matching rows'], ['full', 'Full outer — all rows from both'], ['right', 'Right outer — all from second, matching from first'], ['semi', 'Left semi — rows in first that have a match (filter)'], ['anti', 'Left anti — rows in first with NO match'], ['cross', 'Cross join — every combination']], k.how);
     const prefix = W.text(k.prefix || '', { placeholder: 'Optional prefix for new columns' });
-    let expand = k.expand || null;
+    let expand = k.how === 'semi' || k.how === 'anti' ? null : (k.expand || null);
 
     const keyList = (schema, side) => {
       const tbl = h('div.mini-wrap', { style: { maxHeight: '200px' } });
@@ -377,28 +377,38 @@
     };
     let pendingLeft = null;
     function toggleKey(side, name) {
+      const other = 1 - side;
       const i = k.on.findIndex((p) => p[side] === name);
-      if (i >= 0) { k.on.splice(i, 1); }
-      else if (side === 0) {
-        const incomplete = k.on.findIndex((p) => !p[1]);
-        if (incomplete >= 0) k.on[incomplete][0] = name;
-        else k.on.push([name, rightSchema.some((c) => c.name === name) && !k.on.some((p) => p[1] === name) ? name : '']);
-      } else {
-        const incomplete = k.on.findIndex((p) => !p[1]);
-        if (incomplete >= 0) k.on[incomplete][1] = name; else k.on.push(['', name]);
+      if (i >= 0) { k.on.splice(i, 1); render(); return; }
+      let target = k.on.findIndex((p) => !p[side] && p[other]);
+      if (target < 0) target = k.on.findIndex((p) => !p[other]);
+      if (target >= 0) k.on[target][side] = name;
+      else {
+        const schema = side === 0 ? rightSchema : leftSchema;
+        const twin = schema.some((c) => c.name === name) && !k.on.some((p) => p[other] === name) ? name : '';
+        k.on.push(side === 0 ? [name, twin] : [twin, name]);
       }
       render();
     }
-    async function loadRight() {
-      const r = await UI.Engine.call('querySchema', { qid: rightSel.value });
+    let loadSeq = 0, loading = false;
+    async function loadRight(keepExpand) {
+      const my = ++loadSeq;
+      const wanted = rightSel.value;
+      loading = true;
+      let r;
+      try { r = await UI.Engine.call('querySchema', { qid: wanted }); }
+      catch (e) { if (my === loadSeq) { loading = false; UI.toast(e.message, 'err'); } return; }
+      if (my !== loadSeq) return;
+      loading = false;
       rightSchema = r.schema;
-      k.right = rightSel.value;
+      k.right = wanted;
+      k.on = k.on.filter((p) => (!p[0] || leftSchema.some((c) => c.name === p[0])) && (!p[1] || rightSchema.some((c) => c.name === p[1])));
       if (!k.on.length) {
         const common = leftSchema.map((c) => c.name).filter((n) => rightSchema.some((c) => c.name === n));
         const idLike = common.find((n) => /(^|_| )(id|key|code)$/i.test(n)) || common[0];
         if (idLike) k.on = [[idLike, idLike]];
       }
-      expand = null;
+      if (!keepExpand) expand = null;
       render();
     }
     const refreshStats = PQ.debounce(async () => {
@@ -423,24 +433,27 @@
       UI.clear(rightPick).append(h('div.pane-head', h('div.field-label', 'Merge with'), h('div.grow', rightSel)), keyList(rightSchema, 1));
       const rightKeys = new Set(k.on.map((p) => p[1]));
       const expandable = rightSchema.filter((c) => !rightKeys.has(c.name));
-      const m = W.colMulti(expandable, expand || expandable.map((c) => c.name), () => { expand = m.get(); });
+      const chosen = expand ? expand.filter((n) => expandable.some((c) => c.name === n)) : expandable.map((c) => c.name);
+      const m = W.colMulti(expandable, chosen, () => { expand = m.get(); });
       const hideExpand = how.value === 'semi' || how.value === 'anti';
       UI.clear(expandBox).appendChild(hideExpand ? h('div.muted', { style: { fontSize: '12px' } }, 'Semi/anti joins filter the first table and add no columns.') : W.field('Columns to bring in from ' + (others.find((x) => x.id === k.right) || {}).name, m));
       expandBox._get = () => (hideExpand ? [] : m.get());
       refreshStats();
     }
-    rightSel.addEventListener('change', loadRight);
+    rightSel.addEventListener('change', () => loadRight(false));
     how.addEventListener('change', render);
     const body = h('div.col', { style: { gap: '12px' } }, h('div.grid-2', leftPick, rightPick), W.field('Join kind', how), stats, h('div.grid-2', expandBox, W.field('Prefix', prefix)));
     UI.modal({
       title: 'Merge queries', icon: 'fa-code-merge', size: 'wide', body, okLabel: editing ? 'Apply' : 'Merge',
       onOk: () => {
-        if (how.value !== 'cross' && (!k.on.length || !k.on.every((p) => p[0] && p[1]))) { UI.toast('Select keys on both sides', 'warn'); return false; }
+        if (loading) { UI.toast('Still loading the second table', 'warn'); return false; }
+        const keysOk = how.value === 'cross' || (k.on.length && k.on.every((p) => p[0] && p[1] && leftSchema.some((c) => c.name === p[0]) && rightSchema.some((c) => c.name === p[1])));
+        if (!keysOk) { UI.toast('Select keys on both sides', 'warn'); return false; }
         const kind = { type: 'Merge', right: k.right, on: how.value === 'cross' ? [] : k.on, how: how.value, expand: expandBox._get ? expandBox._get() : undefined, prefix: prefix.value.trim() || undefined, castKeys: k.castKeys || undefined };
         if (editing) Store.edit('Edit merge', (p) => { p.queries.find((x) => x.id === q.id).steps[o.index].kind = kind; });
         else Store.addStep(kind, { noFold: true });
       },
     });
-    loadRight();
+    loadRight(true);
   };
 })();
