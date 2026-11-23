@@ -147,7 +147,7 @@ jobs:
             fi
             echo "Windows installers:"
             echo "- \`Floe_${VERSION}_x64-setup.exe\` — built-in engine (recommended)."
-            echo "- \`Floe-polars_${VERSION}_x64-setup.exe\` — adds the native Polars engine (about 30 MB larger)."
+            echo "- \`Floe-polars_${VERSION}_x64-setup.exe\` — adds the native Polars engine (about 10 MB larger)."
             echo
             echo "Builds are **not code-signed**, so Windows SmartScreen will show a warning. Choose *More info* then *Run anyway*. SHA-256 checksums are attached. There is no auto-update yet."
             echo

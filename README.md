@@ -27,7 +27,7 @@
   node scripts/floe.mjs plan project.floe --query <name>
   ```
   Exit codes: 0 ok · 1 query failed · 2 usage · 3 input missing. `npm link` installs it as `floe`.
-- Tests: 116 golden tests in `tests.html`, the UI end-to-end test in `tests-ui.html`, and 19 Rust tests in `engine/tests` (`plan.rs` 5, `ops.rs` 12, `cancel.rs` 1, `parity.rs` 1, which runs 57 fixtures against the built-in engine and compares every column's profile and distinct values).
+- Tests: 122 golden tests in `tests.html`, the UI end-to-end test in `tests-ui.html`, and the Rust tests in `engine/tests` (`plan.rs`, `ops.rs`, `cancel.rs` and `parity.rs`, which runs the 72 fixtures from `scripts/gen-fixtures.mjs` against the built-in engine and compares every column's profile and distinct values). `npm run test:engine` in `desktop` runs the Rust tests and prints their count.
 
 ## What's new in 1.1
 - **Engine indicator** in the status bar: `● Built-in · 42 ms · Sample 1,000`. Click it (or press Enter on it) for engine, location, last run, data scope and, on desktop, why that engine ran. The dot shows idle, busy, starting or error. On phones it shrinks to the dot and engine name.
@@ -37,9 +37,9 @@
   - Pages come back as Arrow IPC. Exports are written straight to the chosen path.
   - Anything Polars can't run falls back to the built-in engine automatically, and the indicator shows `Built-in ↺` with the reason.
 - **Web ships no native-engine code.** `native-engine.js` is loaded only inside Tauri and is excluded from the web build.
-- Engine tests at the 1.1 release: 86 (8 new plan-lowering tests).
-  - Rust: `engine/tests/plan.rs` (unit tests).
-  - `engine/tests/parity.rs` runs 27 shared cases generated from the built-in engine by `scripts/gen-fixtures.mjs` and requires Polars to give the same schema and rows, including half-way rounding cases.
+- Engine tests:
+  - Rust: `engine/tests/plan.rs` (plan lowering), `engine/tests/cancel.rs` (cancellation between steps).
+  - `engine/tests/parity.rs` runs the shared cases generated from the built-in engine by `scripts/gen-fixtures.mjs` and requires Polars to give the same schema and rows, including half-way rounding cases.
   - `engine/tests/ops.rs` checks the column profile, distinct values, grid pages and exports against the built-in engine.
 - **Faster built-in engine:**
   - CSV parsing writes straight into columns (about −30%).
@@ -64,7 +64,7 @@ One codebase ships two ways:
 ## Repository layout
 ```
 index.html, demo.html, 404.html     app pages
-tests.html, tests-ui.html           engine golden tests (114) · UI end-to-end smoke test (web build only)
+tests.html, tests-ui.html           engine golden tests (122) · UI end-to-end smoke test (web build only)
 css/app.css                         "Clay" design system
 js/                                 engine (worker), platform layer, UI
 js/native-engine.js                 optional Polars adapter; idle unless a desktop engine reports itself available
@@ -182,7 +182,7 @@ cd desktop && npm install
 npm run dev:polars        # or: npm run build:polars
 npm run test:engine       # cargo tests for floe-engine
 ```
-CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe-polars_*` adds Polars. The `polars` variant is about 30 MB larger.
+CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe-polars_*` adds Polars. The `polars` variant installer is about 10 MB larger (12.45 MB against 2.67 MB at `3120c24`).
 
 **Polars covers:**
 - Sources: CSV (UTF-8), Parquet, Arrow IPC, Excel sheets and ranges, entered data, query references.

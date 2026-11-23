@@ -33,7 +33,7 @@ Sandbox timings vary by ±30% between runs, so compare medians from your own mac
 Run from the Actions tab: Engine benchmark, Run workflow (`.github/workflows/bench.yml`). The job builds the
 engine in release mode on a GitHub-hosted Ubuntu runner, runs the same five pipelines as above on both engines
 (the built-in engine in headless Chromium on the same machine), and checks that both return the same number of rows.
-The six numbers below are one run; runner speed varies, so compare the columns of one run with each other.
+The numbers below are one run; runner speed varies, so compare the columns of one run with each other.
 
 #### Pipelines, 1,000,000 input rows
 
@@ -75,7 +75,16 @@ expressions stay in `src/expr.rs` tests as the reference for a differential test
 Preview runs (the first 1,000 rows) are on par: 2 to 8 ms on both engines.
 
 ## Polars build (desktop)
-Run the same pipelines in the desktop `polars` build with "Prefer Polars" on and off (Engine panel → switch), and record the chip timings here. Target: at least 5× faster on full-data A–C at 1M rows.
+Run the same pipelines in the desktop `polars` build with "Prefer Polars" on and off (Engine panel → switch), and record the chip timings here. The target was at least 5× faster on full-data A–C at 1M rows. The CI run above measures 2.8× to 3.4× (A 2.8×, B 3.1×, C 3.4×), so the target is not met; the built-in engine was already faster than the plan assumed after the 1.1 work.
+
+## Installer size
+
+| Build | Built-in | Polars | Difference |
+|---|---|---|---|
+| `v1.1.0-alpha.6` (published) | 2.33 MB | 9.36 MB | 7.03 MB |
+| `3120c24` (CI artifact) | 2.67 MB | 12.45 MB | 9.78 MB |
+
+About 3.5 MB of the growth since the start of the plan is the `panic = "unwind"` release setting that lets a Polars panic fall back instead of ending the app.
 
 ## Polars engine: streaming full runs and exports
 Peak memory and wall time for the Polars engine's full runs and exports, with and without
@@ -118,4 +127,3 @@ so streaming only removes the intermediate copies.
 - The streamed CSV count of exported rows reads the written file once and counts newlines outside quotes in
   constant memory. Counting by re-reading it with the CSV reader added about 270 MB and 2 s.
 - Excel exports and preview runs still collect in memory.
-- Release timings against the built-in engine have not been recorded here.
