@@ -168,6 +168,26 @@ f.addEventListener('load', async () => {
       UI().NativeEngine = saved.native; UI().Engine.callWorker = saved.worker; UI().App.files = saved.files; UI().Engine.lastProject = saved.project;
       delete w.__TAURI__;
     }
+    const ordersId = UI().Store.project.queries.find((x) => x.name === 'Orders').id;
+    const mergeOpen = async (o) => {
+      UI().mergeDialog(o);
+      await until(() => doc.querySelectorAll('.modal .mini-table').length === 2 && doc.querySelector('.modal .callout'));
+      await sleep(250);
+    };
+    const mergeFits = (label) => {
+      const mb = doc.querySelector('.modal .modal-b');
+      if (mb.scrollWidth > mb.clientWidth + 1) throw new Error('merge dialog scrolls sideways ' + label + ': ' + mb.scrollWidth + ' > ' + mb.clientWidth);
+      const mr = doc.querySelector('.modal').getBoundingClientRect();
+      const panes = [...doc.querySelectorAll('.modal .grid-2 > div')].map((x) => x.getBoundingClientRect());
+      if (panes.some((r) => r.left < mr.left - 0.5 || r.right > mr.right + 0.5)) throw new Error('merge dialog pane leaves the dialog ' + label);
+      const heads = [...doc.querySelectorAll('.modal .pane-head .field-label')];
+      if (heads.length !== 2 || heads.some((x) => x.getBoundingClientRect().width < 60 || x.scrollWidth > x.clientWidth + 1)) throw new Error('merge dialog pane titles are squeezed ' + label);
+    };
+    await mergeOpen({ qid: ordersId, insertAt: 2, kind: { type: 'Merge' } });
+    mergeFits('on the desktop layout');
+    console.log('E2E merge dialog fits the desktop layout');
+    doc.querySelector('.modal .close').click();
+    await sleep(250);
     const frame = document.getElementById('f');
     const probe = async (width, height) => {
       frame.style.width = width + 'px'; frame.style.height = height + 'px';
@@ -183,15 +203,12 @@ f.addEventListener('load', async () => {
         if (foot.bottom > height + 0.5 || foot.top < 0) throw new Error(open + ' footer spans ' + Math.round(foot.top) + '-' + Math.round(foot.bottom) + ' on a ' + height + 'px screen');
         doc.querySelector('.modal .close').click(); await sleep(250);
       }
-      const mergeAt = UI().Store.query().steps.findIndex((st) => st.kind.type === 'Merge');
-      if (mergeAt >= 0) {
-        UI().editStep({ qid: UI().Store.ui.activeQid, index: mergeAt }); await sleep(700);
-        const body = doc.querySelector('.modal .modal-b');
-        if (body.scrollWidth - body.clientWidth > 1) throw new Error('the Merge dialog scrolls sideways by ' + (body.scrollWidth - body.clientWidth) + 'px on a ' + width + 'px screen');
-        const label = doc.querySelector('.merge-with .field-label').getBoundingClientRect();
-        if (label.width < 40) throw new Error('the Merge with label is squeezed to ' + Math.round(label.width) + 'px');
-        doc.querySelector('.modal .close').click(); await sleep(250);
-      }
+      await mergeOpen({ qid: ordersId, insertAt: 2, kind: { type: 'Merge' } });
+      mergeFits('on a ' + width + 'px screen');
+      doc.querySelector('.modal .close').click(); await sleep(250);
+      await mergeOpen({ qid: ordersId, index: 6 });
+      mergeFits('while editing on a ' + width + 'px screen');
+      doc.querySelector('.modal .close').click(); await sleep(250);
       console.log('E2E phone ' + width + 'x' + height + ' fits, scrollWidth ' + doc.documentElement.scrollWidth);
     };
     try { await probe(1280, 800); await probe(390, 844); await probe(360, 640); } finally { frame.style.width = ''; frame.style.height = ''; }

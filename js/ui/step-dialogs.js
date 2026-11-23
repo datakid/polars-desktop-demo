@@ -419,8 +419,8 @@
       } catch (e) { UI.clear(stats).appendChild(h('div.callout.err', UI.icon('fa-circle-exclamation'), h('div', e.message))); }
     }, 200);
     function render() {
-      UI.clear(leftPick).append(h('div.field-label', q.name + ' (current, at step ' + idx + ')'), keyList(leftSchema, 0));
-      UI.clear(rightPick).append(h('div.row.merge-with', h('div.field-label', 'Merge with'), rightSel), keyList(rightSchema, 1));
+      UI.clear(leftPick).append(h('div.pane-head', h('div.field-label', q.name + ' (current, at step ' + idx + ')')), keyList(leftSchema, 0));
+      UI.clear(rightPick).append(h('div.pane-head', h('div.field-label', 'Merge with'), h('div.grow', rightSel)), keyList(rightSchema, 1));
       const rightKeys = new Set(k.on.map((p) => p[1]));
       const expandable = rightSchema.filter((c) => !rightKeys.has(c.name));
       const m = W.colMulti(expandable, expand || expandable.map((c) => c.name), () => { expand = m.get(); });

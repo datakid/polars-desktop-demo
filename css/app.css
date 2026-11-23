@@ -386,6 +386,8 @@ input[type='checkbox']:disabled { opacity: .45; cursor: default; }
 .check { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12.5px; }
 .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
 .grid-2 > *, .grid-3 > * { min-width: 0; }
+.pane-head { display: flex; align-items: center; gap: 10px; min-height: 40px; margin-bottom: 6px; }
+.pane-head .field-label { margin: 0; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .list-rows { display: grid; gap: 6px; }
 .list-row { display: flex; gap: 6px; align-items: center; }
@@ -454,8 +456,6 @@ input[type='checkbox']:disabled { opacity: .45; cursor: default; }
 .mini-table th.key { background: var(--accent-2); box-shadow: inset 0 -2px 0 var(--accent); }
 .mini-table th.newcol, .mini-table td.newcol { background: var(--accent-2) !important; }
 .mini-wrap { max-height: 250px; overflow: auto; }
-.merge-with .field-label { flex: none; margin: 0; }
-.merge-with .select { width: auto; flex: 1; min-width: 0; }
 .nav-layout { display: grid; grid-template-columns: 290px 1fr; height: 100%; min-height: 0; }
 .nav-tree { border-right: 1px solid var(--border); overflow: auto; padding: 6px 8px; background: var(--panel-2); }
 .nav-sec { font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); font-weight: 600; padding: 12px 8px 4px; }
@@ -670,7 +670,7 @@ body.dragging::after { content: 'Drop files to add them'; position: fixed; inset
   .modal-f .left { flex-basis: 100%; }
   .nav-layout { grid-template-columns: 1fr; grid-template-rows: minmax(120px, 34%) 1fr; }
   .nav-tree { border-right: 0; border-bottom: 1px solid var(--border); }
-  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .grid-2, .grid-3 { grid-template-columns: minmax(0, 1fr); }
   .filter-pop { width: min(300px, calc(100vw - 30px)); }
   .menu { max-width: calc(100vw - 12px); }
   .ac { width: min(390px, calc(100vw - 16px)); }
