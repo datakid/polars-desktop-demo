@@ -183,9 +183,18 @@ f.addEventListener('load', async () => {
         if (foot.bottom > height + 0.5 || foot.top < 0) throw new Error(open + ' footer spans ' + Math.round(foot.top) + '-' + Math.round(foot.bottom) + ' on a ' + height + 'px screen');
         doc.querySelector('.modal .close').click(); await sleep(250);
       }
+      const mergeAt = UI().Store.query().steps.findIndex((st) => st.kind.type === 'Merge');
+      if (mergeAt >= 0) {
+        UI().editStep({ qid: UI().Store.ui.activeQid, index: mergeAt }); await sleep(700);
+        const body = doc.querySelector('.modal .modal-b');
+        if (body.scrollWidth - body.clientWidth > 1) throw new Error('the Merge dialog scrolls sideways by ' + (body.scrollWidth - body.clientWidth) + 'px on a ' + width + 'px screen');
+        const label = doc.querySelector('.merge-with .field-label').getBoundingClientRect();
+        if (label.width < 40) throw new Error('the Merge with label is squeezed to ' + Math.round(label.width) + 'px');
+        doc.querySelector('.modal .close').click(); await sleep(250);
+      }
       console.log('E2E phone ' + width + 'x' + height + ' fits, scrollWidth ' + doc.documentElement.scrollWidth);
     };
-    try { await probe(390, 844); await probe(360, 640); } finally { frame.style.width = ''; frame.style.height = ''; }
+    try { await probe(1280, 800); await probe(390, 844); await probe(360, 640); } finally { frame.style.width = ''; frame.style.height = ''; }
     console.log('E2E DONE');
   } catch (e) { console.log('E2E FAIL', e.message, e.stack); }
 });
