@@ -1,0 +1,124 @@
+name: Linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to stamp into the app, empty keeps the repository version
+        required: false
+        default: ''
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: false
+        default: ''
+        type: string
+  push:
+    branches: [review/ui-logic]
+    paths:
+      - '.github/workflows/linux.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    name: Linux package (${{ matrix.variant }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: builtin
+            features: ''
+            prefix: Floe
+          - variant: polars
+            features: '--features polars-engine'
+            prefix: Floe-polars
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config curl wget file patchelf libssl-dev libxdo-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+          key: linux-${{ matrix.variant }}
+          cache-on-failure: true
+
+      - name: Stamp version into app files
+        if: ${{ inputs.version != '' }}
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node .github/scripts/stamp-version.mjs
+
+      - name: Install JS dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Generate icons
+        working-directory: desktop
+        run: node scripts/ensure-icons.mjs
+
+      - name: Build package
+        working-directory: desktop
+        run: npx tauri build --bundles deb ${{ matrix.features }}
+
+      - name: Name package by variant
+        working-directory: desktop/src-tauri/target/release/bundle/deb
+        run: |
+          for f in Floe_*.deb; do
+            new="${f/Floe_/${{ matrix.prefix }}_}"
+            if [ "$new" != "$f" ]; then
+              mv "$f" "$new"
+            fi
+          done
+          ls -la
+          dpkg-deb -I *.deb | head -20
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: floe-linux-${{ matrix.variant }}
+          path: desktop/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+  driver:
+    name: tauri-driver
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build tauri-driver
+        run: cargo install tauri-driver --locked --root "$PWD/driver"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tauri-driver
+          path: driver/bin/tauri-driver
+          if-no-files-found: error
+          retention-days: 14
+
+  smoke:
+    name: Test the packages
+    needs: [build, driver]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/linux-smoke.yml
+    with:
+      run_id: ${{ github.run_id }}
+      version: ${{ inputs.version }}

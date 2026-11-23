@@ -1,0 +1,150 @@
+name: Linux smoke tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Run of the Linux workflow whose packages to test, empty uses the latest successful one
+        required: false
+        default: ''
+        type: string
+      version:
+        description: Version the packages must report, empty skips that check
+        required: false
+        default: ''
+        type: string
+  workflow_call:
+    inputs:
+      run_id:
+        required: false
+        default: ''
+        type: string
+      version:
+        required: false
+        default: ''
+        type: string
+  push:
+    branches: [review/ui-logic]
+    paths:
+      - '.github/workflows/linux-smoke.yml'
+      - '.github/scripts/linux-smoke.sh'
+      - '.github/scripts/linux_smoke.py'
+      - '.github/scripts/linux_report.py'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  resolve:
+    name: Find the packages to test
+    runs-on: ubuntu-24.04
+    outputs:
+      run_id: ${{ steps.pick.outputs.run_id }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIVEN: ${{ inputs.run_id }}
+        run: |
+          if [ -n "$GIVEN" ]; then
+            echo "run_id=$GIVEN" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/linux.yml/runs?status=success&per_page=1" --jq '.workflow_runs[0].id')
+          if [ -z "$id" ] || [ "$id" = "null" ]; then
+            echo "No successful run of the Linux workflow exists yet" >&2
+            exit 1
+          fi
+          echo "Testing the packages of run $id"
+          echo "run_id=$id" >> "$GITHUB_OUTPUT"
+
+  smoke:
+    name: Ubuntu ${{ matrix.ubuntu }}, ${{ matrix.display }}, ${{ matrix.variant }}
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['22.04', '24.04', '26.04', '26.10']
+        display: [x11, wayland]
+        variant: [builtin, polars]
+        exclude:
+          - display: wayland
+            variant: builtin
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: floe-linux-${{ matrix.variant }}
+          path: pkg
+          run-id: ${{ needs.resolve.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: tauri-driver
+          path: driver
+          run-id: ${{ needs.resolve.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Test in an Ubuntu ${{ matrix.ubuntu }} container
+        env:
+          UBUNTU: ${{ matrix.ubuntu }}
+          DISPLAY_KIND: ${{ matrix.display }}
+          VARIANT: ${{ matrix.variant }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p out
+          chmod 777 out
+          chmod +x driver/tauri-driver
+          if ! docker pull "ubuntu:${UBUNTU}" > out/pull.log 2>&1; then
+            cat out/pull.log
+            printf '{"status":"not-tested","reason":"the Docker image ubuntu:%s could not be pulled"}\n' "$UBUNTU" > out/result.json
+            exit 0
+          fi
+          set +e
+          docker run --rm --shm-size=1g -v "$PWD:/work" -e DISPLAY_KIND -e VARIANT -e EXPECTED_VERSION "ubuntu:${UBUNTU}" bash /work/.github/scripts/linux-smoke.sh 2>&1 | tee out/log.txt
+          code=${PIPESTATUS[0]}
+          if [ ! -f out/result.json ]; then
+            printf '{"status":"fail","reason":"the test script ended with code %s before it wrote a result"}\n' "$code" > out/result.json
+          fi
+          exit 0
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-${{ matrix.ubuntu }}-${{ matrix.display }}-${{ matrix.variant }}
+          path: out
+          retention-days: 14
+
+      - name: Fail this job when the app failed
+        run: |
+          cat out/result.json
+          python3 -c "import json, sys; sys.exit(1 if json.load(open('out/result.json'))['status'] == 'fail' else 0)"
+
+  report:
+    name: Write the test matrix
+    needs: smoke
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: results
+          pattern: smoke-*
+
+      - name: Build the table
+        run: |
+          python3 .github/scripts/linux_report.py results linux-test-matrix.md
+          cat linux-test-matrix.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-test-matrix
+          path: linux-test-matrix.md
+          retention-days: 14
