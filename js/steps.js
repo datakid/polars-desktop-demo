@@ -152,7 +152,7 @@
         case 'range': return `.slice(${k.offset || 0}, ${k.n})`;
         case 'remove_top': return `.slice(${k.n})`;
         case 'remove_bottom': return `.with_row_index("__i").filter(pl.col("__i") < pl.len() - ${k.n}).drop("__i")`;
-        case 'alternate': return `.with_row_index("__i").filter(((pl.col("__i") - ${k.offset || 0}) % ${(+k.keep || 1) + (+k.skip || 1)}) < ${k.keep || 1}).drop("__i")`;
+        case 'alternate': { const off = Math.max(0, +k.offset || 0), keep = Math.max(1, +k.keep || 1), skip = Math.max(0, +k.skip || 1); return `.with_row_index("__i").filter((pl.col("__i") >= ${off}) & (((pl.col("__i") - ${off}) % ${keep + skip}) < ${keep})).drop("__i")`; }
         case 'remove_blank': return `.filter(~pl.all_horizontal(pl.all().is_null()))`;
       } return '';
       case 'PromoteHeaders': helpers.add('def promote_headers'); return `.pipe(promote_headers, row=${k.row || 0})`;
@@ -174,21 +174,22 @@
       }
       case 'SplitColumn': {
         if (k.mode === 'rows') return `.with_columns(pl.col(${py(k.col)}).str.split(${py(k.delimiter || ',')})).explode(${py(k.col)})${k.trim !== false ? `.with_columns(pl.col(${py(k.col)}).str.strip_chars())` : ''}`;
+        if (!k.mode || k.mode === 'each') { helpers.add('def floe_split_each'); return `.pipe(floe_split_each, ${py(k.col)}, ${py(k.delimiter === undefined || k.delimiter === '' ? ',' : k.delimiter)}, ${Math.ceil(Math.max(0, +k.count || 0))}, ${k.trim !== false ? 'True' : 'False'})`; }
         const n = +k.count || 2;
         return `.with_columns(pl.col(${py(k.col)}).str.splitn(${py(k.delimiter || ',')}, ${n}).struct.rename_fields([${Array.from({ length: n }, (_, i) => py(k.col + '.' + (i + 1))).join(', ')}])).unnest(${py(k.col)})`;
       }
-      case 'MergeColumns': return `.with_columns(pl.concat_str([${(k.cols || []).map((c) => `pl.col(${py(c)}).cast(pl.String).fill_null("")`).join(', ')}], separator=${py(k.sep === undefined ? ' ' : k.sep)}).alias(${py(k.name || 'Merged')})).drop(${pyList(k.cols)})`;
+      case 'MergeColumns': helpers.add('def floe_merge_columns'); return `.pipe(floe_merge_columns, ${pyList(k.cols)}, ${py(k.sep === undefined ? ' ' : k.sep)}, ${py(k.name || 'Merged')})`;
       case 'AddColumn': return `.with_columns((${formula(k.formula)}).alias(${py(k.name)}))`;
       case 'ConditionalColumn': return `.with_columns((${formula(PQ.Engine ? PQ.Engine.conditionalToFormula(k) : 'null')}).alias(${py(k.name)}))`;
       case 'IndexColumn': return (+k.step || 1) === 1 ? `.with_row_index(${py(k.name || 'Index')}, offset=${k.start || 0})` : `.with_columns((pl.int_range(pl.len()) * ${k.step} + ${k.start || 0}).alias(${py(k.name || 'Index')}))`;
-      case 'DuplicateColumn': return `.with_columns(pl.col(${py(k.col)}).alias(${py(k.name || k.col + ' - Copy')}))`;
+      case 'DuplicateColumn': helpers.add('def floe_duplicate_column'); return `.pipe(floe_duplicate_column, ${py(k.col)}, ${py(k.name || k.col + ' - Copy')})`;
       case 'GroupBy': {
         const map = { count_rows: () => 'pl.len()', count: (c) => `pl.col(${c}).count()`, count_distinct: (c) => `pl.col(${c}).n_unique()`, sum: (c) => `pl.col(${c}).sum()`, mean: (c) => `pl.col(${c}).mean()`, median: (c) => `pl.col(${c}).median()`, std: (c) => `pl.col(${c}).std()`, mode: (c) => `pl.col(${c}).drop_nulls().mode().sort().first()`, percentile: (c, a) => `pl.col(${c}).quantile(${(a.p === undefined || a.p === '' ? 50 : +a.p) / 100}, "linear")`, var: (c) => `pl.col(${c}).var()`, min: (c) => `pl.col(${c}).min()`, max: (c) => `pl.col(${c}).max()`, first: (c) => `pl.col(${c}).first()`, last: (c) => `pl.col(${c}).last()`, concat: (c, a) => `pl.col(${c}).cast(pl.String).str.join(${py(a.sep === undefined ? ', ' : a.sep)})` };
         const aggs = (k.aggs || []).map((a) => `${map[a.fn](py(a.col), a)}.alias(${py(a.name || (PQ.Engine ? PQ.Engine.aggName(a) : a.fn + (a.col ? ' of ' + a.col : '')))})`);
         if (!k.keys || !k.keys.length) return `.select(${aggs.join(', ')})`;
         return `.group_by(${pyList(k.keys)}, maintain_order=True).agg(\n        ${aggs.join(',\n        ')},\n    )`;
       }
-      case 'Unpivot': return `.unpivot(${k.values && k.values.length ? 'on=' + pyList(k.values) + ', ' : ''}index=${pyList(k.ids)}, variable_name=${py(k.var || 'Attribute')}, value_name=${py(k.val || 'Value')})`;
+      case 'Unpivot': helpers.add('def floe_unpivot'); return `.pipe(floe_unpivot, ${k.ids ? pyList(k.ids) : 'None'}, ${k.values && k.values.length ? pyList(k.values) : 'None'}, ${py(k.var || 'Attribute')}, ${py(k.val || 'Value')}, ${k.dropNulls !== false ? 'True' : 'False'})`;
       case 'Pivot': return `\n    # Pivot needs all data to know its output columns → materialize, then continue lazily\n    .collect().pivot(on=${py(k.on)}, index=${pyList(k.index)}, values=${k.values ? py(k.values) : 'None'}, aggregate_function=${py({ sum: 'sum', mean: 'mean', count_rows: 'len', min: 'min', max: 'max', first: 'first', last: 'last', median: 'median' }[k.agg || 'sum'] || 'first')}).lazy()`;
       case 'Transpose': return `\n    # Transpose forces materialization\n    .collect().transpose(include_header=True${k.headerCol ? ', column_names=' + py(k.headerCol) : ''}).lazy()`;
       case 'Merge': {
@@ -204,7 +205,7 @@
         const over = k.partition && k.partition.length ? `.over(${pyList(k.partition)})` : '';
         const c = `pl.col(${py(k.col || '')})`;
         const e = { cumsum: `${c}.cum_sum()`, row_number: `pl.int_range(1, pl.len() + 1)`, rank: `${c}.rank("min", descending=True)`, dense_rank: `${c}.rank("dense", descending=True)`, diff: `${c}.diff()`, cummax: `${c}.cum_max()`, cummin: `${c}.cum_min()`, pct_change: `pl.when(${c}.shift(1) != 0).then((${c} - ${c}.shift(1)) / ${c}.shift(1))`, rolling_sum: `${c}.rolling_sum(${k.n || 3}, min_samples=1)`, rolling_min: `${c}.rolling_min(${k.n || 3}, min_samples=1)`, rolling_max: `${c}.rolling_max(${k.n || 3}, min_samples=1)`, rolling_std: `${c}.rolling_std(${k.n || 3}, min_samples=2)`, lag: `${c}.shift(${k.n || 1})`, lead: `${c}.shift(-${k.n || 1})`, pct_of_total: `${c} / ${c}.sum()`, moving_avg: `${c}.rolling_mean(${k.n || 3}, min_samples=1)` }[k.op];
-        return (k.orderBy ? `.sort(${py(k.orderBy)}${k.desc ? ', descending=True' : ''})` : '') + `.with_columns(${e}${over}.alias(${py(k.name || k.op)}))`;
+        return (k.orderBy ? `.sort(${py(k.orderBy)}${k.desc ? ', descending=True' : ''})` : '') + `.with_columns((${e})${over}.alias(${py(k.name || k.op)}))`;
       }
       case 'ExpandJson': return `.with_columns(pl.col(${py(k.col)}).str.json_decode()).unnest(${py(k.col)})`;
       case 'CustomSql': {

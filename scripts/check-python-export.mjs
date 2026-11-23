@@ -10,12 +10,46 @@ const dir = mkdtempSync(join(tmpdir(), 'floe-pyexport-'));
 const data = join(dir, 'data');
 mkdirSync(data);
 
-const rows = ['id,grp,val'];
-for (let i = 1; i <= 500; i++) rows.push(`${i},${'abc'[i % 3]},${(i * 37) % 101}`);
+const names = [' alice smith', 'BOB jones ', 'Carol  white', ''];
+const rows = ['id,grp,val,price,name,day'];
+for (let i = 1; i <= 120; i++) rows.push([i, 'abc'[i % 3], (i * 37) % 101, i % 11 === 0 ? '' : ((i * 13 % 1000) / 10).toFixed(1), names[i % 4], '2025-01-' + String((i % 28) + 1).padStart(2, '0')].join(','));
 writeFileSync(join(data, 'orders.csv'), rows.join('\n') + '\n');
 
-const source = { type: 'Source', source: { kind: 'file', fileId: 'orders.csv', fileName: 'orders.csv', csv: { delimiter: ',', header: true } } };
-const cases = [
+const src = { type: 'Source', source: { kind: 'file', fileId: 'orders.csv', fileName: 'orders.csv', csv: { delimiter: ',', header: true } } };
+const ct = { type: 'ChangeType', changes: [{ col: 'id', type: 'int' }, { col: 'val', type: 'int' }, { col: 'price', type: 'number' }, { col: 'day', type: 'date' }] };
+const C = [
+  ['filter_num', { type: 'Filter', mode: 'advanced', formula: '[val] > 50' }],
+  ['filter_or', { type: 'Filter', mode: 'advanced', formula: '[grp] = "a" or [val] < 10' }],
+  ['sort', { type: 'Sort', by: [{ col: 'grp', desc: false }, { col: 'val', desc: true }, { col: 'id', desc: false }] }],
+  ['distinct', { type: 'Distinct', subset: ['grp', 'val'] }],
+  ['keepdup', { type: 'KeepDuplicates', subset: ['grp', 'val'] }],
+  ...['top', 'bottom', 'range', 'remove_top', 'remove_bottom', 'alternate', 'remove_blank'].map((mode) => ['keeprows_' + mode, { type: 'KeepRows', mode, n: 5, offset: 2, keep: 2, skip: 1 }]),
+  ['filldown', { type: 'FillDown', cols: ['price'] }], ['fillup', { type: 'FillUp', cols: ['price'] }],
+  ['replace', { type: 'ReplaceValues', cols: ['name'], find: 'alice', replace: 'ALICE' }],
+  ['replace_whole', { type: 'ReplaceValues', cols: ['grp'], find: 'a', replace: 'z', wholeCell: true }],
+  ['replace_null', { type: 'ReplaceValues', cols: ['price'], find: null, replace: '0' }],
+  ...['trim', 'upper', 'lower', 'proper', 'clean'].map((op) => ['text_' + op, { type: 'TextTransform', op, cols: ['name'] }]),
+  ['round0', { type: 'RoundNumbers', cols: ['price'], digits: 0 }], ['round1', { type: 'RoundNumbers', cols: ['price'], digits: 1 }],
+  ['split_each', { type: 'SplitColumn', col: 'name', mode: 'each', delimiter: ' ', count: 2 }],
+  ['split_rows', { type: 'SplitColumn', col: 'name', mode: 'rows', delimiter: ' ' }],
+  ['mergecols', { type: 'MergeColumns', cols: ['grp', 'val'], sep: '-', name: 'm' }],
+  ['add_arith', { type: 'AddColumn', name: 'c', formula: '[val] * 2 + 1' }],
+  ['add_text', { type: 'AddColumn', name: 'c', formula: 'Text.Upper([grp]) & "-" & Text.From([val])' }],
+  ['add_year', { type: 'AddColumn', name: 'c', formula: 'Date.Year([day]) * 100 + Date.Month([day])' }],
+  ['add_coalesce', { type: 'AddColumn', name: 'c', formula: 'Coalesce([price], 0) + 1' }],
+  ['add_if', { type: 'AddColumn', name: 'c', formula: 'if [val] > 50 then "hi" else "lo"' }],
+  ['conditional', { type: 'ConditionalColumn', name: 'k', rules: [{ when: '[val] > 80', then: '"top"' }, { when: '[val] > 40', then: '"mid"' }], else: '"low"' }],
+  ['index', { type: 'IndexColumn', name: 'i', start: 5, step: 2 }],
+  ['dupcol', { type: 'DuplicateColumn', col: 'val' }],
+  ['groupby', { type: 'GroupBy', keys: ['grp'], aggs: [{ fn: 'sum', col: 'val' }, { fn: 'count_rows' }, { fn: 'min', col: 'val' }, { fn: 'max', col: 'val' }, { fn: 'mean', col: 'val' }] }],
+  ['groupby2', { type: 'GroupBy', keys: ['grp', 'name'], aggs: [{ fn: 'sum', col: 'val' }] }],
+  ['unpivot', { type: 'Unpivot', ids: ['id', 'grp'] }],
+  ['pivot', { type: 'Pivot', on: 'grp', values: 'val', agg: 'sum', index: ['name'] }],
+  ['win_cumsum', { type: 'Window', op: 'cumsum', col: 'val', partition: ['grp'], name: 'w' }],
+  ['win_rank', { type: 'Window', op: 'rank', col: 'val', partition: [], name: 'w' }],
+  ['win_lag', { type: 'Window', op: 'lag', col: 'val', partition: ['grp'], name: 'w', n: 1 }],
+  ['win_pct', { type: 'Window', op: 'pct_of_total', col: 'val', partition: ['grp'], name: 'w' }],
+  ['win_roll', { type: 'Window', op: 'rolling_sum', col: 'val', partition: [], name: 'w', n: 3 }],
   ['sample_n', { type: 'Sample', mode: 'n', n: 37, seed: 7 }],
   ['sample_default_seed', { type: 'Sample', mode: 'n', n: 50 }],
   ['sample_percent', { type: 'Sample', mode: 'percent', percent: 12.5 }],
@@ -28,12 +62,19 @@ const cases = [
   ['sample_none', { type: 'Sample', mode: 'n', n: 0, seed: 1 }],
   ['sample_full_percent', { type: 'Sample', mode: 'percent', percent: 100, seed: 9 }],
   ['sample_one', { type: 'Sample', mode: 'n', n: 1, seed: 11 }],
+  ['split_each_auto', { type: 'SplitColumn', col: 'name', mode: 'each', delimiter: ' ' }],
+  ['split_each_untrimmed', { type: 'SplitColumn', col: 'name', mode: 'each', delimiter: ' ', count: 3, trim: false }],
+  ['dupcol_named', { type: 'DuplicateColumn', col: 'grp', name: 'val' }],
+  ['mergecols_clash', { type: 'MergeColumns', cols: ['grp', 'val'], sep: '/', name: 'name' }],
+  ['unpivot_keep_nulls', { type: 'Unpivot', ids: ['id'], values: ['price', 'name'], dropNulls: false }],
+  ['unpivot_values_only', { type: 'Unpivot', values: ['val', 'price'] }],
+  ['keeprows_alternate_wide', { type: 'KeepRows', mode: 'alternate', offset: 0, keep: 3, skip: 2 }],
 ];
 const project = {
   name: 'Export check',
   settings: { previewRows: 1000, locale: 'en-US' },
   params: [],
-  queries: cases.map(([name, kind], i) => ({ id: 'q' + i, name, load: { target: 'csv' }, steps: [{ id: 's0', name: 'Source', kind: source }, { id: 's1', name: 'Step', kind }] })),
+  queries: C.map(([name, kind], i) => ({ id: 'q' + i, name, load: { target: 'csv' }, steps: [{ id: 's0', name: 'Source', kind: src }, { id: 's1', name: 'Types', kind: ct }, { id: 's2', name: 'Step', kind }] })),
 };
 writeFileSync(join(dir, 'check.floe'), JSON.stringify(project));
 
@@ -42,21 +83,34 @@ const run = (cmd, args, cwd) => {
   if (r.error) { console.error(`cannot run ${cmd}: ${r.error.message}`); process.exit(2); }
   return r;
 };
+const fail = (r, code) => { console.error(r.stdout + r.stderr); process.exit(code || 1); };
 const built = run('node', ['scripts/floe.mjs', 'run', join(dir, 'check.floe'), '--data', data, '--out', join(dir, 'app'), '--quiet']);
-if (built.status !== 0) { console.error(built.stdout + built.stderr); process.exit(1); }
+if (built.status !== 0) fail(built);
 const gen = run('node', ['scripts/floe.mjs', 'python', join(dir, 'check.floe'), '--out', join(dir, 'export.py')]);
-if (gen.status !== 0) { console.error(gen.stdout + gen.stderr); process.exit(1); }
+if (gen.status !== 0) fail(gen);
 const py = run(python, ['export.py'], dir);
-if (py.status !== 0) { console.error(py.stdout + py.stderr); process.exit(py.stderr.includes('No module named') ? 2 : 1); }
+if (py.status !== 0) fail(py, py.stderr.includes('No module named') ? 2 : 1);
 
-const ids = (file) => readFileSync(file, 'utf8').trim().split(/\r?\n/).slice(1).map((l) => l.split(',')[0]);
-let bad = 0;
-for (const [name] of cases) {
-  const a = ids(join(dir, 'app', name + '.csv')), b = ids(join(dir, 'out', name + '.csv'));
-  const same = a.length === b.length && a.every((v, i) => v === b[i]);
-  console.log(`${same ? 'ok  ' : 'FAIL'} ${name}: app ${a.length} rows, Python ${b.length} rows${same ? '' : ', first rows ' + a.slice(0, 5) + ' against ' + b.slice(0, 5)}`);
-  if (!same) bad++;
+const table = (file) => readFileSync(file, 'utf8').trim().split(/\r?\n/).map((l) => l.split(',').map((c) => (c === '""' ? '' : c)));
+const same = (x, y) => {
+  if (x === y) return true;
+  if (x === '' || y === '') return false;
+  const a = Number(x), b = Number(y);
+  return !isNaN(a) && !isNaN(b) && Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+};
+const problems = [];
+for (const [name] of C) {
+  let a, b;
+  try { a = table(join(dir, 'app', name + '.csv')); b = table(join(dir, 'out', name + '.csv')); } catch (e) { problems.push(`${name}: an output file is missing`); continue; }
+  let why = null;
+  if (a[0].join() !== b[0].join()) why = `columns [${a[0]}] against [${b[0]}]`;
+  else if (a.length !== b.length) why = `${a.length - 1} rows against ${b.length - 1}`;
+  else {
+    for (let i = 1; i < a.length && !why; i++) for (let j = 0; j < a[i].length; j++) if (!same(a[i][j], b[i][j])) { why = `row ${i} column ${a[0][j]}: ${JSON.stringify(a[i][j])} against ${JSON.stringify(b[i][j])}`; break; }
+  }
+  if (why) problems.push(`${name}: app and Python differ, ${why}`);
 }
 rmSync(dir, { recursive: true, force: true });
-console.log(bad ? `${bad} of ${cases.length} cases differ` : `all ${cases.length} cases match`);
-process.exit(bad ? 1 : 0);
+problems.forEach((x) => console.log('FAIL ' + x));
+console.log(problems.length ? `${problems.length} of ${C.length} cases differ` : `all ${C.length} cases match`);
+process.exit(problems.length ? 1 : 0);

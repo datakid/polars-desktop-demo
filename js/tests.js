@@ -313,6 +313,16 @@
     assert(pct.includes('.pipe(floe_sample, None, 100, 42)'), 'percent is clamped and the default seed is 42');
     assert(script({ type: 'Sample', mode: 'n', n: 5, seed: Infinity }).includes('.pipe(floe_sample, 5, None, 0)'), 'a seed that is not finite becomes 0 like the app');
   });
+  test('Python export: merge, duplicate, unpivot, split, alternate rows and window follow the app', () => {
+    const script = (kind) => { const p = proj(); p.name = 'Demo'; p.queries[0].steps.push({ id: 'st', name: 'S', kind }); return PQ.Steps.toPython(p); };
+    assert(script({ type: 'MergeColumns', cols: ['x', 'y'], sep: '-', name: 'm' }).includes('.pipe(floe_merge_columns, ["x", "y"], "-", "m")'), 'merge columns');
+    assert(script({ type: 'DuplicateColumn', col: 'x' }).includes('.pipe(floe_duplicate_column, "x", "x - Copy")'), 'duplicate column');
+    assert(script({ type: 'Unpivot', ids: ['y'] }).includes('.pipe(floe_unpivot, ["y"], None, "Attribute", "Value", True)'), 'unpivot drops nulls by default');
+    assert(script({ type: 'Unpivot', values: ['x'], dropNulls: false }).includes('.pipe(floe_unpivot, None, ["x"], "Attribute", "Value", False)'), 'unpivot values only, nulls kept');
+    assert(script({ type: 'SplitColumn', col: 'x', mode: 'each', delimiter: ' ' }).includes('.pipe(floe_split_each, "x", " ", 0, True)'), 'split into as many columns as needed, trimmed');
+    assert(script({ type: 'KeepRows', mode: 'alternate', offset: 1, keep: 2, skip: 1 }).includes('(pl.col("__i") >= 1) & (((pl.col("__i") - 1) % 3) < 2)'), 'alternate rows start at the offset');
+    assert(script({ type: 'Window', op: 'pct_of_total', col: 'x', partition: ['y'], name: 'w' }).includes('.with_columns((pl.col("x") / pl.col("x").sum()).over(["y"]).alias("w"))'), 'the alias names the whole window expression');
+  });
   test('Python export covers every step and parses as plausible Python', () => {
     const p = proj(); p.name = 'Demo';
     p.queries[0].steps.push({ id: 'g', name: 'G', kind: { type: 'GroupBy', keys: ['label'], aggs: [{ fn: 'sum', col: 'z', name: 'z' }] } });

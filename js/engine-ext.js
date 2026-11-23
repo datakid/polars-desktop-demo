@@ -430,6 +430,46 @@
         j = i + int(state / 4294967296 * (n - i))
         order[i], order[j] = order[j], order[i]
     return df[sorted(order[:k])].lazy()`;
+  S.HELPERS['def floe_merge_columns'] = `def floe_merge_columns(lf: pl.LazyFrame, cols: list[str], separator: str, name: str) -> pl.LazyFrame:
+    names = lf.collect_schema().names()
+    keep = [n for n in names if n not in cols]
+    out = name
+    i = 1
+    while out in keep:
+        out = f"{name}_{i}"
+        i += 1
+    position = min(min(names.index(c) for c in cols), len(keep))
+    merged = pl.concat_str([pl.col(c).cast(pl.String).fill_null("") for c in cols], separator=separator).alias(out)
+    return lf.with_columns(merged).select(keep[:position] + [out] + keep[position:])`;
+  S.HELPERS['def floe_duplicate_column'] = `def floe_duplicate_column(lf: pl.LazyFrame, col: str, name: str) -> pl.LazyFrame:
+    names = lf.collect_schema().names()
+    out = name
+    i = 1
+    while out in names:
+        out = f"{name}_{i}"
+        i += 1
+    index = names.index(col) + 1
+    return lf.with_columns(pl.col(col).alias(out)).select(names[:index] + [out] + names[index:])`;
+  S.HELPERS['def floe_unpivot'] = `def floe_unpivot(lf: pl.LazyFrame, ids: list[str] | None, values: list[str] | None, variable_name: str, value_name: str, drop_nulls: bool) -> pl.LazyFrame:
+    schema = lf.collect_schema()
+    names = schema.names()
+    on = list(values) if values else [n for n in names if n not in (ids or [])]
+    index = list(ids) if ids is not None else [n for n in names if n not in on]
+    if len({schema[c] for c in on}) > 1:
+        lf = lf.with_columns([pl.col(c).cast(pl.String) for c in on])
+    out = lf.with_row_index("__i").unpivot(on=on, index=["__i"] + index, variable_name=variable_name, value_name=value_name)
+    if drop_nulls:
+        out = out.filter(pl.col(value_name).is_not_null())
+    return out.sort("__i", maintain_order=True).drop("__i")`;
+  S.HELPERS['def floe_split_each'] = `def floe_split_each(lf: pl.LazyFrame, col: str, delimiter: str, count: int, trim: bool) -> pl.LazyFrame:
+    parts = pl.col(col).cast(pl.String).str.split(delimiter)
+    width = count or int(lf.select(parts.list.len().max()).collect().item() or 1)
+    width = max(1, min(width, 200))
+    pieces = []
+    for i in range(width):
+        piece = parts.list.get(i, null_on_oob=True)
+        pieces.append((piece.str.strip_chars() if trim else piece).alias(f"{col}.{i + 1}"))
+    return lf.with_columns(pl.struct(pieces).alias(col)).unnest(col)`;
   S.EXT_CODE = {
     Sample: (k, ctx) => {
       ctx.helpers.add('def floe_sample');
