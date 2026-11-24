@@ -51,13 +51,18 @@ jobs:
             echo "run_id=$GIVEN" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/linux.yml/runs?status=success&per_page=1" --jq '.workflow_runs[0].id')
-          if [ -z "$id" ] || [ "$id" = "null" ]; then
-            echo "No successful run of the Linux workflow exists yet" >&2
-            exit 1
-          fi
-          echo "Testing the packages of run $id"
-          echo "run_id=$id" >> "$GITHUB_OUTPUT"
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/linux.yml/runs?status=completed&per_page=10" --jq '.workflow_runs[].id'); do
+            names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.expired == false) | .name] | join(" ")')
+            case " $names " in
+              *" floe-linux-builtin "*" floe-linux-polars "*" tauri-driver "*|*" floe-linux-builtin "*" tauri-driver "*" floe-linux-polars "*|*" floe-linux-polars "*" floe-linux-builtin "*" tauri-driver "*|*" floe-linux-polars "*" tauri-driver "*" floe-linux-builtin "*|*" tauri-driver "*" floe-linux-builtin "*" floe-linux-polars "*|*" tauri-driver "*" floe-linux-polars "*" floe-linux-builtin "*)
+                echo "Testing the packages of run $id"
+                echo "run_id=$id" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+          done
+          echo "No run of the Linux workflow has packages to test" >&2
+          exit 1
 
   smoke:
     name: Ubuntu ${{ matrix.ubuntu }}, ${{ matrix.display }}, ${{ matrix.variant }}
@@ -122,8 +127,27 @@ jobs:
 
       - name: Fail this job when the app failed
         run: |
-          cat out/result.json
-          python3 -c "import json, sys; sys.exit(1 if json.load(open('out/result.json'))['status'] == 'fail' else 0)"
+          python3 - <<'PY'
+          import json, sys
+          result = json.load(open('out/result.json'))
+          note = result['status'] + ': ' + result['reason']
+          try:
+              checks = json.load(open('out/checks.json'))['checks']
+              failed = [c['name'] + ' (' + c['detail'][:160] + ')' for c in checks if not c['ok']]
+              note += ' | checks ' + str(sum(1 for c in checks if c['ok'])) + ' of ' + str(len(checks))
+              if failed:
+                  note += ' | FAILED: ' + '; '.join(failed)
+          except (OSError, ValueError, KeyError):
+              pass
+          print('::notice title=smoke result::' + note.replace('%', '%25').replace('\r', '').replace('\n', ' ')[:1500])
+          if result['status'] == 'fail':
+              try:
+                  tail = open('out/log.txt', errors='replace').read().splitlines()[-30:]
+                  print('::notice title=log tail::' + '%0A'.join(tail).replace('%25', '%')[:3000].replace('\r', ''))
+              except OSError:
+                  pass
+          sys.exit(1 if result['status'] == 'fail' else 0)
+          PY
 
   report:
     name: Write the test matrix
