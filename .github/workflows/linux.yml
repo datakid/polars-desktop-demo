@@ -14,10 +14,6 @@ on:
         required: false
         default: ''
         type: string
-  push:
-    branches: [review/ui-logic]
-    paths:
-      - '.github/workflows/linux.yml'
 
 permissions:
   contents: read

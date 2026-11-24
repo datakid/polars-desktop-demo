@@ -23,13 +23,6 @@ on:
         required: false
         default: ''
         type: string
-  push:
-    branches: [review/ui-logic]
-    paths:
-      - '.github/workflows/linux-smoke.yml'
-      - '.github/scripts/linux-smoke.sh'
-      - '.github/scripts/linux_smoke.py'
-      - '.github/scripts/linux_report.py'
 
 permissions:
   contents: read
