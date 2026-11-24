@@ -116,11 +116,11 @@ Icons are generated from `images/floe-icon.svg` into `desktop/src-tauri/icons/` 
 
 ### CI and pre-alpha releases
 `.github/workflows/ci.yml` runs on every push to `main`, every pull request, and on demand:
-- **Web build and tests:** builds the web and desktop frontends, then runs `tests.html` (unit) and `tests-ui.html` (end-to-end) in headless Chromium.
+- **Web build and tests:** builds the web and desktop frontends, runs `scripts/check-python-export.mjs` (the exported Python script against the app's engine on 63 step cases, needs `pip install polars`), then `tests.html` (unit) and `tests-ui.html` (end-to-end) in headless Chromium.
 - **Polars engine tests:** `cargo test` on `floe-engine`, including the parity suite.
 - **Windows installers:** builds the NSIS installer for both variants (built-in engine and Polars) and uploads them as artifacts (kept 14 days).
 
-`.github/workflows/release.yml` builds both Windows installers and publishes them on the Releases page with SHA-256 files. Push a tag to start one:
+`.github/workflows/release.yml` builds both Windows installers and both Linux `.deb` packages and publishes them on the Releases page with SHA-256 files and the Linux test table. Push a tag to start one:
 ```
 git tag v1.1.0-alpha.1
 git push origin v1.1.0-alpha.1
@@ -128,7 +128,7 @@ git push origin v1.1.0-alpha.1
 - The version in the tag is written into `package.json`, `js/util.js`, `desktop/package.json` and `tauri.conf.json`, so the build's version check passes without hand edits.
 - A tag with a suffix (`-alpha.1`, `-beta.1`) is published as a **pre-release**. A plain tag such as `v1.1.0` is a normal release.
 - It can also be started from the Actions tab (**Run workflow**) with a tag name.
-- Builds are unsigned and have no auto-update. macOS and Linux builds are not part of the workflows yet.
+- Builds are unsigned and have no auto-update. macOS builds are not part of the workflows yet. Linux is described in [docs/LINUX.md](docs/LINUX.md): what is built, how it is tested on Ubuntu 22.04, 24.04, 26.04 and 26.10, and what that does not cover.
 
 ### Desktop shell (src-tauri/src/lib.rs)
 Commands used by `js/platform.js`:

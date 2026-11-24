@@ -111,9 +111,20 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  linux:
+    name: Linux packages
+    needs: version
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/linux.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+
   publish:
     name: Publish GitHub release
-    needs: [version, build]
+    needs: [version, build, linux]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -128,12 +139,27 @@ jobs:
           pattern: floe-windows-*
           merge-multiple: true
 
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          path: staged-linux
+          pattern: floe-linux-*
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: linux-test-matrix
+          path: linux-matrix
+
       - name: Checksums
         run: |
           mkdir -p dist
           cp staged/*.exe dist/
+          cp staged-linux/*.deb dist/ 2>/dev/null || true
           cd dist
-          for f in *.exe; do
+          for f in *.exe *.deb; do
+            [ -e "$f" ] || continue
             sha256sum "$f" > "$f.sha256"
           done
           ls -la
@@ -142,7 +168,7 @@ jobs:
         run: |
           {
             if [ "$PRERELEASE" = "true" ]; then
-              echo "**Pre-alpha — for testing only.** The Rust shell and the Polars engine were only recently compiled for the first time: expect bugs."
+              echo "**Pre-alpha — for testing only.** Expect bugs."
               echo
             fi
             echo "Windows installers:"
@@ -151,6 +177,23 @@ jobs:
             echo
             echo "Builds are **not code-signed**, so Windows SmartScreen will show a warning. Choose *More info* then *Run anyway*. SHA-256 checksums are attached. There is no auto-update yet."
             echo
+            if ls dist/*.deb > /dev/null 2>&1; then
+              echo "Linux packages (Debian and Ubuntu, 64-bit, built on Ubuntu 22.04):"
+              echo "- \`Floe_${VERSION}_amd64.deb\` — built-in engine (recommended)."
+              echo "- \`Floe-polars_${VERSION}_amd64.deb\` — adds the native Polars engine."
+              echo
+              echo "Both are the package \`floe\`, so installing one replaces the other. Install with \`sudo apt install ./Floe_${VERSION}_amd64.deb\`; apt pulls in WebKitGTK 4.1 and GTK 3."
+              echo
+              if [ -f linux-matrix/linux-test-matrix.md ]; then
+                cat linux-matrix/linux-test-matrix.md
+              else
+                echo "The Linux test table was not produced for this release, so treat the Linux packages as untested."
+              fi
+              echo
+            else
+              echo "Linux packages were not built for this release."
+              echo
+            fi
             echo "Floe runs entirely on your PC. Files are never uploaded."
           } > notes.md
 
