@@ -51,17 +51,24 @@ jobs:
             echo "run_id=$GIVEN" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/linux.yml/runs?status=completed&per_page=10" --jq '.workflow_runs[].id'); do
-            names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.expired == false) | .name] | join(" ")')
-            case " $names " in
-              *" floe-linux-builtin "*" floe-linux-polars "*" tauri-driver "*|*" floe-linux-builtin "*" tauri-driver "*" floe-linux-polars "*|*" floe-linux-polars "*" floe-linux-builtin "*" tauri-driver "*|*" floe-linux-polars "*" tauri-driver "*" floe-linux-builtin "*|*" tauri-driver "*" floe-linux-builtin "*" floe-linux-polars "*|*" tauri-driver "*" floe-linux-polars "*" floe-linux-builtin "*)
-                echo "Testing the packages of run $id"
-                echo "run_id=$id" >> "$GITHUB_OUTPUT"
-                exit 0
-                ;;
-            esac
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/linux.yml/runs?status=completed&per_page=10" --jq '.workflow_runs[].id') || { echo "::error::could not list the Linux runs"; exit 1; }
+          echo "::notice::candidate runs: $(echo $runs)"
+          for id in $runs; do
+            names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" --jq '[.artifacts[] | select(.expired == false) | .name] | join(" ")') || continue
+            echo "::notice::run $id has: $names"
+            ok=yes
+            for n in floe-linux-builtin floe-linux-polars tauri-driver; do
+              case " $names " in
+                *" $n "*) ;;
+                *) ok=no ;;
+              esac
+            done
+            if [ "$ok" = yes ]; then
+              echo "run_id=$id" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           done
-          echo "No run of the Linux workflow has packages to test" >&2
+          echo "::error::no run of the Linux workflow has packages to test"
           exit 1
 
   smoke:
