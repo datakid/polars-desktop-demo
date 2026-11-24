@@ -172,7 +172,7 @@ Events emitted to the UI: `floe://menu` (macOS menu), `floe://files-dropped`, `f
 - Fixed Vercel config (`outputDirectory: dist`, explicit build, no framework detection) and added `.vercelignore` so `desktop/` is never uploaded.
 - Added the missing pieces the app referenced: `manifest.webmanifest`, Font Awesome webfonts, the three UI fonts, SVG icons (`floe-icon.svg`, `floe-icon-maskable.svg`, `floe-mark.svg`).
 - Complete Tauri 2 shell: dialogs, binary IPC, atomic saves, path grants, drag & drop, file associations, single instance, launch files, macOS menu, close guard.
-- Desktop refresh re-reads changed files from disk; F5 / Ctrl+E / Ctrl+, work on Windows and Linux.
+- Desktop refresh re-reads changed files from disk; F5 / Ctrl+E / Ctrl+, are bound on Windows and Linux, and no automated test presses them on either.
 - UI no longer advertises Polars or a `floe` CLI when they are not installed: Settings hides the engine toggle, *Automate…* exports a Polars script, About shows "Built-in engine".
 - `demo.html` uses an external script (works under the strict desktop CSP).
 
@@ -207,6 +207,8 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 - The `floe` CLI runs on the built-in JS engine (Node). A native Rust CLI on `floe-engine` is not built yet.
 - The Rust code (`floe-engine` and the Tauri shell) compiles and the engine tests run in CI, but the installers have not been tested by hand on a Windows PC yet.
 - Builds are unsigned; macOS Gatekeeper and Windows SmartScreen will warn until signing is configured.
+- Linux has `.deb` packages only, built on Ubuntu 22.04 and tested in containers on Ubuntu 22.04, 24.04, 26.04 and 26.10 under Xvfb and a headless Wayland compositor, without a GPU and with the WebKit sandbox off. No real desktop session, file chooser, drag and drop or file association was tested. See `docs/LINUX.md`.
+- The exported Python script matches the app on the 63 step cases in `scripts/check-python-export.mjs`. Split into columns by first or last delimiter or by positions, and merged float columns, are not covered and can differ.
 - No auto-updater yet.
 - Parquet filter pushdown uses row-group min/max statistics only. It doesn't use page indexes or bloom filters, and it is off when a timestamp or nested column is read, because those types are inferred from the values. Previews don't prune either. They already stop after the first row groups.
 - On desktop, Parquet files that fall back to the built-in engine are still read whole by the shell.
