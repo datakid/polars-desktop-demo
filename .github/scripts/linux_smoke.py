@@ -88,7 +88,7 @@ POLARS_JS = ASYNC_PRELUDE + """
   done(JSON.stringify({n: r.n, schema: r.schema, bytes: bytes}));
 })()""" + ASYNC_TAIL
 
-DEMO_JS = "location.replace('index.html?demo'); return true;"
+DEMO_JS = "location.replace('demo.html'); return true;"
 
 DEMO_PROBE = "return JSON.stringify({ready: !!(window.PQ && PQ.UI && PQ.UI.App && PQ.UI.App.result && PQ.UI.App.result.fp), queries: (window.PQ && PQ.UI && PQ.UI.Store && PQ.UI.Store.project) ? PQ.UI.Store.project.queries.length : 0});"
 
