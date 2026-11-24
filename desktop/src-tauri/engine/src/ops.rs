@@ -298,7 +298,7 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
         }
         "expandJson" => {
             let name = op["col"].as_str().ok_or("expandJson: missing column")?.to_string();
-            need(&s, &[name.clone()])?;
+            need(&s, std::slice::from_ref(&name))?;
             if dtype(&s, &name)? != DataType::String {
                 return Err("expandJson: the column is not text".into());
             }
