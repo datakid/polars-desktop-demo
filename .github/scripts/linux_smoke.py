@@ -109,9 +109,15 @@ def main():
         return
 
     capabilities = {"capabilities": {"alwaysMatch": {"browserName": "wry", "tauri:options": {"application": APP, "args": [CSV]}}}}
-    reply = call("POST", "/session", capabilities, 240)
-    value = reply.get("value") or {}
-    session["id"] = value.get("sessionId")
+    value = {}
+    for attempt in range(1, 4):
+        reply = call("POST", "/session", capabilities, 240)
+        value = reply.get("value") or {}
+        session["id"] = value.get("sessionId")
+        if session["id"] or value.get("error") != "connection":
+            break
+        print("session attempt %d failed: %s" % (attempt, json.dumps(value)[:200]), flush=True)
+        time.sleep(4)
     record("the app starts under WebDriver", bool(session["id"]), json.dumps(value)[:400] if not session["id"] else APP)
     if not session["id"]:
         return
@@ -184,6 +190,12 @@ finally:
         call("DELETE", "/session/%s" % session["id"], None, 30)
     if driver["proc"]:
         driver["proc"].terminate()
+    if not (checks and all(c["ok"] for c in checks)):
+        try:
+            print("--- tauri-driver.log", flush=True)
+            print("\n".join(open(os.path.join(OUT, "tauri-driver.log"), errors="replace").read().splitlines()[-25:]), flush=True)
+        except OSError:
+            pass
     with open(os.path.join(OUT, "checks.json"), "w") as handle:
         json.dump({"variant": VARIANT, "display": DISPLAY, "checks": checks}, handle, indent=1)
 
