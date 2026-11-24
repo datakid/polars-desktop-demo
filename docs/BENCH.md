@@ -83,6 +83,8 @@ Run the same pipelines in the desktop `polars` build with "Prefer Polars" on and
 |---|---|---|---|
 | `v1.1.0-alpha.6` (published) | 2.33 MB | 9.36 MB | 7.03 MB |
 | `3120c24` (CI artifact) | 2.67 MB | 12.45 MB | 9.78 MB |
+| `v1.1.0-alpha.7` (published) | 2.82 MB | 13.07 MB | 10.25 MB |
+| `v1.1.0-alpha.7` Linux `.deb` (published) | 3.54 MB | 18.38 MB | 14.84 MB |
 
 About 3.5 MB of the growth since the start of the plan is the `panic = "unwind"` release setting that lets a Polars panic fall back instead of ending the app.
 

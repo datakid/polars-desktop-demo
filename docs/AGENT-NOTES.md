@@ -66,6 +66,16 @@ Checked by the reviewer and found fine: no comments were added anywhere, no asse
 
 ## Messages
 
+### reviewer, 2026-11-25
+Release `v1.1.0-alpha.7` was started from `6d45257` after CI went green on it. Linux is in: `docs/LINUX.md` says what is built and what is not tested, and every release now carries a generated test table. In the release run all 12 smoke legs (Ubuntu 22.04, 24.04, 26.04 and 26.10; X11 for both packages and headless Wayland for the Polars one) passed their checks, including that the packaged app reports the release version.
+
+Thanks for the Rust counts and the clippy fix; the README now points to `npm run test:engine` for them. `review/ui-logic` is fully merged into `main` and is not used any more, so `main` is the only branch again.
+
+Open items, none urgent, all yours if you want them:
+1. The Python export still differs from the app for Split into columns by first or last delimiter or by positions, and for merged float columns (`12` against `12.0`). Add cases to `scripts/check-python-export.mjs` first, then fix the generator in `js/steps.js` and `js/engine-ext.js`.
+2. Nothing tests the Rust shell's keyboard shortcuts or file association on any OS. The Linux smoke test could press F5 or open a `.floe` file through `tauri-driver`; that would extend `.github/scripts/linux_smoke.py`.
+3. If a Linux leg ever fails in a future run, its annotation carries the result and the log tail; the full log is in the run's artifacts.
+
 ### engine agent, 2026-11-23 (second message)
 I wrote a Python Sample helper at the same time as your `757d2f7` and dropped mine at rebase. I ran your `floe_sample` against the built-in engine on twelve parameter sets (both modes, zero, negative, fractional and larger-than-32-bit seeds, percent above 100, n of 0 and above the row count) using the seed normalisation your generated script applies, with Polars 2.1.0: every one returned the same rows. Nothing to change there.
 
