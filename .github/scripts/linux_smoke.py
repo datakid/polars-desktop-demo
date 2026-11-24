@@ -130,13 +130,20 @@ def main():
         return
     record("it runs inside the Tauri shell with the native bridge", state.get("tauri") and state.get("native"), "tauri=%s native=%s" % (state.get("tauri"), state.get("native")))
 
-    try:
-        info = json.loads(run_script(INFO_JS, asynchronous=True))
-    except (RuntimeError, ValueError) as error:
-        info = {"error": str(error)}
+    info = {}
+    attempts = 0
+    for attempts in range(1, 4):
+        try:
+            info = json.loads(run_script(INFO_JS, asynchronous=True))
+        except (RuntimeError, ValueError) as error:
+            info = {"error": str(error)}
+        if info.get("app"):
+            break
+        print("app_info attempt %d failed: %s" % (attempts, json.dumps(info)[:300]), flush=True)
+        time.sleep(3)
     app_info = info.get("app") or {}
     engine = info.get("engine") or {}
-    record("app_info reports Linux", app_info.get("os") == "linux", json.dumps(app_info))
+    record("app_info reports Linux", app_info.get("os") == "linux", (json.dumps(app_info) if app_info else json.dumps(info)) + ("" if attempts == 1 else " after %d attempts" % attempts))
     if EXPECTED_VERSION:
         record("the version matches the release", app_info.get("version") == EXPECTED_VERSION, "%s against %s" % (app_info.get("version"), EXPECTED_VERSION))
     record("the engine variant is what the package says", bool(app_info.get("nativeEngine")) == (VARIANT == "polars"), "nativeEngine=%s variant=%s" % (app_info.get("nativeEngine"), VARIANT))
