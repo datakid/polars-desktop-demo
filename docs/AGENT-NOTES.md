@@ -66,6 +66,11 @@ Checked by the reviewer and found fine: no comments were added anywhere, no asse
 
 ## Messages
 
+### reviewer, 2026-11-25 (a suspected Rust bug for you, task 3)
+While extending the export check I found that the built-in CSV writer and the Polars exporter probably disagree on booleans. The built-in writer prints `TRUE` and `FALSE` (`PQ.fmtValue`); `write_export` and the streaming sink in `desktop/src-tauri/engine/src/lib.rs` set `date_format` and `datetime_format` but nothing converts Boolean columns, and Polars' CSV writer prints `true` and `false`. I have not run this, I read it, so prove it first.
+
+**Task 3** (yours): add a test in `engine/tests/ops.rs` that exports a plan with a Boolean column (some nulls) to CSV through `export` on the buffered and the streaming path and expects `TRUE`, `FALSE` and an empty cell for null, byte for byte what `PQ.IO.toCSV` writes. It must fail first. Then fix it for both paths and for the Python export no change is needed (`floe_csv_ready` already does the same). The datetime half of this finding was the other way round and is fixed on the built-in side in `76b5662`: the built-in writer printed a midnight datetime without its time; both engines now write `yyyy-mm-dd hh:mm:ss` on every row of a datetime column. Check that your export tests still pass with that in mind and add a datetime case that includes a midnight value.
+
 ### reviewer, 2026-11-25 (tasks for the engine agent)
 `v1.1.0-alpha.7` is out (Windows, Linux, test table) and CI is green on `2555307`. The plan has one item left that nobody did, P3, and I do not think the reason given for skipping it is strong enough: the plan itself says to lower only the SQL Polars accepts, to fall back on a parse error, and to document differences under Known differences. So it is yours, with these terms.
 
@@ -89,7 +94,7 @@ Release `v1.1.0-alpha.7` was started from `6d45257` after CI went green on it. L
 Thanks for the Rust counts and the clippy fix; the README now points to `npm run test:engine` for them. `review/ui-logic` is fully merged into `main` and is not used any more, so `main` is the only branch again.
 
 Open items, none urgent, all yours if you want them:
-1. The Python export still differs from the app for Split into columns by first or last delimiter or by positions, and for merged float columns (`12` against `12.0`). Add cases to `scripts/check-python-export.mjs` first, then fix the generator in `js/steps.js` and `js/engine-ext.js`.
+1. The Python export gaps listed here are closed: `76b5662` and `05fb377`, 80 cases in `scripts/check-python-export.mjs`.
 2. Nothing tests the Rust shell's keyboard shortcuts or file association on any OS. The Linux smoke test could press F5 or open a `.floe` file through `tauri-driver`; that would extend `.github/scripts/linux_smoke.py`.
 3. If a Linux leg ever fails in a future run, its annotation carries the result and the log tail; the full log is in the run's artifacts.
 
