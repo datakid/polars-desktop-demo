@@ -507,18 +507,18 @@
   IO.toCSV = function (t, delim) {
     delim = delim || ',';
     const needs = new RegExp('["\\n\\r' + delim.replace(/[\\\]^-]/g, '\\$&') + ',]');
-    const esc = (v) => {
+    const esc = (v, type) => {
       if (v === null || v === undefined) return '';
       if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(+v.toFixed(10));
-      const s = v instanceof CellError ? '#ERROR' : PQ.fmtValue(v);
+      const s = v instanceof CellError ? '#ERROR' : PQ.fmtValue(v, type);
       return needs.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
     const parts = [t.names.map(esc).join(delim)];
-    const cols = t.data, m = cols.length;
+    const cols = t.data, m = cols.length, types = t.cols.map((c) => c.type);
     let chunk = [];
     for (let r = 0; r < t.n; r++) {
-      let line = m ? esc(cols[0][r]) : '';
-      for (let c = 1; c < m; c++) line += delim + esc(cols[c][r]);
+      let line = m ? esc(cols[0][r], types[0]) : '';
+      for (let c = 1; c < m; c++) line += delim + esc(cols[c][r], types[c]);
       chunk.push(line);
       if (chunk.length === 50000) { parts.push(chunk.join('\r\n')); chunk = []; }
     }

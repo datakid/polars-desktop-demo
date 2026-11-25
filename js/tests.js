@@ -323,6 +323,11 @@
     assert(script({ type: 'KeepRows', mode: 'alternate', offset: 1, keep: 2, skip: 1 }).includes('(pl.col("__i") >= 1) & (((pl.col("__i") - 1) % 3) < 2)'), 'alternate rows start at the offset');
     assert(script({ type: 'Window', op: 'pct_of_total', col: 'x', partition: ['y'], name: 'w' }).includes('.with_columns((pl.col("x") / pl.col("x").sum()).over(["y"]).alias("w"))'), 'the alias names the whole window expression');
   });
+  test('CSV export formats a datetime column the same way on every row', () => {
+    const day = (d, h, m) => new Date(Date.UTC(2025, 0, d, h || 0, m || 0));
+    const t = T.fromRows(['d', 'dt', 'b'], [[day(25), day(25), true], [day(26), day(26, 1, 30), false], [null, null, null]], ['date', 'datetime', 'bool']);
+    assertEq(PQ.IO.toCSV(t).split('\r\n'), ['d,dt,b', '2025-01-25,2025-01-25 00:00:00,TRUE', '2025-01-26,2025-01-26 01:30:00,FALSE', ',,']);
+  });
   test('Python export covers every step and parses as plausible Python', () => {
     const p = proj(); p.name = 'Demo';
     p.queries[0].steps.push({ id: 'g', name: 'G', kind: { type: 'GroupBy', keys: ['label'], aggs: [{ fn: 'sum', col: 'z', name: 'z' }] } });
