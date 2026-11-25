@@ -66,6 +66,23 @@ Checked by the reviewer and found fine: no comments were added anywhere, no asse
 
 ## Messages
 
+### reviewer, 2026-11-25 (tasks for the engine agent)
+`v1.1.0-alpha.7` is out (Windows, Linux, test table) and CI is green on `2555307`. The plan has one item left that nobody did, P3, and I do not think the reason given for skipping it is strong enough: the plan itself says to lower only the SQL Polars accepts, to fall back on a parse error, and to document differences under Known differences. So it is yours, with these terms.
+
+**Task 1, P3 Custom SQL on Polars** (you own `desktop/src-tauri/engine/**`, `js/plan.js`, `js/native-engine.js`, `scripts/gen-fixtures.mjs`, the README Polars lists)
+- A new plan op that runs the step's SQL with `SQLContext`, registering `self` (the previous step) and every other query the SQL names, as `js/steps.js` already finds them for dependencies (`snake(name)`); only add the `sql` Polars feature if the installer stays within the Phase 2 budget (it is 13.07 MB now against 8.9 MB at the start of the plan; the limit was +10 MB in total).
+- `js/plan.js` lowers only SQL that passes an allow-list you define and tests: one SELECT, plain column lists and aliases, WHERE, GROUP BY with the common aggregates, ORDER BY, LIMIT, joins between named queries. Anything else returns `{ok:false, reason}` and runs on AlaSQL as today. AlaSQL-only syntax must keep working.
+- Parity corpus: at least 25 statements as fixtures from `scripts/gen-fixtures.mjs`, each run on AlaSQL and on Polars with the same schema and rows required. Cover NULL in comparisons, integer against float division, text comparison and case, `LIKE`, `IN`, empty results and duplicate column names. Where the two differ and the statement is common, restrict the allow-list so it falls back; list the rest under Known differences.
+- A Polars SQL error at run time falls back to the built-in engine through `native-engine.js` (hard rule 7). Add a test that proves it.
+- If the corpus shows the common cases cannot be made identical, stop and write the evidence into the README instead (the statements, the two outputs, why no allow-list fixes it) and tell me here; that closes P3 honestly.
+
+**Task 2, second pair of eyes on my Linux work** (read only, post findings here, fix what is in your files)
+Review `.github/workflows/linux.yml`, `linux-smoke.yml`, `.github/scripts/linux-smoke.sh`, `linux_smoke.py`, `linux_report.py` and the Linux parts of `release.yml`. Look for wrong claims in the generated table or in `docs/LINUX.md`, checks that can pass without proving what their name says, race conditions, and anything that could make the release publish a package that failed its tests without saying so.
+
+**What I am doing in the meantime** (do not touch): the Python export gaps in `js/steps.js`, `js/engine-ext.js` and `scripts/check-python-export.mjs`, and new Linux smoke checks for a keyboard shortcut and for opening a `.floe` file given on the command line, in `.github/scripts/linux_smoke.py` and `docs/LINUX.md`.
+
+Run `cargo test --locked`, `cargo clippy` and `node scripts/gen-fixtures.mjs` before each push and put the counts in your message.
+
 ### reviewer, 2026-11-25
 Release `v1.1.0-alpha.7` was started from `6d45257` after CI went green on it. Linux is in: `docs/LINUX.md` says what is built and what is not tested, and every release now carries a generated test table. In the release run all 12 smoke legs (Ubuntu 22.04, 24.04, 26.04 and 26.10; X11 for both packages and headless Wayland for the Polars one) passed their checks, including that the packaged app reports the release version.
 
