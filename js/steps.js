@@ -173,12 +173,16 @@
         return d === 0 ? `.with_columns((${base} + 0.5).floor().cast(pl.Int64))` : `.with_columns((${base} * ${f} + 0.5).floor() / ${f})`;
       }
       case 'SplitColumn': {
-        if (k.mode === 'rows') return `.with_columns(pl.col(${py(k.col)}).str.split(${py(k.delimiter || ',')})).explode(${py(k.col)})${k.trim !== false ? `.with_columns(pl.col(${py(k.col)}).str.strip_chars())` : ''}`;
-        if (!k.mode || k.mode === 'each') { helpers.add('def floe_split_each'); return `.pipe(floe_split_each, ${py(k.col)}, ${py(k.delimiter === undefined || k.delimiter === '' ? ',' : k.delimiter)}, ${Math.ceil(Math.max(0, +k.count || 0))}, ${k.trim !== false ? 'True' : 'False'})`; }
-        const n = +k.count || 2;
-        return `.with_columns(pl.col(${py(k.col)}).str.splitn(${py(k.delimiter || ',')}, ${n}).struct.rename_fields([${Array.from({ length: n }, (_, i) => py(k.col + '.' + (i + 1))).join(', ')}])).unnest(${py(k.col)})`;
+        const delimiter = py(k.delimiter === undefined || k.delimiter === '' ? ',' : k.delimiter);
+        const trim = k.trim !== false ? 'True' : 'False';
+        helpers.add('def floe_as_text');
+        if (k.mode === 'rows') { helpers.add('def floe_split_rows'); return `.pipe(floe_split_rows, ${py(k.col)}, ${delimiter}, ${trim})`; }
+        helpers.add('def floe_split_columns');
+        const mode = k.mode === 'first' || k.mode === 'last' || k.mode === 'positions' ? k.mode : 'each';
+        const positions = String(k.positions || '').split(',').map((x) => parseInt(x.trim(), 10)).filter((x) => !isNaN(x));
+        return `.pipe(floe_split_columns, ${py(k.col)}, ${py(mode)}, ${delimiter}, ${Math.ceil(Math.max(0, +k.count || 0))}, ${trim}, [${positions.join(', ')}])`;
       }
-      case 'MergeColumns': helpers.add('def floe_merge_columns'); return `.pipe(floe_merge_columns, ${pyList(k.cols)}, ${py(k.sep === undefined ? ' ' : k.sep)}, ${py(k.name || 'Merged')})`;
+      case 'MergeColumns': helpers.add('def floe_as_text'); helpers.add('def floe_merge_columns'); return `.pipe(floe_merge_columns, ${pyList(k.cols)}, ${py(k.sep === undefined ? ' ' : k.sep)}, ${py(k.name || 'Merged')})`;
       case 'AddColumn': return `.with_columns((${formula(k.formula)}).alias(${py(k.name)}))`;
       case 'ConditionalColumn': return `.with_columns((${formula(PQ.Engine ? PQ.Engine.conditionalToFormula(k) : 'null')}).alias(${py(k.name)}))`;
       case 'IndexColumn': return (+k.step || 1) === 1 ? `.with_row_index(${py(k.name || 'Index')}, offset=${k.start || 0})` : `.with_columns((pl.int_range(pl.len()) * ${k.step} + ${k.start || 0}).alias(${py(k.name || 'Index')}))`;
@@ -189,7 +193,7 @@
         if (!k.keys || !k.keys.length) return `.select(${aggs.join(', ')})`;
         return `.group_by(${pyList(k.keys)}, maintain_order=True).agg(\n        ${aggs.join(',\n        ')},\n    )`;
       }
-      case 'Unpivot': helpers.add('def floe_unpivot'); return `.pipe(floe_unpivot, ${k.ids ? pyList(k.ids) : 'None'}, ${k.values && k.values.length ? pyList(k.values) : 'None'}, ${py(k.var || 'Attribute')}, ${py(k.val || 'Value')}, ${k.dropNulls !== false ? 'True' : 'False'})`;
+      case 'Unpivot': helpers.add('def floe_as_text'); helpers.add('def floe_unpivot'); return `.pipe(floe_unpivot, ${k.ids ? pyList(k.ids) : 'None'}, ${k.values && k.values.length ? pyList(k.values) : 'None'}, ${py(k.var || 'Attribute')}, ${py(k.val || 'Value')}, ${k.dropNulls !== false ? 'True' : 'False'})`;
       case 'Pivot': return `\n    # Pivot needs all data to know its output columns → materialize, then continue lazily\n    .collect().pivot(on=${py(k.on)}, index=${pyList(k.index)}, values=${k.values ? py(k.values) : 'None'}, aggregate_function=${py({ sum: 'sum', mean: 'mean', count_rows: 'len', min: 'min', max: 'max', first: 'first', last: 'last', median: 'median' }[k.agg || 'sum'] || 'first')}).lazy()`;
       case 'Transpose': return `\n    # Transpose forces materialization\n    .collect().transpose(include_header=True${k.headerCol ? ', column_names=' + py(k.headerCol) : ''}).lazy()`;
       case 'Merge': {
@@ -289,7 +293,8 @@
       if (q.load.target === 'xlsx') return `    ${v}.collect().write_excel(OUT_DIR / "${f}.xlsx", worksheet=${py(q.name.slice(0, 31))}, table_style="Table Style Medium 2", autofit=True, freeze_panes=(1, 0))`;
       if (q.load.target === 'parquet') return `    ${v}.sink_parquet(OUT_DIR / "${f}.parquet")`;
       if (q.load.target === 'arrow') return `    ${v}.sink_ipc(OUT_DIR / "${f}.arrow")`;
-      return `    ${v}.sink_csv(OUT_DIR / "${f}.csv")`;
+      helpers.add('def floe_csv_ready');
+      return `    ${v}.pipe(floe_csv_ready).sink_csv(OUT_DIR / "${f}.csv", date_format="%Y-%m-%d", datetime_format="%Y-%m-%d %H:%M:%S")`;
     });
     const imports = ['import polars as pl', 'from pathlib import Path'];
     if (helpers.has('import fastexcel')) imports.push('import fnmatch', 'import fastexcel');

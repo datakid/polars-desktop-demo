@@ -319,7 +319,9 @@
     assert(script({ type: 'DuplicateColumn', col: 'x' }).includes('.pipe(floe_duplicate_column, "x", "x - Copy")'), 'duplicate column');
     assert(script({ type: 'Unpivot', ids: ['y'] }).includes('.pipe(floe_unpivot, ["y"], None, "Attribute", "Value", True)'), 'unpivot drops nulls by default');
     assert(script({ type: 'Unpivot', values: ['x'], dropNulls: false }).includes('.pipe(floe_unpivot, None, ["x"], "Attribute", "Value", False)'), 'unpivot values only, nulls kept');
-    assert(script({ type: 'SplitColumn', col: 'x', mode: 'each', delimiter: ' ' }).includes('.pipe(floe_split_each, "x", " ", 0, True)'), 'split into as many columns as needed, trimmed');
+    assert(script({ type: 'SplitColumn', col: 'x', mode: 'each', delimiter: ' ' }).includes('.pipe(floe_split_columns, "x", "each", " ", 0, True, [])'), 'split into as many columns as needed, trimmed');
+    assert(script({ type: 'SplitColumn', col: 'x', mode: 'positions', positions: '5, x, -2, 0', count: 2, trim: false }).includes('.pipe(floe_split_columns, "x", "positions", ",", 2, False, [5, -2, 0])'), 'positions keep the numbers the app keeps');
+    assert(script({ type: 'SplitColumn', col: 'x', mode: 'last', delimiter: '::' }).includes('.pipe(floe_split_columns, "x", "last", "::", 0, True, [])'), 'split at the last delimiter');
     assert(script({ type: 'KeepRows', mode: 'alternate', offset: 1, keep: 2, skip: 1 }).includes('(pl.col("__i") >= 1) & (((pl.col("__i") - 1) % 3) < 2)'), 'alternate rows start at the offset');
     assert(script({ type: 'Window', op: 'pct_of_total', col: 'x', partition: ['y'], name: 'w' }).includes('.with_columns((pl.col("x") / pl.col("x").sum()).over(["y"]).alias("w"))'), 'the alias names the whole window expression');
   });
@@ -327,6 +329,14 @@
     const day = (d, h, m) => new Date(Date.UTC(2025, 0, d, h || 0, m || 0));
     const t = T.fromRows(['d', 'dt', 'b'], [[day(25), day(25), true], [day(26), day(26, 1, 30), false], [null, null, null]], ['date', 'datetime', 'bool']);
     assertEq(PQ.IO.toCSV(t).split('\r\n'), ['d,dt,b', '2025-01-25,2025-01-25 00:00:00,TRUE', '2025-01-26,2025-01-26 01:30:00,FALSE', ',,']);
+  });
+  test('Python export: the CSV sink writes booleans and dates the way the app does, and text conversion matches the app', () => {
+    const p = proj(); p.name = 'Demo'; p.queries[0].load = { target: 'csv' };
+    const csv = PQ.Steps.toPython(p);
+    assert(csv.includes('def floe_csv_ready(') && csv.includes('.pipe(floe_csv_ready).sink_csv(') && csv.includes('datetime_format="%Y-%m-%d %H:%M:%S"'), 'csv sink');
+    p.queries[0].steps.push({ id: 'mg', name: 'M', kind: { type: 'MergeColumns', cols: ['x', 'y'], sep: '-', name: 'm' } });
+    const merged = PQ.Steps.toPython(p);
+    assert(merged.includes('def floe_as_text(') && merged.includes('"TRUE"') && merged.includes('round(10)'), 'numbers, booleans and dates become text the way the app writes them');
   });
   test('Python export covers every step and parses as plausible Python', () => {
     const p = proj(); p.name = 'Demo';

@@ -27,7 +27,7 @@
   node scripts/floe.mjs plan project.floe --query <name>
   ```
   Exit codes: 0 ok · 1 query failed · 2 usage · 3 input missing. `npm link` installs it as `floe`.
-- Tests: 124 golden tests in `tests.html`, the UI end-to-end test in `tests-ui.html`, and the Rust tests in `engine/tests` (`plan.rs`, `ops.rs`, `cancel.rs` and `parity.rs`, which runs the 72 fixtures from `scripts/gen-fixtures.mjs` against the built-in engine and compares every column's profile and distinct values). `npm run test:engine` in `desktop` runs the Rust tests and prints their count.
+- Tests: 126 golden tests in `tests.html`, the UI end-to-end test in `tests-ui.html`, and the Rust tests in `engine/tests` (`plan.rs`, `ops.rs`, `cancel.rs` and `parity.rs`, which runs the 72 fixtures from `scripts/gen-fixtures.mjs` against the built-in engine and compares every column's profile and distinct values). `npm run test:engine` in `desktop` runs the Rust tests and prints their count.
 
 ## What's new in 1.1
 - **Engine indicator** in the status bar: `● Built-in · 42 ms · Sample 1,000`. Click it (or press Enter on it) for engine, location, last run, data scope and, on desktop, why that engine ran. The dot shows idle, busy, starting or error. On phones it shrinks to the dot and engine name.
@@ -64,7 +64,7 @@ One codebase ships two ways:
 ## Repository layout
 ```
 index.html, demo.html, 404.html     app pages
-tests.html, tests-ui.html           engine golden tests (124) · UI end-to-end smoke test (web build only)
+tests.html, tests-ui.html           engine golden tests (126) · UI end-to-end smoke test (web build only)
 css/app.css                         "Clay" design system
 js/                                 engine (worker), platform layer, UI
 js/native-engine.js                 optional Polars adapter; idle unless a desktop engine reports itself available
@@ -116,7 +116,7 @@ Icons are generated from `images/floe-icon.svg` into `desktop/src-tauri/icons/` 
 
 ### CI and pre-alpha releases
 `.github/workflows/ci.yml` runs on every push to `main`, every pull request, and on demand:
-- **Web build and tests:** builds the web and desktop frontends, runs `scripts/check-python-export.mjs` (the exported Python script against the app's engine on 63 step cases, needs `pip install polars`), then `tests.html` (unit) and `tests-ui.html` (end-to-end) in headless Chromium.
+- **Web build and tests:** builds the web and desktop frontends, runs `scripts/check-python-export.mjs` (the exported Python script against the app's engine on 80 step cases, needs `pip install polars`), then `tests.html` (unit) and `tests-ui.html` (end-to-end) in headless Chromium.
 - **Polars engine tests:** `cargo test` on `floe-engine`, including the parity suite.
 - **Windows installers:** builds the NSIS installer for both variants (built-in engine and Polars) and uploads them as artifacts (kept 14 days).
 
@@ -208,7 +208,7 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 - The Rust code (`floe-engine` and the Tauri shell) compiles and the engine tests run in CI, but the installers have not been tested by hand on a Windows PC yet.
 - Builds are unsigned; macOS Gatekeeper and Windows SmartScreen will warn until signing is configured.
 - Linux has `.deb` packages only, built on Ubuntu 22.04 and tested in containers on Ubuntu 22.04, 24.04, 26.04 and 26.10 under Xvfb and a headless Wayland compositor, without a GPU and with the WebKit sandbox off. No real desktop session, file chooser, drag and drop or file association was tested. See `docs/LINUX.md`.
-- The exported Python script matches the app on the 63 step cases in `scripts/check-python-export.mjs`. Split into columns by first or last delimiter or by positions, and merged float columns, are not covered and can differ.
+- The exported Python script matches the app on the 80 step cases in `scripts/check-python-export.mjs` (Sample, split in every mode, merge and duplicate columns, unpivot, window columns, row and text steps, and CSV output for booleans and date-times). It is not checked for Custom SQL, for steps that have no Polars equivalent (cluster, validate, similarity), for characters outside the Basic Multilingual Plane (the app counts UTF-16 units, Polars counts characters in split by positions), or for the app's per-cell error markers.
 - No auto-updater yet.
 - Parquet filter pushdown uses row-group min/max statistics only. It doesn't use page indexes or bloom filters, and it is off when a timestamp or nested column is read, because those types are inferred from the values. Previews don't prune either. They already stop after the first row groups.
 - On desktop, Parquet files that fall back to the built-in engine are still read whole by the shell.

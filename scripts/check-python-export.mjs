@@ -11,12 +11,16 @@ const data = join(dir, 'data');
 mkdirSync(data);
 
 const names = [' alice smith', 'BOB jones ', 'Carol  white', ''];
-const rows = ['id,grp,val,price,name,day'];
-for (let i = 1; i <= 120; i++) rows.push([i, 'abc'[i % 3], (i * 37) % 101, i % 11 === 0 ? '' : ((i * 13 % 1000) / 10).toFixed(1), names[i % 4], '2025-01-' + String((i % 28) + 1).padStart(2, '0')].join(','));
+const rows = ['id,grp,val,price,name,day,ok,ts,code'];
+for (let i = 1; i <= 120; i++) {
+  const hour = String(i % 24).padStart(2, '0'), minute = i % 2 ? '30' : '00';
+  const code = i % 13 === 0 ? '' : i % 7 === 0 ? 'Z' : String.fromCharCode(65 + (i % 26)) + String.fromCharCode(66 + (i % 25)) + '-' + String(i).padStart(4, '0');
+  rows.push([i, 'abc'[i % 3], (i * 37) % 101, i % 11 === 0 ? '' : ((i * 13 % 1000) / 10).toFixed(1), names[i % 4], '2025-01-' + String((i % 28) + 1).padStart(2, '0'), i % 17 === 0 ? '' : i % 3 === 0 ? 'true' : 'false', i % 19 === 0 ? '' : '2025-01-' + String((i % 28) + 1).padStart(2, '0') + ' ' + hour + ':' + minute + ':00', code].join(','));
+}
 writeFileSync(join(data, 'orders.csv'), rows.join('\n') + '\n');
 
 const src = { type: 'Source', source: { kind: 'file', fileId: 'orders.csv', fileName: 'orders.csv', csv: { delimiter: ',', header: true } } };
-const ct = { type: 'ChangeType', changes: [{ col: 'id', type: 'int' }, { col: 'val', type: 'int' }, { col: 'price', type: 'number' }, { col: 'day', type: 'date' }] };
+const ct = { type: 'ChangeType', changes: [{ col: 'id', type: 'int' }, { col: 'val', type: 'int' }, { col: 'price', type: 'number' }, { col: 'day', type: 'date' }, { col: 'ok', type: 'bool' }, { col: 'ts', type: 'datetime' }] };
 const C = [
   ['filter_num', { type: 'Filter', mode: 'advanced', formula: '[val] > 50' }],
   ['filter_or', { type: 'Filter', mode: 'advanced', formula: '[grp] = "a" or [val] < 10' }],
@@ -68,6 +72,23 @@ const C = [
   ['mergecols_clash', { type: 'MergeColumns', cols: ['grp', 'val'], sep: '/', name: 'name' }],
   ['unpivot_keep_nulls', { type: 'Unpivot', ids: ['id'], values: ['price', 'name'], dropNulls: false }],
   ['unpivot_values_only', { type: 'Unpivot', values: ['val', 'price'] }],
+  ['split_first', { type: 'SplitColumn', col: 'name', mode: 'first', delimiter: ' ' }],
+  ['split_last', { type: 'SplitColumn', col: 'name', mode: 'last', delimiter: ' ' }],
+  ['split_first_multichar', { type: 'SplitColumn', col: 'name', mode: 'first', delimiter: '  ' }],
+  ['split_last_multichar', { type: 'SplitColumn', col: 'name', mode: 'last', delimiter: '  ' }],
+  ['split_first_count1', { type: 'SplitColumn', col: 'name', mode: 'first', delimiter: ' ', count: 1 }],
+  ['split_last_untrimmed', { type: 'SplitColumn', col: 'name', mode: 'last', delimiter: ' ', count: 3, trim: false }],
+  ['split_positions', { type: 'SplitColumn', col: 'code', mode: 'positions', positions: '0, 2, 3' }],
+  ['split_positions_unsorted', { type: 'SplitColumn', col: 'code', mode: 'positions', positions: '5, 1, 3' }],
+  ['split_positions_negative', { type: 'SplitColumn', col: 'code', mode: 'positions', positions: '-3' }],
+  ['split_positions_mixed', { type: 'SplitColumn', col: 'code', mode: 'positions', positions: '-3, 0' }],
+  ['split_positions_count', { type: 'SplitColumn', col: 'code', mode: 'positions', positions: '0, 2', count: 1 }],
+  ['split_number_text', { type: 'SplitColumn', col: 'price', mode: 'first', delimiter: '.' }],
+  ['split_rows_number', { type: 'SplitColumn', col: 'val', mode: 'rows', delimiter: '5' }],
+  ['split_date_text', { type: 'SplitColumn', col: 'day', mode: 'each', delimiter: '-' }],
+  ['split_bool_text', { type: 'SplitColumn', col: 'ok', mode: 'positions', positions: '0, 2' }],
+  ['mergecols_float_date', { type: 'MergeColumns', cols: ['price', 'day'], sep: '|', name: 'm' }],
+  ['mergecols_bool_datetime', { type: 'MergeColumns', cols: ['ok', 'ts', 'val'], sep: ' / ', name: 'm' }],
   ['keeprows_alternate_wide', { type: 'KeepRows', mode: 'alternate', offset: 0, keep: 3, skip: 2 }],
 ];
 const project = {

@@ -430,8 +430,17 @@
         j = i + int(state / 4294967296 * (n - i))
         order[i], order[j] = order[j], order[i]
     return df[sorted(order[:k])].lazy()`;
+  S.HELPERS['def floe_as_text'] = `def floe_as_text(column: pl.Expr, dtype: pl.DataType) -> pl.Expr:
+    if dtype.is_float():
+        return column.round(10).cast(pl.String).str.replace(r"\\.0$", "")
+    if dtype == pl.Boolean:
+        return pl.when(column.is_null()).then(None).when(column).then(pl.lit("TRUE")).otherwise(pl.lit("FALSE"))
+    if dtype == pl.Datetime:
+        return pl.when(column.dt.truncate("1d") == column).then(column.dt.strftime("%Y-%m-%d")).otherwise(column.dt.strftime("%Y-%m-%d %H:%M:%S"))
+    return column.cast(pl.String)`;
   S.HELPERS['def floe_merge_columns'] = `def floe_merge_columns(lf: pl.LazyFrame, cols: list[str], separator: str, name: str) -> pl.LazyFrame:
-    names = lf.collect_schema().names()
+    schema = lf.collect_schema()
+    names = schema.names()
     keep = [n for n in names if n not in cols]
     out = name
     i = 1
@@ -439,7 +448,7 @@
         out = f"{name}_{i}"
         i += 1
     position = min(min(names.index(c) for c in cols), len(keep))
-    merged = pl.concat_str([pl.col(c).cast(pl.String).fill_null("") for c in cols], separator=separator).alias(out)
+    merged = pl.concat_str([floe_as_text(pl.col(c), schema[c]).fill_null("") for c in cols], separator=separator).alias(out)
     return lf.with_columns(merged).select(keep[:position] + [out] + keep[position:])`;
   S.HELPERS['def floe_duplicate_column'] = `def floe_duplicate_column(lf: pl.LazyFrame, col: str, name: str) -> pl.LazyFrame:
     names = lf.collect_schema().names()
@@ -456,20 +465,64 @@
     on = list(values) if values else [n for n in names if n not in (ids or [])]
     index = list(ids) if ids is not None else [n for n in names if n not in on]
     if len({schema[c] for c in on}) > 1:
-        lf = lf.with_columns([pl.col(c).cast(pl.String) for c in on])
+        lf = lf.with_columns([floe_as_text(pl.col(c), schema[c]).alias(c) for c in on])
     out = lf.with_row_index("__i").unpivot(on=on, index=["__i"] + index, variable_name=variable_name, value_name=value_name)
     if drop_nulls:
         out = out.filter(pl.col(value_name).is_not_null())
     return out.sort("__i", maintain_order=True).drop("__i")`;
-  S.HELPERS['def floe_split_each'] = `def floe_split_each(lf: pl.LazyFrame, col: str, delimiter: str, count: int, trim: bool) -> pl.LazyFrame:
-    parts = pl.col(col).cast(pl.String).str.split(delimiter)
-    width = count or int(lf.select(parts.list.len().max()).collect().item() or 1)
-    width = max(1, min(width, 200))
+  S.HELPERS['def floe_split_rows'] = `def floe_split_rows(lf: pl.LazyFrame, col: str, delimiter: str, trim: bool) -> pl.LazyFrame:
+    text = floe_as_text(pl.col(col), lf.collect_schema()[col])
+    out = lf.with_columns(text.str.split(delimiter).alias(col)).explode(col)
+    return out.with_columns(pl.col(col).str.strip_chars()) if trim else out`;
+  S.HELPERS['def floe_split_columns'] = `def floe_split_columns(lf: pl.LazyFrame, col: str, mode: str, delimiter: str, count: int, trim: bool, positions: list[int]) -> pl.LazyFrame:
+    schema = lf.collect_schema()
+    text = floe_as_text(pl.col(col), schema[col])
+    if mode == "positions":
+        if not positions:
+            raise ValueError("Enter one or more character positions, e.g. 0, 3, 7")
+        cuts = sorted(positions)
+        size = text.str.len_chars()
+        def edge(i):
+            return (size + i).clip(lower_bound=0) if i < 0 else pl.min_horizontal(pl.lit(i), size)
+        def pick(i):
+            if i >= len(cuts):
+                return pl.lit(None, dtype=pl.String)
+            end = edge(cuts[i + 1]) if i + 1 < len(cuts) else size
+            return text.str.slice(edge(cuts[i]), (end - edge(cuts[i])).clip(lower_bound=0))
+        natural = len(cuts)
+    elif mode == "first" or mode == "last":
+        found = text.str.contains(delimiter, literal=True)
+        if mode == "first":
+            pair = text.str.splitn(delimiter, 2)
+            head, tail = pair.struct.field("field_0"), pair.struct.field("field_1")
+        else:
+            pattern = "(?s)^(.*)" + pl.escape_regex(delimiter) + "(.*)$"
+            head = pl.when(found).then(text.str.extract(pattern, 1)).otherwise(text)
+            tail = pl.when(found).then(text.str.extract(pattern, 2))
+        def pick(i):
+            return head if i == 0 else tail if i == 1 else pl.lit(None, dtype=pl.String)
+        natural = 2 if lf.select(found.any()).collect().item() else 1
+    else:
+        parts = text.str.split(delimiter)
+        def pick(i):
+            return parts.list.get(i, null_on_oob=True)
+        natural = int(lf.select(parts.list.len().max()).collect().item() or 1)
+    width = max(1, min(count or natural, 200))
+    existing = set(schema.names()) - {col}
     pieces = []
     for i in range(width):
-        piece = parts.list.get(i, null_on_oob=True)
-        pieces.append((piece.str.strip_chars() if trim else piece).alias(f"{col}.{i + 1}"))
+        name = f"{col}.{i + 1}"
+        base, n = name, 1
+        while name in existing:
+            name = f"{base}_{n}"
+            n += 1
+        existing.add(name)
+        piece = pick(i)
+        pieces.append((piece.str.strip_chars() if trim else piece).alias(name))
     return lf.with_columns(pl.struct(pieces).alias(col)).unnest(col)`;
+  S.HELPERS['def floe_csv_ready'] = `def floe_csv_ready(lf: pl.LazyFrame) -> pl.LazyFrame:
+    flags = [pl.when(pl.col(name).is_null()).then(None).when(pl.col(name)).then(pl.lit("TRUE")).otherwise(pl.lit("FALSE")).alias(name) for name, dtype in lf.collect_schema().items() if dtype == pl.Boolean]
+    return lf.with_columns(flags) if flags else lf`;
   S.EXT_CODE = {
     Sample: (k, ctx) => {
       ctx.helpers.add('def floe_sample');
