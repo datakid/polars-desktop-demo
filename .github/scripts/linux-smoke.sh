@@ -46,12 +46,15 @@ XDG="/run/user/$UID_T"
 mkdir -p "$XDG" && chown tester "$XDG" && chmod 700 "$XDG"
 chmod 777 "$OUT"
 printf 'id,name,qty,price\n1,alpha,2,"1,234.50"\n2,beta,5,10\n3,gamma,7,7.25\n4,delta,3,0.5\n' > /home/tester/sample.csv
-chown tester /home/tester/sample.csv
+cat > /home/tester/smoke.floe <<'JSON'
+{"name":"Smoke project","settings":{"previewRows":1000,"locale":"en-US"},"params":[],"queries":[{"id":"q1","name":"Smoke query","load":{"target":"none"},"steps":[{"id":"s0","name":"Source","kind":{"type":"Source","source":{"kind":"file","fileId":"sample.csv","fileName":"sample.csv","csv":{"delimiter":",","header":true}}}}]}]}
+JSON
+chown tester /home/tester/sample.csv /home/tester/smoke.floe
 cp /work/driver/tauri-driver /usr/local/bin/tauri-driver
 chmod +x /usr/local/bin/tauri-driver
 
 ENVV=(HOME=/home/tester XDG_RUNTIME_DIR="$XDG" WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 NO_AT_BRIDGE=1 EXPECTED_VERSION="${EXPECTED_VERSION:-}")
-TEST=(python3 /work/.github/scripts/linux_smoke.py "$APP" /home/tester/sample.csv "$VARIANT" "$KIND" "$OUT")
+TEST=(python3 /work/.github/scripts/linux_smoke.py "$APP" /home/tester/sample.csv "$VARIANT" "$KIND" "$OUT" /home/tester/smoke.floe)
 
 if [ "$KIND" = wayland ]; then
   for backend in headless headless-backend.so; do

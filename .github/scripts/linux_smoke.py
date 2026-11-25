@@ -8,7 +8,7 @@ import time
 import urllib.error
 import urllib.request
 
-APP, CSV, VARIANT, DISPLAY, OUT = sys.argv[1:6]
+APP, CSV, VARIANT, DISPLAY, OUT, PROJECT = sys.argv[1:7]
 EXPECTED_VERSION = os.environ.get("EXPECTED_VERSION", "")
 BASE = "http://127.0.0.1:4444"
 
@@ -88,6 +88,14 @@ POLARS_JS = ASYNC_PRELUDE + """
   done(JSON.stringify({n: r.n, schema: r.schema, bytes: bytes}));
 })()""" + ASYNC_TAIL
 
+PROJECT_JS = "return JSON.stringify({name: PQ.UI.Store.project.name, queries: PQ.UI.Store.project.queries.map(function (q) { return q.name; }), files: (PQ.UI.App.files || []).map(function (f) { return f.name || f.fileName || f.id; })});"
+
+SETTINGS_JS = "const m = document.querySelector('.modal'); return JSON.stringify({open: !!m, title: m ? (((m.querySelector('.modal-h') || m).textContent) || '').trim().slice(0, 80) : ''});"
+
+FOCUS_JS = "window.focus(); return document.hasFocus();"
+
+CONTROL = "\ue009"
+
 DEMO_JS = "location.replace('demo.html'); return true;"
 
 DEMO_PROBE = "return JSON.stringify({ready: !!(window.PQ && PQ.UI && PQ.UI.App && PQ.UI.App.result && PQ.UI.App.result.fp), queries: (window.PQ && PQ.UI && PQ.UI.Store && PQ.UI.Store.project) ? PQ.UI.Store.project.queries.length : 0});"
@@ -108,7 +116,7 @@ def main():
     if not started:
         return
 
-    capabilities = {"capabilities": {"alwaysMatch": {"browserName": "wry", "tauri:options": {"application": APP, "args": [CSV]}}}}
+    capabilities = {"capabilities": {"alwaysMatch": {"browserName": "wry", "tauri:options": {"application": APP, "args": [CSV, PROJECT]}}}}
     value = {}
     for attempt in range(1, 4):
         reply = call("POST", "/session", capabilities, 240)
@@ -129,6 +137,37 @@ def main():
     if not booted:
         return
     record("it runs inside the Tauri shell with the native bridge", state.get("tauri") and state.get("native"), "tauri=%s native=%s" % (state.get("tauri"), state.get("native")))
+
+    opened = None
+    deadline = time.time() + 45
+    while time.time() < deadline:
+        try:
+            opened = json.loads(run_script(PROJECT_JS, timeout=30))
+            if opened.get("name") == "Smoke project" and any("sample.csv" in str(f) for f in opened.get("files", [])):
+                break
+        except (RuntimeError, ValueError):
+            pass
+        time.sleep(1.5)
+    record("a .floe file given on the command line opens as a project", bool(opened) and opened.get("name") == "Smoke project" and "Smoke query" in opened.get("queries", []), json.dumps(opened))
+    record("a data file given on the command line is added to the project", bool(opened) and any("sample.csv" in str(f) for f in opened.get("files", [])), json.dumps(opened))
+
+    try:
+        run_script(FOCUS_JS)
+        keys = [{"type": "keyDown", "value": CONTROL}, {"type": "keyDown", "value": ","}, {"type": "keyUp", "value": ","}, {"type": "keyUp", "value": CONTROL}]
+        call("POST", "/session/%s/actions" % session["id"], {"actions": [{"type": "key", "id": "keyboard", "actions": keys}]}, 30)
+    except RuntimeError as error:
+        print("key press failed: %s" % error, flush=True)
+    dialog = {}
+    for _ in range(12):
+        time.sleep(1)
+        try:
+            dialog = json.loads(run_script(SETTINGS_JS, timeout=30))
+            if dialog.get("open"):
+                break
+        except (RuntimeError, ValueError):
+            continue
+    record("Ctrl+, opens the settings dialog", bool(dialog.get("open")) and "settings" in dialog.get("title", "").lower(), json.dumps(dialog))
+    call("POST", "/session/%s/actions" % session["id"], {"actions": [{"type": "key", "id": "keyboard", "actions": [{"type": "keyDown", "value": "\ue00c"}, {"type": "keyUp", "value": "\ue00c"}]}]}, 30)
 
     info = {}
     attempts = 0
