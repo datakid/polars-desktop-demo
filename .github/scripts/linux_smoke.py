@@ -94,6 +94,8 @@ SETTINGS_JS = "const m = document.querySelector('.modal'); return JSON.stringify
 
 FOCUS_JS = "window.focus(); return document.hasFocus();"
 
+CLOSE_JS = "document.querySelectorAll('.modal .close').forEach(function (b) { b.click(); }); return !document.querySelector('.modal');"
+
 CONTROL = "\ue009"
 
 DEMO_JS = "location.replace('demo.html'); return true;"
@@ -151,6 +153,15 @@ def main():
     record("a .floe file given on the command line opens as a project", bool(opened) and opened.get("name") == "Smoke project" and "Smoke query" in opened.get("queries", []), json.dumps(opened))
     record("a data file given on the command line is added to the project", bool(opened) and any("sample.csv" in str(f) for f in opened.get("files", [])), json.dumps(opened))
 
+    cleared = False
+    for _ in range(10):
+        try:
+            if run_script(CLOSE_JS, timeout=30):
+                cleared = True
+                break
+        except RuntimeError:
+            pass
+        time.sleep(1)
     try:
         run_script(FOCUS_JS)
         keys = [{"type": "keyDown", "value": CONTROL}, {"type": "keyDown", "value": ","}, {"type": "keyUp", "value": ","}, {"type": "keyUp", "value": CONTROL}]
@@ -166,7 +177,7 @@ def main():
                 break
         except (RuntimeError, ValueError):
             continue
-    record("Ctrl+, opens the settings dialog", bool(dialog.get("open")) and "settings" in dialog.get("title", "").lower(), json.dumps(dialog))
+    record("Ctrl+, opens the settings dialog", cleared and bool(dialog.get("open")) and "settings" in dialog.get("title", "").lower(), json.dumps(dialog) + ("" if cleared else " (an earlier dialog could not be closed)"))
     call("POST", "/session/%s/actions" % session["id"], {"actions": [{"type": "key", "id": "keyboard", "actions": [{"type": "keyDown", "value": "\ue00c"}, {"type": "keyUp", "value": "\ue00c"}]}]}, 30)
 
     info = {}

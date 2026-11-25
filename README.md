@@ -116,7 +116,7 @@ Icons are generated from `images/floe-icon.svg` into `desktop/src-tauri/icons/` 
 
 ### CI and pre-alpha releases
 `.github/workflows/ci.yml` runs on every push to `main`, every pull request, and on demand:
-- **Web build and tests:** builds the web and desktop frontends, runs `scripts/check-python-export.mjs` (the exported Python script against the app's engine on 80 step cases, needs `pip install polars`), then `tests.html` (unit) and `tests-ui.html` (end-to-end) in headless Chromium.
+- **Web build and tests:** builds the web and desktop frontends, runs `scripts/check-python-export.mjs` (the exported Python script against the app's engine on 82 step cases, needs `pip install polars`), then `tests.html` (unit) and `tests-ui.html` (end-to-end) in headless Chromium.
 - **Polars engine tests:** `cargo test` on `floe-engine`, including the parity suite.
 - **Windows installers:** builds the NSIS installer for both variants (built-in engine and Polars) and uploads them as artifacts (kept 14 days).
 
@@ -208,7 +208,7 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 - The Rust code (`floe-engine` and the Tauri shell) compiles and the engine tests run in CI, but the installers have not been tested by hand on a Windows PC yet.
 - Builds are unsigned; macOS Gatekeeper and Windows SmartScreen will warn until signing is configured.
 - Linux has `.deb` packages only, built on Ubuntu 22.04 and tested in containers on Ubuntu 22.04, 24.04, 26.04 and 26.10 under Xvfb and a headless Wayland compositor, without a GPU and with the WebKit sandbox off. No real desktop session, file chooser, drag and drop or file association was tested. See `docs/LINUX.md`.
-- The exported Python script matches the app on the 80 step cases in `scripts/check-python-export.mjs` (Sample, split in every mode, merge and duplicate columns, unpivot, window columns, row and text steps, and CSV output for booleans and date-times). It is not checked for Custom SQL, for steps that have no Polars equivalent (cluster, validate, similarity), for characters outside the Basic Multilingual Plane (the app counts UTF-16 units, Polars counts characters in split by positions), or for the app's per-cell error markers.
+- The exported Python script matches the app on the 82 step cases in `scripts/check-python-export.mjs` (Sample, split in every mode, merge and duplicate columns, unpivot, window columns, row and text steps, and CSV output for booleans and date-times). It is not checked for Custom SQL, for steps that have no Polars equivalent (cluster, validate, similarity), for characters outside the Basic Multilingual Plane (the app counts UTF-16 units, Polars counts characters in split by positions), or for the app's per-cell error markers. Numbers are compared to nine digits: the app rounds computed floats to ten decimals when it writes a CSV and the script writes them at full precision, so a value such as `0.3` can appear as `0.30000000000000004` there.
 - No auto-updater yet.
 - Parquet filter pushdown uses row-group min/max statistics only. It doesn't use page indexes or bloom filters, and it is off when a timestamp or nested column is read, because those types are inferred from the values. Previews don't prune either. They already stop after the first row groups.
 - On desktop, Parquet files that fall back to the built-in engine are still read whole by the shell.

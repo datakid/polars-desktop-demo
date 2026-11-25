@@ -89,6 +89,8 @@ const C = [
   ['split_bool_text', { type: 'SplitColumn', col: 'ok', mode: 'positions', positions: '0, 2' }],
   ['mergecols_float_date', { type: 'MergeColumns', cols: ['price', 'day'], sep: '|', name: 'm' }],
   ['mergecols_bool_datetime', { type: 'MergeColumns', cols: ['ok', 'ts', 'val'], sep: ' / ', name: 'm' }],
+  ['add_float_product', { type: 'AddColumn', name: 'c', formula: '[price] * 1.1 + 0.1' }],
+  ['add_float_division', { type: 'AddColumn', name: 'c', formula: '[val] / 7' }],
   ['keeprows_alternate_wide', { type: 'KeepRows', mode: 'alternate', offset: 0, keep: 3, skip: 2 }],
 ];
 const project = {
