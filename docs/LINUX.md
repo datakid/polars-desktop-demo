@@ -32,6 +32,8 @@ Each leg checks that:
 - the app starts and the interface boots inside the Tauri shell,
 - `app_info` reports Linux and the version of the release, and the package contains the engine it says it contains,
 - the Polars package reads a CSV passed on the command line, casts three columns, filters it and returns the rows and an Arrow page through the real `engine_call` and `engine_page` commands,
+- the app, started with a CSV and a small `.floe` project on its command line (what a file manager does when a file is opened with it), opens the project and adds the data file,
+- a key press sent through WebDriver reaches the page: `Ctrl+,` opens the settings dialog, which only the desktop build binds,
 - the built-in engine runs the sample project inside a web worker,
 - a screenshot of the window is not blank.
 
@@ -39,7 +41,7 @@ Every release run produces the table above from what actually ran. A release who
 
 ## What is not tested
 
-- **Real desktops.** Wayland is a headless weston compositor, X11 is Xvfb. Nothing ran inside GNOME, KDE, Xfce or any other session, so the GTK file chooser and portals, drag and drop from a file manager, double-clicking a `.floe` file, input methods, themes, fractional scaling and printing are untested.
+- **Real desktops.** Wayland is a headless weston compositor, X11 is Xvfb. Nothing ran inside GNOME, KDE, Xfce or any other session, so the GTK file chooser and portals, drag and drop from a file manager, the registration of `.floe` with the desktop and double-clicking a file in a file manager, input methods, other keyboard layouts, the other shortcuts (F5, Ctrl+E), themes, fractional scaling and printing are untested.
 - **Graphics.** Containers have no GPU. WebKitGTK ran with software rendering and with its web process sandbox disabled (`WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1`), because containers do not allow the sandbox's namespaces. Hardware acceleration and proprietary NVIDIA drivers were not exercised. If a window opens blank on your machine, `WEBKIT_DISABLE_DMABUF_RENDERER=1` is the commonly reported remedy for WebKitGTK; it has not been verified here.
 - **Other systems.** Packages are built on Ubuntu 22.04 (glibc 2.35), so older releases are not covered. Debian, Linux Mint, Pop!_OS and others are expected to work where WebKitGTK 4.1 exists but are not tested. Fedora, Arch and openSUSE have no package.
 - **Depth.** The checks above prove the app starts and its native bridge and engines answer. They do not exercise the rest of the interface; that is covered on the web build by `tests.html` and `tests-ui.html`.
