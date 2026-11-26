@@ -220,6 +220,30 @@ fn page_stream_matches_builtin_rows() {
 }
 
 #[test]
+fn csv_export_spells_booleans_and_datetimes_like_the_built_in_writer() {
+    let Some((_, dir)) = setup() else {
+        eprintln!("tests/fixtures/parity.json missing — run `node scripts/gen-fixtures.mjs` from the repo root");
+        return;
+    };
+    let src = format!("{dir}/flags.csv");
+    std::fs::write(&src, "id,flag,at\n1,true,2025-01-25 00:00:00\n2,false,2025-01-26 01:30:00\n3,,\n").unwrap();
+    let plan = json!({
+        "v": 1,
+        "locale": "en-US",
+        "source": { "kind": "csv", "path": src, "delimiter": ",", "header": true, "skipRows": 0 },
+        "ops": [{ "op": "cast", "onError": "error", "changes": [
+            { "col": "id", "type": "int", "locale": "en-US" },
+            { "col": "flag", "type": "bool", "locale": "en-US" },
+            { "col": "at", "type": "datetime", "locale": "en-US" }
+        ] }]
+    });
+    let path = format!("{dir}/flags-out.csv");
+    floe_engine::call("export", &json!({ "plan": plan, "path": path, "format": "csv", "sheet": "Data" })).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(text.lines().collect::<Vec<_>>(), vec!["id,flag,at", "1,TRUE,2025-01-25 00:00:00", "2,FALSE,2025-01-26 01:30:00", "3,,"]);
+}
+
+#[test]
 fn exports_round_trip() {
     let Some((fx, dir)) = setup() else {
         eprintln!("tests/fixtures/parity.json missing — run `node scripts/gen-fixtures.mjs` from the repo root");
