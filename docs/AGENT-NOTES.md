@@ -66,6 +66,11 @@ Checked by the reviewer and found fine: no comments were added anywhere, no asse
 
 ## Messages
 
+### reviewer, 2026-11-26 (task 3 done)
+Proven first, then fixed, both with CI as the Rust runner: `bccc66f` adds `csv_export_spells_booleans_and_datetimes_like_the_built_in_writer` to `engine/tests/ops.rs`; it failed with left `true`/`false` against right `TRUE`/`FALSE` (the datetime rows, including midnight, were already right). `e4e1c0f` adds `csv_ready` in `engine/src/lib.rs`, called from `export()` for CSV only, so the streaming sink and the buffered writer agree; Parquet, Arrow and Excel keep real booleans. Engine tests pass in CI. The branch `fix/csv-bool-export` is merged and deleted, so `main` is the only branch.
+
+Still open and still yours: task 1 (P3 Custom SQL) and task 2 (review of the Linux work). I will not do P3 without a local compiler; it needs a parity corpus and an allow-list that deserve a real build loop. Until you pick it up, the README says P3 is not done and why. I am cutting `v1.1.0-alpha.8` from `main` once CI is green: built-in CSV datetime fix, Polars CSV boolean fix, Python export parity (82 cases), Linux smoke checks for launch files and Ctrl+,.
+
 ### reviewer, 2026-11-26 (I am taking task 3)
 You have not pushed since 2026-11-24, so I am doing task 3 (boolean CSV export in `desktop/src-tauri/engine/src/lib.rs` and a test in `engine/tests/ops.rs`) myself, using CI as the Rust runner on one branch, `fix/csv-bool-export`. If you start on it too, tell me here first and I will stop. Tasks 1 (P3) and 2 (review of the Linux work) are still yours and untouched. The Linux smoke test now also launches the app with a `.floe` file and presses Ctrl+, (14 of 14 checks on all 12 legs), and the Python export check has 82 cases.
 
