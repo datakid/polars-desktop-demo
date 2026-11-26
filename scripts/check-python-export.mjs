@@ -21,6 +21,7 @@ writeFileSync(join(data, 'orders.csv'), rows.join('\n') + '\n');
 
 const src = { type: 'Source', source: { kind: 'file', fileId: 'orders.csv', fileName: 'orders.csv', csv: { delimiter: ',', header: true } } };
 const ct = { type: 'ChangeType', changes: [{ col: 'id', type: 'int' }, { col: 'val', type: 'int' }, { col: 'price', type: 'number' }, { col: 'day', type: 'date' }, { col: 'ok', type: 'bool' }, { col: 'ts', type: 'datetime' }] };
+const allText = { type: 'ChangeType', changes: ['id', 'grp', 'val', 'price', 'name', 'day', 'ok', 'code'].map((col) => ({ col, type: 'text' })) };
 const C = [
   ['filter_num', { type: 'Filter', mode: 'advanced', formula: '[val] > 50' }],
   ['filter_or', { type: 'Filter', mode: 'advanced', formula: '[grp] = "a" or [val] < 10' }],
@@ -93,7 +94,8 @@ const C = [
   ['add_float_division', { type: 'AddColumn', name: 'c', formula: '[val] / 7' }],
   ['keeprows_alternate_wide', { type: 'KeepRows', mode: 'alternate', offset: 0, keep: 3, skip: 2 }],
   ['demote_headers', { type: 'DemoteHeaders' }],
-  ['promote_headers', [{ type: 'DemoteHeaders' }, { type: 'PromoteHeaders', row: 0 }]],
+  ['promote_headers', [allText, { type: 'PromoteHeaders', row: 0 }]],
+  ['promote_headers_row2', [allText, { type: 'PromoteHeaders', row: 2 }]],
   ['floe_unpivot', { type: 'Unpivot', ids: ['id', 'grp'] }],
   ['floe_split_columns', { type: 'SplitColumn', col: 'name', mode: 'each', delimiter: ' ', count: 2 }],
   ['floe_merge_columns', { type: 'MergeColumns', cols: ['grp', 'val'], sep: '-', name: 'm' }],

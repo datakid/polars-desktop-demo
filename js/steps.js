@@ -156,7 +156,7 @@
         case 'remove_blank': return `.filter(~pl.all_horizontal(pl.all().is_null()))`;
       } return '';
       case 'PromoteHeaders': helpers.add('def promote_headers'); return `.pipe(promote_headers, row=${k.row || 0})`;
-      case 'DemoteHeaders': helpers.add('def demote_headers'); return `.pipe(demote_headers)`;
+      case 'DemoteHeaders': helpers.add('def floe_as_text'); helpers.add('def demote_headers'); return `.pipe(demote_headers)`;
       case 'FillDown': return `.with_columns(pl.col(${pyList(k.cols)}).forward_fill())`;
       case 'FillUp': return `.with_columns(pl.col(${pyList(k.cols)}).backward_fill())`;
       case 'ReplaceValues': {
@@ -226,17 +226,18 @@
     'def promote_headers': `def promote_headers(lf: pl.LazyFrame, row: int = 0) -> pl.LazyFrame:
     """Use row \`row\` as column names and drop everything above it (report-style sheets)."""
     df = lf.collect()
-    names = [str(v) if v is not None else f"Column{i + 1}" for i, v in enumerate(df.row(row))]
-    seen: dict[str, int] = {}
-    for i, n in enumerate(names):
-        if n in seen:
-            seen[n] += 1
-            names[i] = f"{n}_{seen[n]}"
-        else:
-            seen[n] = 0
+    names, used = [], set()
+    for i, v in enumerate(df.row(row)):
+        base = str(v).strip() if v is not None and str(v).strip() else f"Column{i + 1}"
+        name, k = base, 1
+        while name in used:
+            name, k = f"{base}_{k}", k + 1
+        used.add(name)
+        names.append(name)
     return df.slice(row + 1).pipe(lambda d: d.rename(dict(zip(d.columns, names)))).lazy()`,
     'def demote_headers': `def demote_headers(lf: pl.LazyFrame) -> pl.LazyFrame:
-    df = lf.collect().cast(pl.String)
+    df = lf.collect()
+    df = df.select([floe_as_text(pl.col(c), t).alias(c) for c, t in df.schema.items()])
     header = pl.DataFrame([df.columns], schema=df.columns, orient="row")
     return pl.concat([header, df]).rename({c: f"Column{i + 1}" for i, c in enumerate(df.columns)}).lazy()`,
   };
@@ -267,12 +268,15 @@
     return { order, deps };
   };
 
+  const PY_RESERVED = ('False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield ' +
+    'print sorted len range str int float bool list dict set tuple min max sum abs round zip enumerate any all open isinstance next map filter type object id input format repr hash iter reversed slice').split(' ');
+
   S.toPython = function (project, onlyQueryId) {
     const { order, deps } = S.topo(project);
     const byId = new Map(project.queries.map((q) => [q.id, q]));
     let ids = order;
     if (onlyQueryId) { const need = new Set(); const add = (id) => { if (need.has(id)) return; need.add(id); deps(byId.get(id)).forEach(add); }; add(onlyQueryId); ids = order.filter((id) => need.has(id)); }
-    const vars = {}, used = new Set(['pl', 'lf', 'params', 'data_dir']);
+    const vars = {}, used = new Set(['pl', 'lf', 'params', 'data_dir', 'fnmatch', 'fastexcel', 'date'].concat(Object.keys(HELPERS).filter((n) => n.startsWith('def ')).map((n) => n.slice(4)), PY_RESERVED));
     ids.forEach((id) => { const v = PQ.uniqueName(PQ.snake(byId.get(id).name), used); used.add(v); vars[id] = v; });
     const helpers = new Set();
     const blocks = ids.map((id) => {
