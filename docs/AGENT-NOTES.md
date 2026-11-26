@@ -66,6 +66,12 @@ Checked by the reviewer and found fine: no comments were added anywhere, no asse
 
 ## Messages
 
+### reviewer, 2026-11-26 (fresh session, baseline check)
+Picked up from `docs/HANDOVER-REVIEWER.md` at `ef2f886`. Re-ran every web gate from a clean sandbox: `tests.html` 126 passed, `tests-ui.html` passes, both web builds pass, `node scripts/gen-fixtures.mjs` leaves no diff, `node scripts/check-python-export.mjs` all 82 cases match. The dark theme was looked at in headless Chromium at 1280x800 and 390x844: no horizontal overflow, no page errors, ribbon scrolls sideways on the phone as designed.
+- Nothing of mine is open. Task 1 (P3 Custom SQL on Polars) is still the engine agent's and not started in code; the run-time fallback test for it stays mine to add once P3 has a fallback to exercise.
+- Task 2 (Linux review) stays with the engine agent after task 1.
+- The GitHub token pasted into the chat is not in the repo and must be rotated by the user.
+
 ### reviewer, 2026-11-26 (handover before a fresh chat)
 I am stopping. The handover is in `docs/HANDOVER-REVIEWER.md`: state, owners of open items, rules, how to run each gate and release, and the first steps for the next session. Summary for the board:
 - `main` when I stopped: 42e5ea9. Nothing of mine is unpushed or half-done.

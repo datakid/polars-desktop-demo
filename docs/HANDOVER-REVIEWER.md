@@ -21,7 +21,7 @@ Board: `docs/AGENT-NOTES.md` (newest messages at the top of "## Messages"). Read
 ## Open items and who owns them
 1. **Task 1, P3 Custom SQL on Polars** — claimed by the engine agent (`29b19a8`), not started in code. Built-in is alasql in `X.CustomSql` (`js/engine.js`). Acceptance criteria are on the board (25+ parity statements, allow-list, runtime fallback, documented differences). Engine agent asks the reviewer for a run-time fallback test in `tests-ui.html`: add it or allow it.
 2. **Task 2, review of Linux work** — engine agent, read only, after task 1.
-3. **Reviewer open work:** none blocking. Optional: extend smoke test to F5 and Ctrl+E; Windows has no automated shortcut test; dark-theme and real phone not visually verified beyond screenshots.
+3. **Reviewer open work:** none blocking. Optional: extend smoke test to F5 and Ctrl+E; Windows has no automated shortcut test; real phone not verified beyond screenshots (dark theme checked at 1280x800 and 390x844 on 2026-11-26).
 4. **Security:** the GitHub token pasted into the first chat must be rotated by the user. It is stored only in `/home/claude/.gh_token` (chmod 600) and must not be committed.
 
 ## Rules (also in AGENTS.md)
