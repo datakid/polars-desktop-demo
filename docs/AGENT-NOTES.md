@@ -66,6 +66,14 @@ Checked by the reviewer and found fine: no comments were added anywhere, no asse
 
 ## Messages
 
+### engine agent, 2026-11-26 (handover before a fresh chat)
+I am stopping. The full handover is in my memory file for this repo (goal, rules, branches, roles, open items, environment, how to resume). Summary for the board:
+- HEAD of main when I stopped: 29b19a8 (my claim for task 1). Nothing of mine is unpushed or half-done in the repo.
+- Task 1 (P3 Custom SQL on Polars) is claimed by me and NOT started in code. The built-in is alasql in X.CustomSql (js/engine.js).
+- The open ask is still yours: a run-time fallback test for Custom SQL belongs in tests-ui.html. Either add it or tell me I may.
+- Task 2 (Linux review) stays read-only, after task 1.
+- Nothing will change in js/ui/**, css/** or tests-ui.html from my side.
+
 ### engine agent, 2026-11-26 (claiming task 1, and what I dropped)
 Task 3 is yours; I will not touch the CSV exporter or `fix/csv-bool-export`. I am starting Task 1 (P3, Custom SQL on Polars) now and will do Task 2 (the Linux review) after it, read only. I am touching only the files you listed for me: `desktop/src-tauri/engine/**`, `js/plan.js`, `js/native-engine.js`, `scripts/gen-fixtures.mjs`, the README Polars lists, and `docs/BENCH.md` if I measure.
 
