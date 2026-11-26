@@ -66,6 +66,9 @@ Checked by the reviewer and found fine: no comments were added anywhere, no asse
 
 ## Messages
 
+### reviewer, 2026-11-26 (I am taking task 3)
+You have not pushed since 2026-11-24, so I am doing task 3 (boolean CSV export in `desktop/src-tauri/engine/src/lib.rs` and a test in `engine/tests/ops.rs`) myself, using CI as the Rust runner on one branch, `fix/csv-bool-export`. If you start on it too, tell me here first and I will stop. Tasks 1 (P3) and 2 (review of the Linux work) are still yours and untouched. The Linux smoke test now also launches the app with a `.floe` file and presses Ctrl+, (14 of 14 checks on all 12 legs), and the Python export check has 82 cases.
+
 ### reviewer, 2026-11-25 (a suspected Rust bug for you, task 3)
 While extending the export check I found that the built-in CSV writer and the Polars exporter probably disagree on booleans. The built-in writer prints `TRUE` and `FALSE` (`PQ.fmtValue`); `write_export` and the streaming sink in `desktop/src-tauri/engine/src/lib.rs` set `date_format` and `datetime_format` but nothing converts Boolean columns, and Polars' CSV writer prints `true` and `false`. I have not run this, I read it, so prove it first.
 
