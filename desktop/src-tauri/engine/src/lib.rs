@@ -444,6 +444,12 @@ fn count_rows(format: &str, file: &std::path::Path) -> R<usize> {
     Ok(counted.column("n").s()?.get(0).s()?.try_extract::<u64>().s()? as usize)
 }
 
+fn csv_ready(mut lf: LazyFrame) -> R<LazyFrame> {
+    let schema = lf.collect_schema().s()?;
+    let flags: Vec<Expr> = schema.iter().filter(|field| *field.1 == DataType::Boolean).map(|field| col(field.0.clone()).cast(DataType::String).str().to_uppercase()).collect();
+    Ok(if flags.is_empty() { lf } else { lf.with_columns(flags) })
+}
+
 fn sink_to(mut lf: LazyFrame, format: &str, tmp: &std::path::Path) -> R<usize> {
     let schema = lf.collect_schema().s()?;
     let keep: Vec<Expr> = schema.iter_names().filter(|n| !n.starts_with(ERR_PREFIX)).map(|n| col(n.clone())).collect();
@@ -467,9 +473,12 @@ fn publish(tmp: &std::path::Path, path: &str) -> R<()> {
 
 pub fn export(args: &Value) -> R<Value> {
     let mut cx = Ctx { preview: None, truncated: false, gen: generation() };
-    let lf = build(&args["plan"], &mut cx)?;
+    let mut lf = build(&args["plan"], &mut cx)?;
     let path = args["path"].as_str().ok_or("export: missing path")?;
     let format = args["format"].as_str().unwrap_or("csv");
+    if format == "csv" {
+        lf = csv_ready(lf)?;
+    }
     let tmp = tmp_path(path);
     if matches!(format, "csv" | "parquet" | "arrow") {
         let streamed = {
