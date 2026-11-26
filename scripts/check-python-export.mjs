@@ -92,12 +92,21 @@ const C = [
   ['add_float_product', { type: 'AddColumn', name: 'c', formula: '[price] * 1.1 + 0.1' }],
   ['add_float_division', { type: 'AddColumn', name: 'c', formula: '[val] / 7' }],
   ['keeprows_alternate_wide', { type: 'KeepRows', mode: 'alternate', offset: 0, keep: 3, skip: 2 }],
+  ['demote_headers', { type: 'DemoteHeaders' }],
+  ['promote_headers', [{ type: 'DemoteHeaders' }, { type: 'PromoteHeaders', row: 0 }]],
+  ['floe_unpivot', { type: 'Unpivot', ids: ['id', 'grp'] }],
+  ['floe_split_columns', { type: 'SplitColumn', col: 'name', mode: 'each', delimiter: ' ', count: 2 }],
+  ['floe_merge_columns', { type: 'MergeColumns', cols: ['grp', 'val'], sep: '-', name: 'm' }],
+  ['floe_duplicate_column', { type: 'DuplicateColumn', col: 'val' }],
+  ['floe_csv_ready', { type: 'Filter', mode: 'advanced', formula: '[val] > 50' }],
+  ['class', { type: 'Sort', by: [{ col: 'val', desc: true }, { col: 'id', desc: false }] }],
+  ['lambda', { type: 'Sort', by: [{ col: 'val', desc: false }, { col: 'id', desc: false }] }],
 ];
 const project = {
   name: 'Export check',
   settings: { previewRows: 1000, locale: 'en-US' },
   params: [],
-  queries: C.map(([name, kind], i) => ({ id: 'q' + i, name, load: { target: 'csv' }, steps: [{ id: 's0', name: 'Source', kind: src }, { id: 's1', name: 'Types', kind: ct }, { id: 's2', name: 'Step', kind }] })),
+  queries: C.map(([name, kind], i) => ({ id: 'q' + i, name, load: { target: 'csv' }, steps: [{ id: 's0', name: 'Source', kind: src }, { id: 's1', name: 'Types', kind: ct }].concat((Array.isArray(kind) ? kind : [kind]).map((k, j) => ({ id: 's' + (2 + j), name: 'Step', kind: k }))) })),
 };
 writeFileSync(join(dir, 'check.floe'), JSON.stringify(project));
 
