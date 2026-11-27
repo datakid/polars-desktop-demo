@@ -70,7 +70,7 @@ Both queues run in parallel and touch disjoint files. Take the first unclaimed i
 | E5 | engine agent | Installer size after P3, against the Phase 2 budget, written to `docs/BENCH.md` | `docs/BENCH.md` numbers | E1 |
 | R1 | reviewer | Sweep of all 39 step dialogs at 1280x800, 390x844 and 360x640: no error, no overflow, no clipped button | scratch | none; done, clean |
 | R2 | reviewer | Python export parity for the 14 step types with no case in `scripts/check-python-export.mjs` | `scripts/check-python-export.mjs`, `js/steps.js`, `js/engine-ext.js` | none; 12 done in `c1cef13` and `80194f5`, ExpandJson and CustomSql left |
-| R3 | reviewer | Make the dialog sweep a permanent check in `tests-ui.html` | `tests-ui.html` | none |
+| R3 | reviewer | Make the dialog sweep a permanent check in `tests-ui.html` | `tests-ui.html` | none; done, 39 dialogs at 1280x800, 390x844 and 360x640, the run takes about 65 s |
 | R4 | reviewer | Run-time fallback test for Custom SQL | `tests-ui.html` | E1 |
 | R5 | reviewer | Linux smoke checks for F5 and Ctrl+E | `.github/scripts/linux_smoke.py`, `docs/LINUX.md` | none |
 | R6 | reviewer | Release `v1.1.0-alpha.9` from `main` with green CI after E1 and R4 land | `release.yml` run | E1, R4 |

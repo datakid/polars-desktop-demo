@@ -254,6 +254,13 @@ f.addEventListener('load', async () => {
     console.log('E2E a merge with no columns stays that way');
     await restoreMerge();
     const frame = document.getElementById('f');
+    const pageErrors = [];
+    w.addEventListener('error', (e) => pageErrors.push(e.message));
+    w.addEventListener('unhandledrejection', (e) => pageErrors.push(String(e.reason)));
+    const settle = async (doc) => {
+      const root = doc.querySelector('.modal-back') || doc.body;
+      await Promise.all(root.getAnimations({ subtree: true }).filter((an) => an.effect && isFinite(an.effect.getComputedTiming().endTime)).map((an) => an.finished.catch(() => null)));
+    };
     const probe = async (width, height) => {
       frame.style.width = width + 'px'; frame.style.height = height + 'px';
       await sleep(500);
@@ -263,7 +270,7 @@ f.addEventListener('load', async () => {
       const tabs = doc.querySelector('#pane-tabs').getBoundingClientRect();
       if (tabs.right > width + 0.5) throw new Error('the pane tabs end at ' + Math.round(tabs.right) + ' on a ' + width + 'px screen');
       for (const open of ['paramsDialog', 'cliDialog']) {
-        UI()[open](); await sleep(300);
+        UI()[open](); await sleep(300); await settle(doc);
         const foot = doc.querySelector('.modal .modal-f').getBoundingClientRect();
         if (foot.bottom > height + 0.5 || foot.top < 0) throw new Error(open + ' footer spans ' + Math.round(foot.top) + '-' + Math.round(foot.bottom) + ' on a ' + height + 'px screen');
         doc.querySelector('.modal .close').click(); await sleep(250);
@@ -274,6 +281,25 @@ f.addEventListener('load', async () => {
       await mergeOpen({ qid: ordersId, index: 6 });
       mergeFits('while editing on a ' + width + 'px screen');
       doc.querySelector('.modal .close').click(); await sleep(250);
+      const forms = Object.keys(UI().StepForms);
+      for (const type of forms) {
+        pageErrors.length = 0;
+        UI().App.stepDialog(type, {}); await sleep(200); await settle(doc);
+        const modal = doc.querySelector('.modal');
+        const where = ' on a ' + width + 'x' + height + ' screen';
+        if (!modal) throw new Error('the ' + type + ' dialog did not open' + where);
+        const body = modal.querySelector('.modal-body') || modal;
+        if (body.scrollWidth > body.clientWidth + 1) throw new Error('the ' + type + ' dialog scrolls sideways' + where);
+        for (const btn of modal.querySelectorAll('.modal-f button')) {
+          const r = btn.getBoundingClientRect();
+          if (r.bottom > height + 0.5 || r.right > width + 0.5 || r.left < -0.5 || r.top < -0.5) throw new Error('a button of the ' + type + ' dialog is off screen' + where + ': ' + btn.textContent.trim());
+        }
+        if (doc.documentElement.scrollWidth > width) throw new Error('the ' + type + ' dialog makes the page wider than the screen' + where);
+        if (pageErrors.length) throw new Error('the ' + type + ' dialog raised an error' + where + ': ' + pageErrors[0]);
+        modal.querySelector('.close').click(); await sleep(100);
+        if (doc.querySelector('.modal')) throw new Error('the ' + type + ' dialog did not close' + where);
+      }
+      console.log('E2E ' + forms.length + ' step dialogs fit ' + width + 'x' + height);
       console.log('E2E phone ' + width + 'x' + height + ' fits, scrollWidth ' + doc.documentElement.scrollWidth);
     };
     try { await probe(1280, 800); await probe(390, 844); await probe(360, 640); } finally { frame.style.width = ''; frame.style.height = ''; }
