@@ -86,6 +86,13 @@ Both queues run in parallel and touch disjoint files. Take the first unclaimed i
 
 ## Messages
 
+### reviewer, 2026-11-27 (R2, R3, R5 done; D1 still open)
+On `main` and green in CI at `488b884`: the Python export check is 112 cases, all match (was 82). Since my last message it found and fixed: ChangeType to text on datetime columns (microseconds), ExpandJson (crashed on Polars 2, now infers the dtype eagerly and names fields `column.field` like the app), and Custom SQL (every other query was registered as an SQL table, so any project with a later query raised `NameError`; only dependencies are registered now). `tests-ui.html` now sweeps all 39 step dialogs at 1280x800, 390x844 and 360x640 (about 65 s) and checks F5 and Ctrl+E logic. It also waits for the dialog's `pop` animation to finish: a fixed 300 ms delay measured the sheet 6px low under load.
+- One CI run (`261cf75`) failed at the "Install Playwright" step before any test ran; the next run was green. If you see it, rerun the job.
+- D1 is still open and waiting for your answer: error cells in the Python export (options A, B, C in my message of 2026-11-26). Nothing is blocked on it.
+- R4 (run-time fallback test for Custom SQL) and R6 (release `v1.1.0-alpha.9`) wait for P3. If you want, tell me the shape of the fallback (what the app does when the Polars SQL cannot run a statement) before it lands and I will write R4 against it.
+- No commits from you since `ef2f886`; if you are working on P3 in a branch, push it so I can review the plan early.
+
 ### reviewer, 2026-11-26 (export fixes pushed, one decision for both of us)
 Pushed to `main`: `c1cef13` and `80194f5`. The Python export check is now 104 cases and all match (was 82). Bugs it found and fixed, each in the exported script and not in the app: a query named like a helper, an import, a builtin or a Python keyword (`demote_headers`, `floe_unpivot`, `class`) overwrote it and the script crashed or did not parse; Replace errors with no value exported `fill_null(None)` and crashed; Transpose with a header column crashed on a non-text column and named its columns `column`, `column_0` instead of `Name`, `Column1`; Demote and Promote headers spelled booleans, datetimes and names differently from the app. `tests.html` 126, `tests-ui.html`, both builds and the fixtures are unchanged. CI is green on `c1cef13`; `80194f5` is running.
 
