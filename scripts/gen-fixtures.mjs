@@ -176,6 +176,18 @@ const CASES = [
   ["sql: group by text keys that differ in case", 'words.csv', [wtypes, { type: 'CustomSql', sql: "SELECT w, COUNT(*) AS c, SUM(f) AS s FROM self GROUP BY w ORDER BY w" }]],
   ["sql: sums over floats with nulls", 'words.csv', [wtypes, { type: 'CustomSql', sql: "SELECT n, f, f * 2 AS d, f + n AS t FROM self WHERE f IS NOT NULL ORDER BY n" }]],
   ['sql: preview runs on the sample', 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT region, COUNT(*) AS n FROM self GROUP BY region ORDER BY region" }], undefined, { mode: 'preview', previewRows: 5 }],
+  ['window lead, percent of total and moving average', 'orders.csv', [types, { type: 'Window', op: 'lead', col: 'qty', partition: ['region'], n: 1, name: 'nxt' }, { type: 'Window', op: 'pct_of_total', col: 'qty', partition: ['region'], name: 'share' }, { type: 'Window', op: 'moving_avg', col: 'price', partition: ['region'], orderBy: 'order_id', n: 3, name: 'avg3' }]],
+  ['group by median, first, last and concatenate', 'orders.csv', [types, { type: 'GroupBy', keys: ['region'], aggs: [{ fn: 'median', col: 'qty', name: 'med_qty' }, { fn: 'median', col: 'price', name: 'med_price' }, { fn: 'first', col: 'status', name: 'first_status' }, { fn: 'last', col: 'customer_id', name: 'last_cust' }, { fn: 'concat', col: 'customer_id', sep: ', ', name: 'custs' }] }]],
+  ['merge inner', 'orders.csv', [{ type: 'Merge', right: 'customers', how: 'inner', on: [['customer_id', 'customer_id']] }]],
+  ['merge right', 'orders.csv', [{ type: 'SelectColumns', cols: ['order_id', 'customer_id'] }, { type: 'Merge', right: 'customers', how: 'right', on: [['customer_id', 'customer_id']] }]],
+  ['merge semi', 'orders.csv', [{ type: 'Merge', right: 'customers', how: 'semi', on: [['customer_id', 'customer_id']] }]],
+  ['pivot mean, min and max', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'qty', agg: 'mean', index: ['region'] }]],
+  ['pivot min on prices', 'orders.csv', [types, { type: 'Pivot', on: 'region', values: 'price', agg: 'min', index: ['status'] }]],
+  ['pivot max on quantities', 'orders.csv', [types, { type: 'Pivot', on: 'region', values: 'qty', agg: 'max', index: ['status'] }]],
+  ['pivot first and last', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'customer_id', agg: 'first', index: ['region'] }]],
+  ['pivot last', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'customer_id', agg: 'last', index: ['region'] }]],
+  ['pivot median', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'qty', agg: 'median', index: ['region'] }]],
+  ['pivot count rows', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'qty', agg: 'count_rows', index: ['region'] }]],
 ];
 
 function wire(v) {
