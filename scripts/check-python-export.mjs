@@ -22,6 +22,8 @@ writeFileSync(join(data, 'orders.csv'), rows.join('\n') + '\n');
 const src = { type: 'Source', source: { kind: 'file', fileId: 'orders.csv', fileName: 'orders.csv', csv: { delimiter: ',', header: true } } };
 const ct = { type: 'ChangeType', changes: [{ col: 'id', type: 'int' }, { col: 'val', type: 'int' }, { col: 'price', type: 'number' }, { col: 'day', type: 'date' }, { col: 'ok', type: 'bool' }, { col: 'ts', type: 'datetime' }] };
 const allText = { type: 'ChangeType', changes: ['id', 'grp', 'val', 'price', 'name', 'day', 'ok', 'code'].map((col) => ({ col, type: 'text' })) };
+const grpToInt = { type: 'ChangeType', changes: [{ col: 'grp', type: 'int' }] };
+const codeToInt = { type: 'ChangeType', changes: [{ col: 'code', type: 'int' }] };
 const C = [
   ['filter_num', { type: 'Filter', mode: 'advanced', formula: '[val] > 50' }],
   ['filter_or', { type: 'Filter', mode: 'advanced', formula: '[grp] = "a" or [val] < 10' }],
@@ -103,6 +105,18 @@ const C = [
   ['floe_csv_ready', { type: 'Filter', mode: 'advanced', formula: '[val] > 50' }],
   ['class', { type: 'Sort', by: [{ col: 'val', desc: true }, { col: 'id', desc: false }] }],
   ['lambda', { type: 'Sort', by: [{ col: 'val', desc: false }, { col: 'id', desc: false }] }],
+  ['select_cols', { type: 'SelectColumns', cols: ['val', 'id', 'grp'] }],
+  ['remove_cols', { type: 'RemoveColumns', cols: ['price', 'code'] }],
+  ['reorder_cols', { type: 'ReorderColumns', cols: ['code', 'val'] }],
+  ['rename_cols', { type: 'Rename', map: [['val', 'value'], ['grp', 'group']] }],
+  ['replace_errors', [grpToInt, { type: 'ReplaceErrors', cols: ['grp'], value: '0' }]],
+  ['replace_errors_null', [grpToInt, { type: 'ReplaceErrors', cols: ['grp'] }]],
+  ['remove_errors_none', { type: 'RemoveErrors', cols: ['grp'] }],
+  ['transpose', [{ type: 'SelectColumns', cols: ['id', 'val'] }, { type: 'Transpose' }]],
+  ['transpose_header', [{ type: 'SelectColumns', cols: ['id', 'val'] }, { type: 'Transpose', headerCol: 'id' }]],
+  ['append_relaxed', { type: 'Append', others: ['q0'], mode: 'relaxed' }],
+  ['append_strict', { type: 'Append', others: ['q0'], mode: 'strict' }],
+  ['checkpoint', { type: 'Checkpoint' }],
 ];
 const project = {
   name: 'Export check',

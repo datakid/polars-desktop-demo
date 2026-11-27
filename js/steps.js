@@ -165,7 +165,7 @@
         if (k.wholeCell === false) return `.with_columns(pl.col(${pyList(k.cols)}).str.replace_all(${py(k.find)}, ${py(k.replace || '')}, literal=True))`;
         return `.with_columns(pl.col(${pyList(k.cols)}).replace(${pyVal(k.find)}, ${pyVal(k.replace)}))`;
       }
-      case 'ReplaceErrors': return `  # ReplaceErrors: Polars casts non-strictly, so errors are already null\n    .with_columns(pl.col(${pyList(k.cols)}).fill_null(${pyVal(k.value)}))`;
+      case 'ReplaceErrors': return k.value === undefined || k.value === null || k.value === '' ? `  # ReplaceErrors with null: Polars casts non-strictly, so errors are already null` : `  # ReplaceErrors: Polars casts non-strictly, so errors are already null\n    .with_columns(pl.col(${pyList(k.cols)}).fill_null(${pyVal(k.value)}))`;
       case 'RemoveErrors': case 'KeepErrors': return `  # ${k.type}: per-cell errors are a Floe concept; nulls from failed casts are the Polars equivalent`;
       case 'TextTransform': return `.with_columns(pl.col(${pyList(k.cols)}).cast(pl.String)${{ upper: '.str.to_uppercase()', lower: '.str.to_lowercase()', trim: '.str.strip_chars()', clean: '.str.replace_all(r"\\s+", " ").str.strip_chars()', proper: '.str.to_titlecase()' }[k.op]})`;
       case 'RoundNumbers': {
@@ -195,7 +195,11 @@
       }
       case 'Unpivot': helpers.add('def floe_as_text'); helpers.add('def floe_unpivot'); return `.pipe(floe_unpivot, ${k.ids ? pyList(k.ids) : 'None'}, ${k.values && k.values.length ? pyList(k.values) : 'None'}, ${py(k.var || 'Attribute')}, ${py(k.val || 'Value')}, ${k.dropNulls !== false ? 'True' : 'False'})`;
       case 'Pivot': return `\n    # Pivot needs all data to know its output columns → materialize, then continue lazily\n    .collect().pivot(on=${py(k.on)}, index=${pyList(k.index)}, values=${k.values ? py(k.values) : 'None'}, aggregate_function=${py({ sum: 'sum', mean: 'mean', count_rows: 'len', min: 'min', max: 'max', first: 'first', last: 'last', median: 'median' }[k.agg || 'sum'] || 'first')}).lazy()`;
-      case 'Transpose': return `\n    # Transpose forces materialization\n    .collect().transpose(include_header=True${k.headerCol ? ', column_names=' + py(k.headerCol) : ''}).lazy()`;
+      case 'Transpose': {
+        if (!k.headerCol) return `\n    # Transpose forces materialization\n    .collect().pipe(lambda d: d.transpose(include_header=True, header_name="Name", column_names=[f"Column{i + 1}" for i in range(d.height)])).lazy()`;
+        helpers.add('def floe_as_text');
+        return `\n    # Transpose forces materialization\n    .collect().pipe(lambda d: d.with_columns(floe_as_text(pl.col(${py(k.headerCol)}), d.schema[${py(k.headerCol)}]).alias(${py(k.headerCol)}))).transpose(include_header=True, header_name="Name", column_names=${py(k.headerCol)}).lazy()`;
+      }
       case 'Merge': {
         const right = vars[k.right] || 'None';
         const how = { left: 'left', right: 'right', inner: 'inner', full: 'full', semi: 'semi', anti: 'anti', cross: 'cross' }[k.how || 'left'];
