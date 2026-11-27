@@ -77,12 +77,12 @@
     const strict = 'strict=False';
     switch (c.type) {
       case 'int': case 'number': {
-        const clean = L.dec === ',' ? `.str.replace_all(r"[.\\s€$£]", "").str.replace(",", ".")` : `.str.replace_all(r"[,\\s€$£]", "")`;
-        return `${col}.cast(pl.String)${clean}.cast(${PQ.POLARS_TYPES[c.type]}, ${strict})`;
+        if (c.type === 'int') return `(floe_parse_number(${col}${L.dec === ',' ? ', True' : ''}) + 0.5).floor().cast(pl.Int64, ${strict})`;
+        return `floe_parse_number(${col}${L.dec === ',' ? ', True' : ''})`;
       }
-      case 'date': return `${col}.cast(pl.String).str.to_date(${L.dmy ? '"%d.%m.%Y", ' : ''}${strict})`;
-      case 'datetime': return `${col}.cast(pl.String).str.to_datetime(${strict})`;
-      case 'bool': return `${col}.cast(pl.String).str.to_lowercase().is_in(["true", "yes", "y", "1"])`;
+      case 'date': return `floe_parse_datetime(${col}${L.dmy ? ', True' : ''}).dt.date()`;
+      case 'datetime': return `floe_parse_datetime(${col}${L.dmy ? ', True' : ''})`;
+      case 'bool': { const t = `${col}.cast(pl.String).str.strip_chars().str.to_lowercase()`; return `pl.when(${t}.is_in(["true", "yes", "y", "1", "wahr", "vrai"])).then(True).when(${t}.is_in(["false", "no", "n", "0", "falsch", "faux"])).then(False)`; }
       case 'text': return `${col}.cast(pl.String)`;
     }
     return col;
@@ -140,9 +140,13 @@
       case 'Rename': return `.rename({${(k.map || []).map((p) => py(p[0]) + ': ' + py(p[1])).join(', ')}})`;
       case 'ChangeType': {
         const textCols = (k.changes || []).filter((c) => c.type === 'text').map((c) => c.col);
+        if ((k.changes || []).some((c) => c.type === 'date' || c.type === 'datetime')) helpers.add('def floe_parse_datetime');
+        if ((k.changes || []).some((c) => c.type === 'int' || c.type === 'number')) helpers.add('def floe_parse_number');
         if (textCols.length) { helpers.add('def floe_as_text'); helpers.add('def floe_datetime_text'); }
-        const exprs = (k.changes || []).map((c) => castExpr(c, c.locale || k.locale || loc).replace(/strict=False/g, k.onError === 'fail' ? 'strict=True' : 'strict=False'));
-        return `${textCols.length ? '.pipe(floe_datetime_text, ' + pyList(textCols) + ')\n    ' : ''}.with_columns(\n        ${exprs.join(',\n        ')},\n    )`;
+        const exprs = (k.changes || []).map((c) => castExpr(c, c.locale || k.locale || loc).replace(/strict=False/g, k.onError === 'fail' ? 'strict=True' : 'strict=False') + `.alias(${py(c.col)})`);
+        const checked = (k.changes || []).filter((c) => ['int', 'number', 'date', 'datetime', 'bool'].includes(c.type));
+        const guard = k.onError === 'fail' && checked.length ? (helpers.add('def floe_assert_cast'), `.pipe(floe_assert_cast, {${checked.map((c) => py(c.col) + ': ' + castExpr(c, c.locale || k.locale || loc)).join(', ')}})\n    `) : '';
+        return `${guard}${textCols.length ? '.pipe(floe_datetime_text, ' + pyList(textCols) + ')\n    ' : ''}.with_columns(\n        ${exprs.join(',\n        ')},\n    )`;
       }
       case 'Filter': return `.filter(${formula(PQ.Engine ? PQ.Engine.filterFormula(k) : k.formula)})`;
       case 'Sort': return `.sort(${pyList((k.by || []).map((b) => b.col))}, descending=[${(k.by || []).map((b) => (b.desc ? 'True' : 'False')).join(', ')}], nulls_last=True, maintain_order=True)`;
@@ -265,6 +269,56 @@
         return "".join(out)
 
     return column.cast(pl.String).map_elements(fix, return_dtype=pl.String)`,
+    'def floe_parse_datetime': `def floe_parse_datetime(column: pl.Expr, dmy: bool = False) -> pl.Expr:
+    months = {name: number + 1 for number, name in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split())}
+    text = column.cast(pl.String).str.strip_chars()
+    clock = r"(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?"
+    none = pl.lit(None, pl.Int32)
+
+    def number(group: pl.Expr, name: str) -> pl.Expr:
+        return group.struct.field(name).cast(pl.Int32, strict=False)
+
+    def month_of(group: pl.Expr, name: str) -> pl.Expr:
+        return group.struct.field(name).str.to_lowercase().replace_strict(months, default=None, return_dtype=pl.Int32)
+
+    iso = text.str.extract_groups(r"^(\\d{4})[-/.](\\d{1,2})[-/.](\\d{1,2})" + clock)
+    local = text.str.extract_groups(r"^(\\d{1,2})[-/.](\\d{1,2})[-/.](\\d{2,4})" + clock + "$")
+    named = text.str.extract_groups(r"^(\\d{1,2})[ -]([A-Za-z]{3})[A-Za-z]*[ -,]*(\\d{2,4})$")
+    us = text.str.extract_groups(r"^([A-Za-z]{3})[A-Za-z]*\\.? (\\d{1,2}),? (\\d{4})$")
+    first, second = number(local, "1"), number(local, "2")
+    parts = [
+        (number(iso, "1"), number(iso, "2"), number(iso, "3"), number(iso, "4"), number(iso, "5"), number(iso, "6")),
+        (number(local, "3"), second if dmy else first, first if dmy else second, number(local, "4"), number(local, "5"), number(local, "6")),
+        (number(named, "3"), month_of(named, "2"), number(named, "1"), none, none, none),
+        (number(us, "3"), month_of(us, "1"), number(us, "2"), none, none, none),
+    ]
+    built = []
+    for year, month, day, hour, minute, second in parts:
+        year = pl.when(year < 100).then(pl.when(year < 50).then(year + 2000).otherwise(year + 1900)).otherwise(year)
+        hour, minute, second = hour.fill_null(0), minute.fill_null(0), second.fill_null(0)
+        valid = year.is_not_null() & month.is_between(1, 12) & day.is_between(1, 31)
+        safe_year, safe_month = pl.when(valid).then(year).otherwise(2000), pl.when(valid).then(month).otherwise(1)
+        valid = valid & (day <= pl.date(safe_year, safe_month, 1).dt.month_end().dt.day())
+        stamp = pl.datetime(safe_year, safe_month, pl.when(valid).then(day).otherwise(1)) + pl.duration(hours=pl.when(valid).then(hour).otherwise(0), minutes=pl.when(valid).then(minute).otherwise(0), seconds=pl.when(valid).then(second).otherwise(0))
+        built.append(pl.when(valid & (stamp.dt.day() == day)).then(stamp))
+    return pl.coalesce(built)`,
+    'def floe_parse_number': `def floe_parse_number(column: pl.Expr, comma: bool = False) -> pl.Expr:
+    text = column.cast(pl.String).str.strip_chars()
+    negative = text.str.contains(r"^\\(.*\\)$")
+    unwrapped = text.str.replace(r"^\\((.*)\\)$", "\${1}")
+    percent = unwrapped.str.ends_with("%")
+    inner = unwrapped.str.strip_suffix("%").str.replace_all(r"[$€£¥\\s\\u00a0]", "")
+    inner = inner.str.replace_all(r"\\.", "").str.replace(",", ".") if comma else inner.str.replace_all(",", "")
+    value = pl.when(inner.str.contains(r"^[-+]?(\\d+\\.?\\d*|\\.\\d+)([eE][-+]?\\d+)?$")).then(inner.cast(pl.Float64, strict=False))
+    value = pl.when(negative).then(-value).otherwise(value)
+    return pl.when(percent).then(value / 100).otherwise(value)`,
+    'def floe_assert_cast': `def floe_assert_cast(lf: pl.LazyFrame, casts: dict) -> pl.LazyFrame:
+    for name, cast in casts.items():
+        source = pl.col(name).cast(pl.String).str.strip_chars()
+        bad = lf.filter(source.is_not_null() & (source != "") & cast.is_null()).select(pl.len()).collect().item()
+        if bad:
+            raise ValueError(f"{bad} value(s) in column {name} could not be converted")
+    return lf`,
     'def demote_headers': `def demote_headers(lf: pl.LazyFrame) -> pl.LazyFrame:
     df = lf.collect()
     df = df.select([floe_as_text(pl.col(c), t).alias(c) for c, t in df.schema.items()])

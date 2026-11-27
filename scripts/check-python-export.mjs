@@ -30,6 +30,34 @@ const ct = { type: 'ChangeType', changes: [{ col: 'id', type: 'int' }, { col: 'v
 const allText = { type: 'ChangeType', changes: ['id', 'grp', 'val', 'price', 'name', 'day', 'ok', 'code'].map((col) => ({ col, type: 'text' })) };
 const grpToInt = { type: 'ChangeType', changes: [{ col: 'grp', type: 'int' }] };
 const codeToInt = { type: 'ChangeType', changes: [{ col: 'code', type: 'int' }] };
+const messy = [
+  ['id', 'n', 'd', 't', 'b'],
+  ['1', ' 5', '2025-01-05', '2025-01-05 10:30', 'yes'],
+  ['2', '1,000', '2025/01/05', '2025-01-05T10:30:00', 'TRUE'],
+  ['3', '$7', '01/05/2025', '2025-01-05 10:30:15', 'Y'],
+  ['4', '€8', '5 Jan 2025', '2025-01-05', '1'],
+  ['5', '9.0', '2025-1-5', '01/05/2025 10:30', '0'],
+  ['6', '-10', '20250105', '2025-01-05T10:30:00Z', 'no'],
+  ['7', '+11', '2025-02-30', '2025-01-05 10:30:15.123', 'false'],
+  ['8', '1e3', 'not a date', 'x', 't'],
+  ['9', 'abc', '', '', ''],
+  ['10', '12.5', '2025-01-05 10:30:00', '2025-12-31 23:59:59', ' true '],
+  ['11', '0x10', ' 2025-01-05 ', ' 2025-01-05 10:30 ', 'maybe'],
+  ['12', '', '2024-02-29', '2024-02-29 00:00:00', 'False'],
+  ['13', '(5)', '12/31/2025', '2025-13-01 10:00', 'Wahr'],
+  ['14', '5%', '31/12/2025', '2025-01-05 24:00', 'N'],
+  ['15', '¥3', 'Jan 5, 2025', '2025-01-05 10:60', 'faux'],
+  ['16', '1 000', 'January 5 2025', '1/2/99 7:05', 'YES'],
+  ['17', '1.234,56', '5-Jan-25', '2025.01.05 10:30:00', '2'],
+  ['18', '.5', '2025.01.05', '31-12-2025 23:59:59', 'on'],
+  ['19', '5.', '99-1-2', '2025-01-05 9:05', 'si'],
+  ['20', '-', '1/2/3', 'Jan 5, 2025', '-1'],
+  ['21', 'NaN', '2025-01-05T10:30', 'Mar 3 2025', 'T'],
+  ['22', 'Infinity', '0000-01-01', '2025-04-31', ' '],
+].map((r) => r.map((c) => (/[",]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c)).join(',')).join('\n') + '\n';
+writeFileSync(join(data, 'm.csv'), messy);
+const messySrc = { type: 'Source', source: { kind: 'file', fileId: 'm.csv', fileName: 'm.csv', csv: { delimiter: ',', header: true } } };
+const messyCase = (col, type) => [messySrc, { type: 'ChangeType', changes: [{ col, type }] }, { type: 'ReplaceErrors', cols: [col] }];
 const jsonSrc = { type: 'Source', source: { kind: 'file', fileId: 'j.csv', fileName: 'j.csv', csv: { delimiter: ',', header: true } } };
 const C = [
   ['filter_num', { type: 'Filter', mode: 'advanced', formula: '[val] > 50' }],
@@ -140,6 +168,11 @@ const C = [
   ['sql_group', { type: 'CustomSql', sql: 'SELECT grp, SUM(val) AS sum_val, COUNT(*) AS n FROM self GROUP BY grp ORDER BY grp' }],
   ['sql_alias_limit', { type: 'CustomSql', sql: 'SELECT id AS ident, name FROM self ORDER BY id LIMIT 10' }],
   ['sql_like_in', { type: 'CustomSql', sql: "SELECT id FROM self WHERE grp IN ('a', 'b') AND name LIKE '%smith%' ORDER BY id" }],
+  ['messy_int', messyCase('n', 'int')],
+  ['messy_number', messyCase('n', 'number')],
+  ['messy_date', messyCase('d', 'date')],
+  ['messy_datetime', messyCase('t', 'datetime')],
+  ['messy_bool', messyCase('b', 'bool')],
 ];
 const project = {
   name: 'Export check',
@@ -196,6 +229,18 @@ for (const [name] of C) {
   }
   if (why) problems.push(`${name}: app and Python differ, ${why}`);
 }
+const stopsOnBadValue = (errorMode) => {
+  const failing = { name: 'Fail mode', settings: { previewRows: 1000, locale: 'en-US' }, params: [], queries: [{ id: 'q0', name: 'strict_types', load: { target: 'csv' }, steps: [messySrc, { type: 'ChangeType', onError: errorMode, changes: [{ col: 'n', type: 'int' }, { col: 'd', type: 'date' }] }].map((k, j) => ({ id: 's' + j, name: j === 0 ? 'Source' : 'Step', kind: k })) }] };
+  writeFileSync(join(dir, 'fail.floe'), JSON.stringify(failing));
+  const appRun = run('node', ['scripts/floe.mjs', 'run', join(dir, 'fail.floe'), '--data', data, '--out', join(dir, 'fail-app'), '--quiet']);
+  const genRun = run('node', ['scripts/floe.mjs', 'python', join(dir, 'fail.floe'), '--out', join(dir, 'fail.py')]);
+  if (genRun.status !== 0) return 'the script could not be generated: ' + genRun.stderr.slice(0, 200);
+  const pyRun = run(python, ['fail.py'], dir);
+  const appStops = appRun.status !== 0, pyStops = pyRun.status !== 0;
+  if (errorMode === 'fail') return appStops && pyStops ? null : `with errors set to stop, the app ${appStops ? 'stopped' : 'went on'} and the Python script ${pyStops ? 'stopped' : 'went on'}`;
+  return !appStops && !pyStops ? null : `with errors set to ${errorMode}, the app ${appStops ? 'stopped' : 'went on'} and the Python script ${pyStops ? 'stopped' : 'went on'}`;
+};
+for (const mode of ['fail', 'error', 'null']) { const why = stopsOnBadValue(mode); if (why) problems.push('change type, error mode ' + mode + ': ' + why); }
 rmSync(dir, { recursive: true, force: true });
 problems.forEach((x) => console.log('FAIL ' + x));
 console.log(problems.length ? `${problems.length} of ${C.length} cases differ` : `all ${C.length} cases match`);
