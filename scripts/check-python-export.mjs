@@ -150,11 +150,12 @@ const py = run(python, ['export.py'], dir);
 if (py.status !== 0) fail(py, py.stderr.includes('No module named') ? 2 : 1);
 
 const table = (file) => readFileSync(file, 'utf8').trim().split(/\r?\n/).map((l) => l.split(',').map((c) => (c === '""' ? '' : c)));
+const plain = /^-?\d+(\.\d+)?$/;
 const same = (x, y) => {
   if (x === y) return true;
-  if (x === '' || y === '') return false;
+  if (!plain.test(x) || !plain.test(y)) return false;
   const a = Number(x), b = Number(y);
-  return !isNaN(a) && !isNaN(b) && Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+  return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
 };
 const problems = [];
 for (const [name] of C) {
