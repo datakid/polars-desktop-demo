@@ -117,6 +117,9 @@ const C = [
   ['append_relaxed', { type: 'Append', others: ['q0'], mode: 'relaxed' }],
   ['append_strict', { type: 'Append', others: ['q0'], mode: 'strict' }],
   ['checkpoint', { type: 'Checkpoint' }],
+  ['changetype_text_ts', { type: 'ChangeType', changes: [{ col: 'ts', type: 'text' }] }],
+  ['changetype_text_ok', { type: 'ChangeType', changes: [{ col: 'ok', type: 'text' }] }],
+  ['changetype_text_day', { type: 'ChangeType', changes: [{ col: 'day', type: 'text' }] }],
 ];
 const project = {
   name: 'Export check',
