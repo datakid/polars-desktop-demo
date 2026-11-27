@@ -312,7 +312,7 @@ pub fn profile(id: &str, name: &str) -> R<Value> {
     let top: Vec<Value> = (0..distinct.min(12)).map(|i| json!({ "value": date_wrap(wire(vals.get(i).unwrap_or(AnyValue::Null)), ty), "count": cnt.get(i).unwrap_or(0) })).collect();
     let (mut mean, mut stdev, mut hist) = (Value::Null, Value::Null, Value::Null);
     let (mut min, mut max) = (Value::Null, Value::Null);
-    if non_null.len() > 0 {
+    if !non_null.is_empty() {
         min = extreme(non_null.min_reduce().s()?, ty);
         max = extreme(non_null.max_reduce().s()?, ty);
     }
