@@ -213,7 +213,7 @@
   def('Number.Power', ['n', 'n'], 'number', 'x to the power of y', (x, y) => Math.pow(x, y), (a) => `${a[0]}.pow(${a[1]})`);
   def('Number.Sqrt', ['n'], 'number', 'Square root', (x) => (x < 0 ? new CellError('Square root of a negative number') : Math.sqrt(x)), (a) => `${a[0]}.sqrt()`);
   def('Number.Log', ['n'], 'number', 'Natural logarithm', (x) => (x <= 0 ? new CellError('Log of a non-positive number') : Math.log(x)), (a) => `${a[0]}.log()`);
-  def('Number.From', ['a'], 'number', 'Converts text, booleans or dates to a number (lenient: "1,234", "(5)", "12%")', (v) => (v instanceof Date ? PQ.dateToExcelSerial(v) : num(v)), (a) => `${a[0]}.cast(pl.Float64, strict=False)`, true);
+  def('Number.From', ['a'], 'number', 'Converts text, booleans or dates to a number (lenient: "1,234", "(5)", "12%")', (v) => (v instanceof Date ? PQ.dateToExcelSerial(v) : num(v)), (a) => `floe_parse_number(${a[0]})`, true);
   def('Date.Year', ['d'], 'int', 'Year', (d) => d.getUTCFullYear(), (a) => `${a[0]}.dt.year()`);
   def('Date.Month', ['d'], 'int', 'Month number 1–12', (d) => d.getUTCMonth() + 1, (a) => `${a[0]}.dt.month()`);
   def('Date.Day', ['d'], 'int', 'Day of month', (d) => d.getUTCDate(), (a) => `${a[0]}.dt.day()`);
@@ -227,7 +227,7 @@
   def('Date.StartOfMonth', ['d'], 'date', 'First day of the month', (d) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)), (a) => `${a[0]}.dt.month_start()`);
   def('Date.EndOfMonth', ['d'], 'date', 'Last day of the month', (d) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)), (a) => `${a[0]}.dt.month_end()`);
   def('Date.DiffDays', ['d', 'd'], 'int', 'Whole days from the first date to the second', (a, b) => Math.round((b - a) / DAY), (a) => `(${a[1]} - ${a[0]}).dt.total_days()`);
-  def('Date.From', ['a'], 'date', 'Converts text or an Excel serial number to a date', (v) => { const d = PQ.parseDate(v); return d ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) : new CellError('Cannot convert "' + v + '" to a date', v); }, (a) => `${a[0]}.str.to_date(strict=False)`, true);
+  def('Date.From', ['a'], 'date', 'Converts text or an Excel serial number to a date', (v) => { const d = PQ.parseDate(v); return d ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) : new CellError('Cannot convert "' + v + '" to a date', v); }, (a) => `floe_parse_datetime(${a[0]}).dt.date()`, true);
   def('Date.ToText', ['d', 't?'], 'text', 'Formats a date: tokens yyyy, MM, dd, MMM', (d, f) => {
     f = f || 'yyyy-MM-dd'; const p = (n) => String(n).padStart(2, '0');
     return f.replace(/yyyy|MMMM|MMM|MM|dd|HH|mm|ss/g, (t) => ({ yyyy: d.getUTCFullYear(), MMMM: MONTHN[d.getUTCMonth()], MMM: MONTHN[d.getUTCMonth()].slice(0, 3), MM: p(d.getUTCMonth() + 1), dd: p(d.getUTCDate()), HH: p(d.getUTCHours()), mm: p(d.getUTCMinutes()), ss: p(d.getUTCSeconds()) }[t]));
@@ -415,6 +415,8 @@
           const map = { and: '&', or: '|', '=': '==', '<>': '!=' };
           if (n.op === '&') return `pl.concat_str([${a}, ${b}], ignore_nulls=True)`;
           if (n.op === 'in') return `${a}.is_in(${b})`;
+          if (n.op === '=') return `(${a}).eq_missing(${b})`;
+          if (n.op === '<>') return `(${a}).ne_missing(${b})`;
           return `(${a} ${map[n.op] || n.op} ${b})`;
         }
         case 'call': {

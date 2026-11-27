@@ -59,6 +59,7 @@ writeFileSync(join(data, 'm.csv'), messy);
 const messySrc = { type: 'Source', source: { kind: 'file', fileId: 'm.csv', fileName: 'm.csv', csv: { delimiter: ',', header: true } } };
 const messyCase = (col, type) => [messySrc, { type: 'ChangeType', changes: [{ col, type }] }, { type: 'ReplaceErrors', cols: [col] }];
 const jsonSrc = { type: 'Source', source: { kind: 'file', fileId: 'j.csv', fileName: 'j.csv', csv: { delimiter: ',', header: true } } };
+const filterBy = (conds, join) => ({ type: 'Filter', mode: 'builder', builder: { join: join || 'and', conds } });
 const C = [
   ['filter_num', { type: 'Filter', mode: 'advanced', formula: '[val] > 50' }],
   ['filter_or', { type: 'Filter', mode: 'advanced', formula: '[grp] = "a" or [val] < 10' }],
@@ -173,6 +174,37 @@ const C = [
   ['messy_date', messyCase('d', 'date')],
   ['messy_datetime', messyCase('t', 'datetime')],
   ['messy_bool', messyCase('b', 'bool')],
+  ['filter_contains', filterBy([{ col: 'name', op: 'contains', value: 'smith' }])],
+  ['filter_contains_case', filterBy([{ col: 'name', op: 'contains', value: 'ALICE' }])],
+  ['filter_not_contains', filterBy([{ col: 'name', op: 'not_contains', value: 'white' }])],
+  ['filter_starts', filterBy([{ col: 'name', op: 'starts', value: 'BOB' }])],
+  ['filter_ends', filterBy([{ col: 'name', op: 'ends', value: 'white' }])],
+  ['filter_null', filterBy([{ col: 'name', op: 'null' }])],
+  ['filter_not_null_price', filterBy([{ col: 'price', op: 'not_null' }])],
+  ['filter_in', filterBy([{ col: 'grp', op: 'in', values: ['a', 'b'] }])],
+  ['filter_not_in', filterBy([{ col: 'grp', op: 'not_in', values: ['a'] }])],
+  ['filter_text_gt', filterBy([{ col: 'name', op: 'gt', value: 'C', numeric: false }])],
+  ['filter_eq_unicode', filterBy([{ col: 'name', op: 'eq', value: 'Zoë Ünal', numeric: false }])],
+  ['filter_ne_text', filterBy([{ col: 'grp', op: 'ne', value: 'a', numeric: false }])],
+  ['filter_date_ge', filterBy([{ col: 'day', op: 'ge', value: '2025-01-15' }])],
+  ['filter_ts_lt', filterBy([{ col: 'ts', op: 'lt', value: '2025-01-10' }])],
+  ['filter_or_mix', filterBy([{ col: 'val', op: 'gt', value: '90' }, { col: 'name', op: 'null' }], 'or')],
+  ['sort_ts_price', { type: 'Sort', by: [{ col: 'ts', desc: true }, { col: 'price', desc: false }, { col: 'id', desc: false }] }],
+  ['groupby_text', { type: 'GroupBy', keys: ['name'], aggs: [{ fn: 'min', col: 'code' }, { fn: 'max', col: 'code' }, { fn: 'count_distinct', col: 'code' }, { fn: 'first', col: 'code' }, { fn: 'last', col: 'code' }, { fn: 'count_rows' }] }],
+  ['groupby_stats', { type: 'GroupBy', keys: ['grp'], aggs: [{ fn: 'median', col: 'val' }, { fn: 'std', col: 'val' }, { fn: 'var', col: 'val' }, { fn: 'mean', col: 'price' }, { fn: 'sum', col: 'price' }, { fn: 'count', col: 'price' }] }],
+  ['groupby_two_keys', { type: 'GroupBy', keys: ['grp', 'ok'], aggs: [{ fn: 'count_rows' }, { fn: 'max', col: 'ts' }, { fn: 'min', col: 'day' }] }],
+  ['merge_left', { type: 'Merge', right: 'q0', how: 'left', on: [['id', 'id']], expand: ['val'], prefix: 'r' }],
+  ['merge_inner', { type: 'Merge', right: 'q0', how: 'inner', on: [['id', 'id']], expand: ['val', 'name'], prefix: 'r' }],
+  ['merge_right', { type: 'Merge', right: 'q0', how: 'right', on: [['id', 'id']], expand: ['val'], prefix: 'r' }],
+  ['merge_full', { type: 'Merge', right: 'q0', how: 'full', on: [['id', 'id']], expand: ['val'], prefix: 'r' }],
+  ['merge_semi', { type: 'Merge', right: 'q0', how: 'semi', on: [['id', 'id']] }],
+  ['merge_anti', { type: 'Merge', right: 'q0', how: 'anti', on: [['id', 'id']] }],
+  ['merge_null_keys', { type: 'Merge', right: 'q0', how: 'inner', on: [['price', 'price']], expand: ['id'], prefix: 'r' }],
+  ['merge_text_keys', { type: 'Merge', right: 'q0', how: 'left', on: [['grp', 'grp'], ['ok', 'ok']], expand: ['id'], prefix: 'r' }],
+  ['text_upper', { type: 'TextTransform', cols: ['name'], op: 'upper' }],
+  ['text_lower', { type: 'TextTransform', cols: ['name'], op: 'lower' }],
+  ['text_trim', { type: 'TextTransform', cols: ['name'], op: 'trim' }],
+  ['text_clean', { type: 'TextTransform', cols: ['name'], op: 'clean' }],
 ];
 const project = {
   name: 'Export check',

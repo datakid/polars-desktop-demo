@@ -196,7 +196,7 @@
       case 'IndexColumn': return (+k.step || 1) === 1 ? `.with_row_index(${py(k.name || 'Index')}, offset=${k.start || 0})` : `.with_columns((pl.int_range(pl.len()) * ${k.step} + ${k.start || 0}).alias(${py(k.name || 'Index')}))`;
       case 'DuplicateColumn': helpers.add('def floe_duplicate_column'); return `.pipe(floe_duplicate_column, ${py(k.col)}, ${py(k.name || k.col + ' - Copy')})`;
       case 'GroupBy': {
-        const map = { count_rows: () => 'pl.len()', count: (c) => `pl.col(${c}).count()`, count_distinct: (c) => `pl.col(${c}).n_unique()`, sum: (c) => `pl.col(${c}).sum()`, mean: (c) => `pl.col(${c}).mean()`, median: (c) => `pl.col(${c}).median()`, std: (c) => `pl.col(${c}).std()`, mode: (c) => `pl.col(${c}).drop_nulls().mode().sort().first()`, percentile: (c, a) => `pl.col(${c}).quantile(${(a.p === undefined || a.p === '' ? 50 : +a.p) / 100}, "linear")`, var: (c) => `pl.col(${c}).var()`, min: (c) => `pl.col(${c}).min()`, max: (c) => `pl.col(${c}).max()`, first: (c) => `pl.col(${c}).first()`, last: (c) => `pl.col(${c}).last()`, concat: (c, a) => `pl.col(${c}).cast(pl.String).str.join(${py(a.sep === undefined ? ', ' : a.sep)})` };
+        const map = { count_rows: () => 'pl.len()', count: (c) => `pl.col(${c}).count()`, count_distinct: (c) => `pl.col(${c}).drop_nulls().n_unique()`, sum: (c) => `pl.col(${c}).sum()`, mean: (c) => `pl.col(${c}).mean()`, median: (c) => `pl.col(${c}).median()`, std: (c) => `pl.col(${c}).std()`, mode: (c) => `pl.col(${c}).drop_nulls().mode().sort().first()`, percentile: (c, a) => `pl.col(${c}).quantile(${(a.p === undefined || a.p === '' ? 50 : +a.p) / 100}, "linear")`, var: (c) => `pl.col(${c}).var()`, min: (c) => `pl.col(${c}).min()`, max: (c) => `pl.col(${c}).max()`, first: (c) => `pl.col(${c}).first()`, last: (c) => `pl.col(${c}).last()`, concat: (c, a) => `pl.col(${c}).cast(pl.String).str.join(${py(a.sep === undefined ? ', ' : a.sep)})` };
         const aggs = (k.aggs || []).map((a) => `${map[a.fn](py(a.col), a)}.alias(${py(a.name || (PQ.Engine ? PQ.Engine.aggName(a) : a.fn + (a.col ? ' of ' + a.col : '')))})`);
         if (!k.keys || !k.keys.length) return `.select(${aggs.join(', ')})`;
         return `.group_by(${pyList(k.keys)}, maintain_order=True).agg(\n        ${aggs.join(',\n        ')},\n    )`;
@@ -209,12 +209,10 @@
         return `\n    # Transpose forces materialization\n    .collect().pipe(lambda d: d.with_columns(floe_as_text(pl.col(${py(k.headerCol)}), d.schema[${py(k.headerCol)}]).alias(${py(k.headerCol)}))).transpose(include_header=True, header_name="Name", column_names=${py(k.headerCol)}).lazy()`;
       }
       case 'Merge': {
-        const right = vars[k.right] || 'None';
+        helpers.add('def floe_merge');
         const how = { left: 'left', right: 'right', inner: 'inner', full: 'full', semi: 'semi', anti: 'anti', cross: 'cross' }[k.how || 'left'];
-        const exp = k.expand && k.expand.length ? `.select(${pyList([...new Set((k.on || []).map((p) => p[1]).concat(k.expand))])})` : '';
-        if (how === 'cross') return `.join(${right}${exp}, how="cross")`;
         const lo = (k.on || []).map((p) => p[0]), ro = (k.on || []).map((p) => p[1]);
-        return `.join(\n        ${right}${exp},\n        left_on=${pyList(lo)}, right_on=${pyList(ro)},\n        how=${py(how)}${how === 'full' ? ', coalesce=True' : ''}, suffix=${py(k.prefix ? '_' + k.prefix : '_right')},\n    )`;
+        return `.pipe(floe_merge, ${vars[k.right] || 'None'}, ${py(how)}, ${pyList(lo)}, ${pyList(ro)}, ${pyList(k.expand || [])}, ${py(k.prefix || '')}${k.castKeys ? ', True' : ''})`;
       }
       case 'Append': return `\n    .pipe(lambda lf: pl.concat([lf, ${(k.others || []).map((o) => vars[o] || 'None').join(', ')}], how=${py(k.mode === 'strict' ? 'vertical' : 'diagonal_relaxed')}))`;
       case 'Window': {
@@ -270,6 +268,7 @@
 
     return column.cast(pl.String).map_elements(fix, return_dtype=pl.String)`,
     'def floe_parse_datetime': `def floe_parse_datetime(column: pl.Expr, dmy: bool = False) -> pl.Expr:
+    column = column if isinstance(column, pl.Expr) else pl.lit(column)
     months = {name: number + 1 for number, name in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split())}
     text = column.cast(pl.String).str.strip_chars()
     clock = r"(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?"
@@ -303,6 +302,7 @@
         built.append(pl.when(valid & (stamp.dt.day() == day)).then(stamp))
     return pl.coalesce(built)`,
     'def floe_parse_number': `def floe_parse_number(column: pl.Expr, comma: bool = False) -> pl.Expr:
+    column = column if isinstance(column, pl.Expr) else pl.lit(column)
     text = column.cast(pl.String).str.strip_chars()
     negative = text.str.contains(r"^\\(.*\\)$")
     unwrapped = text.str.replace(r"^\\((.*)\\)$", "\${1}")
@@ -319,6 +319,34 @@
         if bad:
             raise ValueError(f"{bad} value(s) in column {name} could not be converted")
     return lf`,
+    'def floe_merge': `def floe_merge(lf: pl.LazyFrame, right: pl.LazyFrame, how: str, left_on: list[str], right_on: list[str], expand: list[str], prefix: str, cast_keys: bool = False) -> pl.LazyFrame:
+    existing = set(lf.collect_schema().names())
+    cols = expand or [name for name in right.collect_schema().names() if name not in set(right_on)]
+    names = {}
+    for col in cols:
+        base = f"{prefix}.{col}" if prefix else col
+        name, i = base, 1
+        while name in existing:
+            name, i = f"{base}_{i}", i + 1
+        existing.add(name)
+        names[col] = name
+    if how == "cross":
+        return lf.join(right.select([pl.col(col).alias(names[col]) for col in cols]), how="cross")
+    left_keys = [f"__left{i}" for i in range(len(left_on))]
+    right_keys = [f"__right{i}" for i in range(len(right_on))]
+    schema = lf.collect_schema()
+    shape = (lambda column: column.cast(pl.String)) if cast_keys else (lambda column: column)
+    left = lf.with_columns([shape(pl.col(key)).alias(alias) for key, alias in zip(left_on, left_keys)])
+    keyed = right.select([shape(pl.col(key)).alias(alias) for key, alias in zip(right_on, right_keys)])
+    if how in ("semi", "anti"):
+        return left.join(keyed, left_on=left_keys, right_on=right_keys, how=how).drop(left_keys)
+    side = right.select([shape(pl.col(key)).alias(alias) for key, alias in zip(right_on, right_keys)] + [pl.col(col).alias(names[col]) for col in cols]).with_columns(pl.lit(True).alias("__present"))
+    joined = left.join(side, left_on=left_keys, right_on=right_keys, how="left" if how == "left" else "inner" if how == "inner" else "full", coalesce=False, maintain_order="left_right")
+    if how in ("right", "full"):
+        joined = joined.with_columns([pl.coalesce(pl.col(key), pl.col(alias).cast(schema[key])).alias(key) for key, alias in zip(left_on, right_keys)])
+    if how == "right":
+        joined = joined.filter(pl.col("__present").is_not_null())
+    return joined.drop(left_keys + right_keys + ["__present"])`,
     'def demote_headers': `def demote_headers(lf: pl.LazyFrame) -> pl.LazyFrame:
     df = lf.collect()
     df = df.select([floe_as_text(pl.col(c), t).alias(c) for c, t in df.schema.items()])
@@ -372,6 +400,8 @@
       const body = steps.slice(1).map((s) => {
         const code = stepCode(s.kind, { vars, helpers, loc: project.settings.locale, sqlRefs });
         if (code.includes('floe_proper(')) helpers.add('def floe_proper');
+        if (code.includes('floe_parse_number(')) helpers.add('def floe_parse_number');
+        if (code.includes('floe_parse_datetime(')) helpers.add('def floe_parse_datetime');
         const comment = '    # ' + s.name + (s.note ? ' — ' + s.note.replace(/\n/g, ' ') : '');
         return comment + '\n    ' + code.replace(/^\s*\n\s*/, '').replace(/\n {4}(?=\.)/g, '\n    ');
       });
