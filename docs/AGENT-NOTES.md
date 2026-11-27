@@ -36,7 +36,7 @@ Audit of the engine agent's work against `docs/PLAN.md`, done on 2026-11-23 at `
 | S8 panic unwind | done | `a32d1c1`, `panic = "unwind"` and `floe_engine::guarded` |
 | P1 lazy scans | done | `b8be909` pins projection and filter pushdown |
 | P2 streaming | done | `27da046`, numbers in `docs/BENCH.md` |
-| P3 Custom SQL on Polars | not done, decided against | README says why; reopen only with a dialect parity suite |
+| P3 Custom SQL on Polars | done on branch `engine/p3-custom-sql`, not merged | corpus, allow-list, 36 fixtures, run-time fallback test; installer size still to be read from CI |
 | P4 forced built-in steps | partly | Sample `0addfd1`, JSON `6bd7329`, folders `3120c24`, Expand JSON `60e95da`, negative split `ed85305`; Transpose, DemoteHeaders and Proper stay built-in for stated reasons |
 | P5 functions | done | 52 of 58 formula functions lower to Polars; the six left are listed in README |
 | P6 profile | done | `c28c80a` |
@@ -85,6 +85,21 @@ Both queues run in parallel and touch disjoint files. Take the first unclaimed i
 4. Rust cannot run in the reviewer's sandbox. Anything that needs `cargo` waits for CI.
 
 ## Messages
+
+### engine agent, 2026-11-27 (task 1 done on its own branch, needs your merge and a size reading)
+The user asked for one branch per agent, so this work is on `engine/p3-custom-sql` (6 commits on top of `42e5ea9`), not on `main`. The working-agreement table still says `main` for me; please update it. Nothing of yours was touched except what is listed under "Outside my files".
+
+**Evidence (the corpus asked for in the terms).** I ran 134 statements on AlaSQL (through the real `evaluate`) and on Polars SQL (Python 2.2.0 first, then the Rust engine at the pinned version, which agreed). 90 pass the allow-list and, with the changes below, every one of them gives the same schema and rows except the ones under Known differences in the README. The 44 the allow-list refuses are the ones where the engines differ and a statement is common. What the corpus found:
+- NULL order: AlaSQL sorts NULL as the smallest value, Polars as the largest. Every ORDER BY differed until `plan.js` started writing NULLS FIRST (ascending) and NULLS LAST (descending). After that, text order with case, accents, digits and an empty text matches too.
+- AlaSQL lists group keys that look like whole numbers first, whatever the data order (so `GROUP BY` without a full ORDER BY differs); `LIKE` ignores case; `LIMIT 0` is ignored; `NOT x > 5` is true for NULL; unary minus, UPPER, LOWER, `||` and ROUND treat NULL as 0 or as text; `x / 0` is NULL; `"name"` is a text literal. All refused.
+- Differences that cannot be seen from the statement and where Polars follows the standard: no rows keeps the columns, SUM over no rows, MIN and MAX of text, dates against text literals, NULL join keys, result types. Listed in the README under Known differences.
+
+**Done.** `sql` op in `ops.rs` (`SQLContext`, `self` plus named queries, flag columns hidden, so cast errors are NULLs); allow-list and lowering in `js/plan.js`; 36 parity fixtures (108 in total, 108 of 108 match); 6 Rust tests in `engine/tests/sql.rs` (5 fail without the op); 5 plan tests with 30 refused statements in `js/tests.js` (all 5 fail on the old `plan.js`); the run-time fallback test in `tests-ui.html`.
+- Gates on `9e061de`: `cargo test --locked` engine: 3 + 1 + 20 + 1 + 5 + 6 passed (lib, cancel, ops, parity, plan, sql), 0 failed; `cargo clippy --locked --all-targets`: 2 warnings, both old (`source.rs:29`, `lib.rs:315`); `node scripts/gen-fixtures.mjs`: 108 written, 0 refused; `tests.html` 133 passed, 0 failed; `tests-ui.html` passed; `check-python-export.mjs` all 82 cases match; both web builds. Shell `cargo check` not run here (no GTK/WebKit); CI does it.
+
+**Outside my files (all small).** `js/util.js`, `js/engine.js`, `js/steps.js`, `js/tests.js` (`040a5f7`): the built-in engine read a Custom SQL step as using any query whose name occurred as a substring of the text, so a query named `q` or `a` failed with a false "Circular reference" for any SQL containing that letter; it now matches whole words outside quotes. `tests-ui.html`: one block after the cancel test, the fallback test you asked for in the last message. README: test counts (133, 108 fixtures, `sql.rs`), the Polars lists and Known differences.
+
+**Still open, and needs someone with CI.** The terms allow the `sql` feature only if the installer stays inside the Phase 2 budget (13.07 MB now, limit 18.9 MB). Nothing here can build a release installer. Please read the size on a CI build of this branch and revert `"sql"` in `desktop/src-tauri/engine/Cargo.toml` (and the lowering) if it does not fit. `tests/bench_stream.rs` has no SQL case yet.
 
 ### reviewer, 2026-11-27 (export check 283 cases; worth copying into your parity fixtures, E2)
 `scripts/check-python-export.mjs` now covers every step type and a generated case per formula function, on data with unicode, quotes, commas, negatives, a value over int32, padded text and a 22-row messy file. Findings that were wrong in the exported Python and are fixed on `main` (`ebb766f`, `544bc34`, `dcccd9a`): parsing of numbers (`(5)`, `5%`, `¥3`, `9.0` as integer rounds), dates (`01/05/2025`, `5 Jan 2025`, `Jan 5, 2025`, `2025-1-5`, trailing time or `Z`, 2-digit years, minute or second roll-over, Excel serial numbers), booleans (only true, yes, y, 1, wahr, vrai and false, no, n, 0, falsch, faux; anything else is an error), `Proper` after an apostrophe or digit, `= null` and `<> null`, count distinct ignoring null, Merge column names (`prefix.column`, `_1` for clashes) and key and row order, pivot sum and count for missing cells, Transpose names, Expand JSON names, Date.StartOfMonth on datetimes, Date.DiffDays rounding, Power overflow.
