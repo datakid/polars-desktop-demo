@@ -169,7 +169,9 @@
       }
       case 'ReplaceErrors': return k.value === undefined || k.value === null || k.value === '' ? `  # ReplaceErrors with null: Polars casts non-strictly, so errors are already null` : `  # ReplaceErrors: Polars casts non-strictly, so errors are already null\n    .with_columns(pl.col(${pyList(k.cols)}).fill_null(${pyVal(k.value)}))`;
       case 'RemoveErrors': case 'KeepErrors': return `  # ${k.type}: per-cell errors are a Floe concept; nulls from failed casts are the Polars equivalent`;
-      case 'TextTransform': return `.with_columns(pl.col(${pyList(k.cols)}).cast(pl.String)${{ upper: '.str.to_uppercase()', lower: '.str.to_lowercase()', trim: '.str.strip_chars()', clean: '.str.replace_all(r"\\s+", " ").str.strip_chars()', proper: '.str.to_titlecase()' }[k.op]})`;
+      case 'TextTransform':
+        if (k.op === 'proper') { helpers.add('def floe_proper'); return `.with_columns(floe_proper(pl.col(${pyList(k.cols)})))`; }
+        return `.with_columns(pl.col(${pyList(k.cols)}).cast(pl.String)${{ upper: '.str.to_uppercase()', lower: '.str.to_lowercase()', trim: '.str.strip_chars()', clean: '.str.replace_all(r"\\s+", " ").str.strip_chars()' }[k.op]})`;
       case 'RoundNumbers': {
         const d = Math.max(0, Math.min(12, +k.digits || 0)), f = Math.pow(10, d), base = `pl.col(${pyList(k.cols)}).cast(pl.Float64)`;
         return d === 0 ? `.with_columns((${base} + 0.5).floor().cast(pl.Int64))` : `.with_columns((${base} * ${f} + 0.5).floor() / ${f})`;
@@ -196,7 +198,7 @@
         return `.group_by(${pyList(k.keys)}, maintain_order=True).agg(\n        ${aggs.join(',\n        ')},\n    )`;
       }
       case 'Unpivot': helpers.add('def floe_as_text'); helpers.add('def floe_unpivot'); return `.pipe(floe_unpivot, ${k.ids ? pyList(k.ids) : 'None'}, ${k.values && k.values.length ? pyList(k.values) : 'None'}, ${py(k.var || 'Attribute')}, ${py(k.val || 'Value')}, ${k.dropNulls !== false ? 'True' : 'False'})`;
-      case 'Pivot': return `\n    # Pivot needs all data to know its output columns → materialize, then continue lazily\n    .collect().pivot(on=${py(k.on)}, index=${pyList(k.index)}, values=${k.values ? py(k.values) : 'None'}, aggregate_function=${py({ sum: 'sum', mean: 'mean', count_rows: 'len', min: 'min', max: 'max', first: 'first', last: 'last', median: 'median' }[k.agg || 'sum'] || 'first')}).lazy()`;
+      case 'Pivot': return `\n    # Pivot needs all data to know its output columns → materialize, then continue lazily\n    .collect().pivot(on=${py(k.on)}, index=${pyList(k.index)}, values=${k.values ? py(k.values) : 'None'}, aggregate_function=${{ sum: 'pl.when(pl.element().len() > 0).then(pl.element().sum())', count_rows: 'pl.when(pl.element().len() > 0).then(pl.element().len())' }[k.agg || 'sum'] || py({ mean: 'mean', min: 'min', max: 'max', first: 'first', last: 'last', median: 'median' }[k.agg] || 'first')}).lazy()`;
       case 'Transpose': {
         if (!k.headerCol) return `\n    # Transpose forces materialization\n    .collect().pipe(lambda d: d.transpose(include_header=True, header_name="Name", column_names=[f"Column{i + 1}" for i in range(d.height)])).lazy()`;
         helpers.add('def floe_as_text');
@@ -248,6 +250,21 @@
     dtype = lf.select(pl.col(col)).collect().to_series().str.json_decode().dtype
     names = [f"{col}.{field.name}" for field in dtype.fields]
     return lf.with_columns(pl.col(col).str.json_decode(dtype).struct.rename_fields(names)).unnest(col)`,
+    'def floe_proper': `def floe_proper(column: pl.Expr) -> pl.Expr:
+    import unicodedata
+
+    def fix(value):
+        if value is None:
+            return None
+        out, inside = [], False
+        for ch in value.lower():
+            category = unicodedata.category(ch)
+            letter = category.startswith("L")
+            out.append(ch.upper() if letter and not inside else ch)
+            inside = letter or category.startswith("N") or ch == "'"
+        return "".join(out)
+
+    return column.cast(pl.String).map_elements(fix, return_dtype=pl.String)`,
     'def demote_headers': `def demote_headers(lf: pl.LazyFrame) -> pl.LazyFrame:
     df = lf.collect()
     df = df.select([floe_as_text(pl.col(c), t).alias(c) for c, t in df.schema.items()])
@@ -300,6 +317,7 @@
       const sqlRefs = project.queries.filter((o) => ids.includes(o.id) && o.id !== id && depSet.has(o.id)).map((o) => ({ alias: PQ.snake(o.name), var: vars[o.id] }));
       const body = steps.slice(1).map((s) => {
         const code = stepCode(s.kind, { vars, helpers, loc: project.settings.locale, sqlRefs });
+        if (code.includes('floe_proper(')) helpers.add('def floe_proper');
         const comment = '    # ' + s.name + (s.note ? ' — ' + s.note.replace(/\n/g, ' ') : '');
         return comment + '\n    ' + code.replace(/^\s*\n\s*/, '').replace(/\n {4}(?=\.)/g, '\n    ');
       });

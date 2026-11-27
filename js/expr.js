@@ -185,7 +185,7 @@
 
   def('Text.Upper', ['t'], 'text', 'Converts text to upper case', (s) => s.toUpperCase(), (a) => `${a[0]}.str.to_uppercase()`);
   def('Text.Lower', ['t'], 'text', 'Converts text to lower case', (s) => s.toLowerCase(), (a) => `${a[0]}.str.to_lowercase()`);
-  def('Text.Proper', ['t'], 'text', 'Capitalises the first letter of every word', (s) => s.toLowerCase().replace(/(^|[^\p{L}\p{N}'])(\p{L})/gu, (m, p, c) => p + c.toUpperCase()), (a) => `${a[0]}.str.to_titlecase()`);
+  def('Text.Proper', ['t'], 'text', 'Capitalises the first letter of every word', (s) => s.toLowerCase().replace(/(^|[^\p{L}\p{N}'])(\p{L})/gu, (m, p, c) => p + c.toUpperCase()), (a) => `floe_proper(${a[0]})`);
   def('Text.Trim', ['t'], 'text', 'Removes leading and trailing whitespace', (s) => s.trim(), (a) => `${a[0]}.str.strip_chars()`);
   def('Text.Clean', ['t'], 'text', 'Removes control characters and collapses repeated spaces', (s) => s.replace(/[\x00-\x1f\x7f]/g, '').replace(/\s+/g, ' ').trim(), (a) => `${a[0]}.str.replace_all(r"[\\x00-\\x1f\\x7f]", "").str.replace_all(r"\\s+", " ").str.strip_chars()`);
   def('Text.Length', ['t'], 'int', 'Number of characters', (s) => s.length, (a) => `${a[0]}.str.len_chars()`);

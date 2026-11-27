@@ -17,6 +17,11 @@ for (let i = 1; i <= 120; i++) {
   const code = i % 13 === 0 ? '' : i % 7 === 0 ? 'Z' : String.fromCharCode(65 + (i % 26)) + String.fromCharCode(66 + (i % 25)) + '-' + String(i).padStart(4, '0');
   rows.push([i, 'abc'[i % 3], (i * 37) % 101, i % 11 === 0 ? '' : ((i * 13 % 1000) / 10).toFixed(1), names[i % 4], '2025-01-' + String((i % 28) + 1).padStart(2, '0'), i % 17 === 0 ? '' : i % 3 === 0 ? 'true' : 'false', i % 19 === 0 ? '' : '2025-01-' + String((i % 28) + 1).padStart(2, '0') + ' ' + hour + ':' + minute + ':00', code].join(','));
 }
+rows.push('121,a,-5,-0.5,Zoë Ünal,2025-02-01,true,2025-02-01 08:15:00,0042');
+rows.push('122,b,0,0.0,"O\'Brien, Jr.",2025-02-02,false,2025-02-02 00:00:00,A-1');
+rows.push('123,c,9999999999,1000000.5,"say ""hi""",2025-02-03,,2025-02-03 23:59:59,');
+rows.push('124,a,101,0.1,   ,2025-02-04,true,,B-2');
+rows.push('125,b,7,12.25,İSTANBUL ΑΒΓ,2025-02-05,false,2025-02-05 12:00:00,C-3');
 writeFileSync(join(data, 'orders.csv'), rows.join('\n') + '\n');
 writeFileSync(join(data, 'j.csv'), 'id,js\n1,"{""a"":1,""b"":""x"",""c"":true}"\n2,"{""a"":2,""b"":""y"",""c"":false}"\n3,"{""a"":3,""b"":null,""c"":true}"\n4,"{""a"":4,""b"":""z"",""c"":true}"\n5,"{""a"":5,""c"":false}"\n');
 
@@ -43,6 +48,7 @@ const C = [
   ['split_rows', { type: 'SplitColumn', col: 'name', mode: 'rows', delimiter: ' ' }],
   ['mergecols', { type: 'MergeColumns', cols: ['grp', 'val'], sep: '-', name: 'm' }],
   ['add_arith', { type: 'AddColumn', name: 'c', formula: '[val] * 2 + 1' }],
+  ['formula_proper', { type: 'AddColumn', name: 'p', formula: 'Text.Proper([name]) & " " & Text.Proper([code])' }],
   ['add_text', { type: 'AddColumn', name: 'c', formula: 'Text.Upper([grp]) & "-" & Text.From([val])' }],
   ['add_year', { type: 'AddColumn', name: 'c', formula: 'Date.Year([day]) * 100 + Date.Month([day])' }],
   ['add_coalesce', { type: 'AddColumn', name: 'c', formula: 'Coalesce([price], 0) + 1' }],
@@ -53,6 +59,13 @@ const C = [
   ['groupby', { type: 'GroupBy', keys: ['grp'], aggs: [{ fn: 'sum', col: 'val' }, { fn: 'count_rows' }, { fn: 'min', col: 'val' }, { fn: 'max', col: 'val' }, { fn: 'mean', col: 'val' }] }],
   ['groupby2', { type: 'GroupBy', keys: ['grp', 'name'], aggs: [{ fn: 'sum', col: 'val' }] }],
   ['unpivot', { type: 'Unpivot', ids: ['id', 'grp'] }],
+  ['pivot_count_rows', { type: 'Pivot', on: 'grp', values: 'val', agg: 'count_rows', index: ['name'] }],
+  ['pivot_mean', { type: 'Pivot', on: 'grp', values: 'val', agg: 'mean', index: ['name'] }],
+  ['pivot_min', { type: 'Pivot', on: 'grp', values: 'val', agg: 'min', index: ['name'] }],
+  ['pivot_max', { type: 'Pivot', on: 'grp', values: 'val', agg: 'max', index: ['name'] }],
+  ['pivot_first', { type: 'Pivot', on: 'grp', values: 'val', agg: 'first', index: ['name'] }],
+  ['pivot_last', { type: 'Pivot', on: 'grp', values: 'val', agg: 'last', index: ['name'] }],
+  ['pivot_median', { type: 'Pivot', on: 'grp', values: 'val', agg: 'median', index: ['name'] }],
   ['pivot', { type: 'Pivot', on: 'grp', values: 'val', agg: 'sum', index: ['name'] }],
   ['win_cumsum', { type: 'Window', op: 'cumsum', col: 'val', partition: ['grp'], name: 'w' }],
   ['win_rank', { type: 'Window', op: 'rank', col: 'val', partition: [], name: 'w' }],
@@ -149,8 +162,22 @@ if (gen.status !== 0) fail(gen);
 const py = run(python, ['export.py'], dir);
 if (py.status !== 0) fail(py, py.stderr.includes('No module named') ? 2 : 1);
 
-const table = (file) => readFileSync(file, 'utf8').trim().split(/\r?\n/).map((l) => l.split(',').map((c) => (c === '""' ? '' : c)));
-const plain = /^-?\d+(\.\d+)?$/;
+const table = (file) => {
+  const text = readFileSync(file, 'utf8'), out = [];
+  let row = [], cell = '', quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') quoted = false; else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); out.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  if (cell !== '' || row.length) { row.push(cell); out.push(row); }
+  return out;
+};
+const plain = /^-?\d+(\.\d+)?([eE][-+]?\d+)?$/;
 const same = (x, y) => {
   if (x === y) return true;
   if (!plain.test(x) || !plain.test(y)) return false;
