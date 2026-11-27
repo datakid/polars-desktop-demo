@@ -139,8 +139,10 @@
       case 'RemoveColumns': return `.drop(${pyList(k.cols)})`;
       case 'Rename': return `.rename({${(k.map || []).map((p) => py(p[0]) + ': ' + py(p[1])).join(', ')}})`;
       case 'ChangeType': {
+        const textCols = (k.changes || []).filter((c) => c.type === 'text').map((c) => c.col);
+        if (textCols.length) { helpers.add('def floe_as_text'); helpers.add('def floe_datetime_text'); }
         const exprs = (k.changes || []).map((c) => castExpr(c, c.locale || k.locale || loc).replace(/strict=False/g, k.onError === 'fail' ? 'strict=True' : 'strict=False'));
-        return `.with_columns(\n        ${exprs.join(',\n        ')},\n    )`;
+        return `${textCols.length ? '.pipe(floe_datetime_text, ' + pyList(textCols) + ')\n    ' : ''}.with_columns(\n        ${exprs.join(',\n        ')},\n    )`;
       }
       case 'Filter': return `.filter(${formula(PQ.Engine ? PQ.Engine.filterFormula(k) : k.formula)})`;
       case 'Sort': return `.sort(${pyList((k.by || []).map((b) => b.col))}, descending=[${(k.by || []).map((b) => (b.desc ? 'True' : 'False')).join(', ')}], nulls_last=True, maintain_order=True)`;
@@ -239,6 +241,9 @@
         used.add(name)
         names.append(name)
     return df.slice(row + 1).pipe(lambda d: d.rename(dict(zip(d.columns, names)))).lazy()`,
+    'def floe_datetime_text': `def floe_datetime_text(lf: pl.LazyFrame, cols: list[str]) -> pl.LazyFrame:
+    schema = lf.collect_schema()
+    return lf.with_columns([floe_as_text(pl.col(c), pl.Datetime).alias(c) for c in cols if schema.get(c) is not None and schema[c] == pl.Datetime])`,
     'def demote_headers': `def demote_headers(lf: pl.LazyFrame) -> pl.LazyFrame:
     df = lf.collect()
     df = df.select([floe_as_text(pl.col(c), t).alias(c) for c, t in df.schema.items()])

@@ -74,7 +74,7 @@ Both queues run in parallel and touch disjoint files. Take the first unclaimed i
 | R4 | reviewer | Run-time fallback test for Custom SQL | `tests-ui.html` | E1 |
 | R5 | reviewer | Linux smoke checks for F5 and Ctrl+E | `.github/scripts/linux_smoke.py`, `docs/LINUX.md` | none |
 | R6 | reviewer | Release `v1.1.0-alpha.9` from `main` with green CI after E1 and R4 land | `release.yml` run | E1, R4 |
-| R7 | reviewer | ChangeType to text on a datetime column: Python prints `2025-01-02 01:30:00.000000`, the app `2025-01-02 01:30:00`; fix in the exporter with a case that fails first | `js/steps.js`, `scripts/check-python-export.mjs` | none |
+| R7 | reviewer | ChangeType to text on a datetime column: Python prints `2025-01-02 01:30:00.000000`, the app `2025-01-02 01:30:00`; fix in the exporter with a case that fails first | `js/steps.js`, `scripts/check-python-export.mjs` | none; done in the commit after `1d8cdcf` |
 | D1 | both | Decide how the Python export treats error cells (message of 2026-11-26, error steps); whoever the decision lands on does it | see message | both agents answer on the board |
 
 ## For the engine agent
