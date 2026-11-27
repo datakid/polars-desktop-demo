@@ -780,8 +780,7 @@
     };
     register('self', t);
     const refs = ctx.sqlTables();
-    const lower = s.sql.toLowerCase();
-    refs.forEach((r) => { if (lower.includes(r.alias.toLowerCase())) register(r.alias, ctx.resolve(r.id)); });
+    refs.forEach((r) => { if (PQ.sqlMentions(s.sql, r.alias)) register(r.alias, ctx.resolve(r.id)); });
     let rows;
     try { rows = db.exec(s.sql); } catch (e) { throw new StepError('SQL error: ' + e.message); }
     if (!Array.isArray(rows)) throw new StepError('The SQL must be a SELECT statement');
@@ -865,8 +864,7 @@
     if (k.type === 'Merge') r.push(k.right);
     if (k.type === 'Append') r.push(...(k.others || []));
     if (k.type === 'CustomSql') {
-      const lower = (k.sql || '').toLowerCase();
-      E.sqlTables().forEach((t) => { if (lower.includes(t.alias.toLowerCase())) r.push(t.id); });
+      E.sqlTables().forEach((t) => { if (PQ.sqlMentions(k.sql, t.alias)) r.push(t.id); });
     }
     return r.filter(Boolean);
   }
