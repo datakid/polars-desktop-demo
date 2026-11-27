@@ -217,7 +217,7 @@
         const e = { cumsum: `${c}.cum_sum()`, row_number: `pl.int_range(1, pl.len() + 1)`, rank: `${c}.rank("min", descending=True)`, dense_rank: `${c}.rank("dense", descending=True)`, diff: `${c}.diff()`, cummax: `${c}.cum_max()`, cummin: `${c}.cum_min()`, pct_change: `pl.when(${c}.shift(1) != 0).then((${c} - ${c}.shift(1)) / ${c}.shift(1))`, rolling_sum: `${c}.rolling_sum(${k.n || 3}, min_samples=1)`, rolling_min: `${c}.rolling_min(${k.n || 3}, min_samples=1)`, rolling_max: `${c}.rolling_max(${k.n || 3}, min_samples=1)`, rolling_std: `${c}.rolling_std(${k.n || 3}, min_samples=2)`, lag: `${c}.shift(${k.n || 1})`, lead: `${c}.shift(-${k.n || 1})`, pct_of_total: `${c} / ${c}.sum()`, moving_avg: `${c}.rolling_mean(${k.n || 3}, min_samples=1)` }[k.op];
         return (k.orderBy ? `.sort(${py(k.orderBy)}${k.desc ? ', descending=True' : ''})` : '') + `.with_columns((${e})${over}.alias(${py(k.name || k.op)}))`;
       }
-      case 'ExpandJson': return `.with_columns(pl.col(${py(k.col)}).str.json_decode()).unnest(${py(k.col)})`;
+      case 'ExpandJson': helpers.add('def floe_expand_json'); return `.pipe(floe_expand_json, ${py(k.col)})`;
       case 'CustomSql': {
         const tables = ['"self": LF'].concat(ctx.sqlRefs.map((r) => py(r.alias) + ': ' + r.var));
         return `\n    .pipe(lambda LF: pl.SQLContext({${tables.join(', ')}}).execute(\n        ${py((k.sql || '').replace(/\s+/g, ' ').trim())}\n    ))`;
@@ -244,6 +244,10 @@
     'def floe_datetime_text': `def floe_datetime_text(lf: pl.LazyFrame, cols: list[str]) -> pl.LazyFrame:
     schema = lf.collect_schema()
     return lf.with_columns([floe_as_text(pl.col(c), pl.Datetime).alias(c) for c in cols if schema.get(c) is not None and schema[c] == pl.Datetime])`,
+    'def floe_expand_json': `def floe_expand_json(lf: pl.LazyFrame, col: str) -> pl.LazyFrame:
+    dtype = lf.select(pl.col(col)).collect().to_series().str.json_decode().dtype
+    names = [f"{col}.{field.name}" for field in dtype.fields]
+    return lf.with_columns(pl.col(col).str.json_decode(dtype).struct.rename_fields(names)).unnest(col)`,
     'def demote_headers': `def demote_headers(lf: pl.LazyFrame) -> pl.LazyFrame:
     df = lf.collect()
     df = df.select([floe_as_text(pl.col(c), t).alias(c) for c, t in df.schema.items()])
@@ -292,7 +296,8 @@
       const q = byId.get(id);
       const steps = q.steps.filter((s) => !s.disabled);
       const src = steps[0] && steps[0].kind.type === 'Source' ? sourceCode(steps[0].kind.source, vars, helpers, project) : 'pl.LazyFrame()';
-      const sqlRefs = project.queries.filter((o) => ids.includes(o.id) && o.id !== id).map((o) => ({ alias: PQ.snake(o.name), var: vars[o.id] }));
+      const depSet = new Set(deps(byId.get(id)));
+      const sqlRefs = project.queries.filter((o) => ids.includes(o.id) && o.id !== id && depSet.has(o.id)).map((o) => ({ alias: PQ.snake(o.name), var: vars[o.id] }));
       const body = steps.slice(1).map((s) => {
         const code = stepCode(s.kind, { vars, helpers, loc: project.settings.locale, sqlRefs });
         const comment = '    # ' + s.name + (s.note ? ' — ' + s.note.replace(/\n/g, ' ') : '');

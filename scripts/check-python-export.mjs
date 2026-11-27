@@ -18,12 +18,14 @@ for (let i = 1; i <= 120; i++) {
   rows.push([i, 'abc'[i % 3], (i * 37) % 101, i % 11 === 0 ? '' : ((i * 13 % 1000) / 10).toFixed(1), names[i % 4], '2025-01-' + String((i % 28) + 1).padStart(2, '0'), i % 17 === 0 ? '' : i % 3 === 0 ? 'true' : 'false', i % 19 === 0 ? '' : '2025-01-' + String((i % 28) + 1).padStart(2, '0') + ' ' + hour + ':' + minute + ':00', code].join(','));
 }
 writeFileSync(join(data, 'orders.csv'), rows.join('\n') + '\n');
+writeFileSync(join(data, 'j.csv'), 'id,js\n1,"{""a"":1,""b"":""x"",""c"":true}"\n2,"{""a"":2,""b"":""y"",""c"":false}"\n3,"{""a"":3,""b"":null,""c"":true}"\n4,"{""a"":4,""b"":""z"",""c"":true}"\n5,"{""a"":5,""c"":false}"\n');
 
 const src = { type: 'Source', source: { kind: 'file', fileId: 'orders.csv', fileName: 'orders.csv', csv: { delimiter: ',', header: true } } };
 const ct = { type: 'ChangeType', changes: [{ col: 'id', type: 'int' }, { col: 'val', type: 'int' }, { col: 'price', type: 'number' }, { col: 'day', type: 'date' }, { col: 'ok', type: 'bool' }, { col: 'ts', type: 'datetime' }] };
 const allText = { type: 'ChangeType', changes: ['id', 'grp', 'val', 'price', 'name', 'day', 'ok', 'code'].map((col) => ({ col, type: 'text' })) };
 const grpToInt = { type: 'ChangeType', changes: [{ col: 'grp', type: 'int' }] };
 const codeToInt = { type: 'ChangeType', changes: [{ col: 'code', type: 'int' }] };
+const jsonSrc = { type: 'Source', source: { kind: 'file', fileId: 'j.csv', fileName: 'j.csv', csv: { delimiter: ',', header: true } } };
 const C = [
   ['filter_num', { type: 'Filter', mode: 'advanced', formula: '[val] > 50' }],
   ['filter_or', { type: 'Filter', mode: 'advanced', formula: '[grp] = "a" or [val] < 10' }],
@@ -120,12 +122,17 @@ const C = [
   ['changetype_text_ts', { type: 'ChangeType', changes: [{ col: 'ts', type: 'text' }] }],
   ['changetype_text_ok', { type: 'ChangeType', changes: [{ col: 'ok', type: 'text' }] }],
   ['changetype_text_day', { type: 'ChangeType', changes: [{ col: 'day', type: 'text' }] }],
+  ['expand_json', [jsonSrc, { type: 'ExpandJson', col: 'js' }]],
+  ['sql_select', { type: 'CustomSql', sql: 'SELECT id, grp, val FROM self WHERE val > 50 ORDER BY id' }],
+  ['sql_group', { type: 'CustomSql', sql: 'SELECT grp, SUM(val) AS sum_val, COUNT(*) AS n FROM self GROUP BY grp ORDER BY grp' }],
+  ['sql_alias_limit', { type: 'CustomSql', sql: 'SELECT id AS ident, name FROM self ORDER BY id LIMIT 10' }],
+  ['sql_like_in', { type: 'CustomSql', sql: "SELECT id FROM self WHERE grp IN ('a', 'b') AND name LIKE '%smith%' ORDER BY id" }],
 ];
 const project = {
   name: 'Export check',
   settings: { previewRows: 1000, locale: 'en-US' },
   params: [],
-  queries: C.map(([name, kind], i) => ({ id: 'q' + i, name, load: { target: 'csv' }, steps: [{ id: 's0', name: 'Source', kind: src }, { id: 's1', name: 'Types', kind: ct }].concat((Array.isArray(kind) ? kind : [kind]).map((k, j) => ({ id: 's' + (2 + j), name: 'Step', kind: k }))) })),
+  queries: C.map(([name, kind], i) => ({ id: 'q' + i, name, load: { target: 'csv' }, steps: (Array.isArray(kind) && kind[0].type === 'Source' ? kind : [src, ct].concat(Array.isArray(kind) ? kind : [kind])).map((k, j) => ({ id: 's' + j, name: j === 0 ? 'Source' : 'Step', kind: k })) })),
 };
 writeFileSync(join(dir, 'check.floe'), JSON.stringify(project));
 
