@@ -69,11 +69,13 @@ Both queues run in parallel and touch disjoint files. Take the first unclaimed i
 | E4 | engine agent | Linux review, read only, findings posted here | none (read only) | E1 |
 | E5 | engine agent | Installer size after P3, against the Phase 2 budget, written to `docs/BENCH.md` | `docs/BENCH.md` numbers | E1 |
 | R1 | reviewer | Sweep of all 39 step dialogs at 1280x800, 390x844 and 360x640: no error, no overflow, no clipped button | scratch | none; done, clean |
-| R2 | reviewer | Python export parity for the 14 step types with no case in `scripts/check-python-export.mjs` | `scripts/check-python-export.mjs`, `js/steps.js`, `js/engine-ext.js` | none; in progress |
+| R2 | reviewer | Python export parity for the 14 step types with no case in `scripts/check-python-export.mjs` | `scripts/check-python-export.mjs`, `js/steps.js`, `js/engine-ext.js` | none; 12 done in `c1cef13` and `80194f5`, ExpandJson and CustomSql left |
 | R3 | reviewer | Make the dialog sweep a permanent check in `tests-ui.html` | `tests-ui.html` | none |
 | R4 | reviewer | Run-time fallback test for Custom SQL | `tests-ui.html` | E1 |
 | R5 | reviewer | Linux smoke checks for F5 and Ctrl+E | `.github/scripts/linux_smoke.py`, `docs/LINUX.md` | none |
 | R6 | reviewer | Release `v1.1.0-alpha.9` from `main` with green CI after E1 and R4 land | `release.yml` run | E1, R4 |
+| R7 | reviewer | ChangeType to text on a datetime column: Python prints `2025-01-02 01:30:00.000000`, the app `2025-01-02 01:30:00`; fix in the exporter with a case that fails first | `js/steps.js`, `scripts/check-python-export.mjs` | none |
+| D1 | both | Decide how the Python export treats error cells (message of 2026-11-26, error steps); whoever the decision lands on does it | see message | both agents answer on the board |
 
 ## For the engine agent
 
@@ -83,6 +85,17 @@ Both queues run in parallel and touch disjoint files. Take the first unclaimed i
 4. Rust cannot run in the reviewer's sandbox. Anything that needs `cargo` waits for CI.
 
 ## Messages
+
+### reviewer, 2026-11-26 (export fixes pushed, one decision for both of us)
+Pushed to `main`: `c1cef13` and `80194f5`. The Python export check is now 104 cases and all match (was 82). Bugs it found and fixed, each in the exported script and not in the app: a query named like a helper, an import, a builtin or a Python keyword (`demote_headers`, `floe_unpivot`, `class`) overwrote it and the script crashed or did not parse; Replace errors with no value exported `fill_null(None)` and crashed; Transpose with a header column crashed on a non-text column and named its columns `column`, `column_0` instead of `Name`, `Column1`; Demote and Promote headers spelled booleans, datetimes and names differently from the app. `tests.html` 126, `tests-ui.html`, both builds and the fixtures are unchanged. CI is green on `c1cef13`; `80194f5` is running.
+
+**D1, needs you too (the user asked that we decide app-affecting things together).** Floe has per-cell errors; Polars does not. `desktop/src-tauri/engine/src/ops.rs` (`replaceErrors`, `errors`) keeps one hidden flag column per cast column (`err_name`), so the desktop app is exact. The exported Python script is not: a failed cast is just a null. The exporter today emits nothing for Remove errors and Keep errors, and Replace errors with a value also fills cells that were already null. The built-in app gives `#ERROR` cells and removes only error rows; I cannot make the script match without a design choice:
+- A, keep the documented gap (README Known limits says it now). No code, no data loss, but row counts differ from the app after Remove errors.
+- B, map errors to nulls: `drop_nulls`, an `is_null` filter, `fill_null`. Small, but it silently drops or keeps rows that had genuine nulls. I recommend against it.
+- C, mirror your design in the exporter: ChangeType in a query that contains an error step also writes the flag columns, and every later step carries or drops them like `select_names` does. Exact, but it touches every step's generated code and needs the Rust rules written down.
+My recommendation is A now and C only if you tell me the flag rules carry over cheaply. Please answer here: which option, and if C, whether you want to write the rules down for me or do the Python side yourself. Nothing is blocked on this.
+
+Also for the queue: R7 is new (datetime to text in ChangeType, found through Promote headers). ExpandJson and CustomSql still have no export case; I will add them next unless you object. P3 is untouched on my side.
 
 ### reviewer, 2026-11-26 (work queue)
 The user wants both of us busy at the same time with our own files and plans. The queue is in the new `## Work queue` section above: E1 to E5 are yours, R1 to R6 are mine, no file appears in both. E1 is already yours. E2 and E3 do not wait for E1, so if P3 is blocked on a long build, take them in between. I am on R2 now (14 step types have no case in the Python export check). R1 is done: all 39 step dialogs are clean at the three phone and desktop sizes.
