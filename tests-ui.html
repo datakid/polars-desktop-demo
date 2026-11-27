@@ -253,6 +253,20 @@ f.addEventListener('load', async () => {
     if (JSON.stringify(mergeKind().expand) !== '[]') throw new Error('a cleared column list came back after editing: ' + JSON.stringify(mergeKind().expand));
     console.log('E2E a merge with no columns stays that way');
     await restoreMerge();
+    const appApi = UI().App, realReload = appApi.reload;
+    let reloads = 0;
+    appApi.reload = () => { reloads++; };
+    const press = (init) => { const ev = new w.KeyboardEvent('keydown', Object.assign({ bubbles: true, cancelable: true }, init)); w.dispatchEvent(ev); return ev.defaultPrevented; };
+    try {
+      if (!press({ key: 'F5' }) || reloads !== 1) throw new Error('F5 did not reload the current query once, reloads ' + reloads);
+      if (press({ key: 'F5', ctrlKey: true }) || reloads !== 1) throw new Error('Ctrl+F5 was taken over, reloads ' + reloads);
+      UI().paramsDialog(); await sleep(250);
+      press({ key: 'F5' });
+      if (reloads !== 1) throw new Error('F5 reloaded while a dialog was open');
+      w.document.querySelector('.modal .close').click(); await sleep(250);
+      if (press({ key: 'e', ctrlKey: true })) throw new Error('Ctrl+E was taken over in the web build');
+    } finally { appApi.reload = realReload; }
+    console.log('E2E F5 reloads once, Ctrl+F5 and a dialog leave it alone, Ctrl+E is for the desktop app only');
     const frame = document.getElementById('f');
     const pageErrors = [];
     w.addEventListener('error', (e) => pageErrors.push(e.message));
