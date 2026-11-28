@@ -27,7 +27,7 @@
   node scripts/floe.mjs plan project.floe --query <name>
   ```
   Exit codes: 0 ok · 1 query failed · 2 usage · 3 input missing. `npm link` installs it as `floe`.
-- Tests: 133 golden tests in `tests.html`, the UI end-to-end test in `tests-ui.html`, and the Rust tests in `engine/tests` (`plan.rs`, `ops.rs`, `sql.rs`, `cancel.rs` and `parity.rs`, which runs the 123 fixtures from `scripts/gen-fixtures.mjs` against the built-in engine and compares every column's profile and distinct values). `npm run test:engine` in `desktop` runs the Rust tests and prints their count.
+- Tests: 134 golden tests in `tests.html`, the UI end-to-end test in `tests-ui.html`, and the Rust tests in `engine/tests` (`plan.rs`, `ops.rs`, `sql.rs`, `cancel.rs` and `parity.rs`, which runs the 123 fixtures from `scripts/gen-fixtures.mjs` against the built-in engine and compares every column's profile and distinct values). `npm run test:engine` in `desktop` runs the Rust tests and prints their count.
 
 ## What's new in 1.1
 - **Engine indicator** in the status bar: `● Built-in · 42 ms · Sample 1,000`. Click it (or press Enter on it) for engine, location, last run, data scope and, on desktop, why that engine ran. The dot shows idle, busy, starting or error. On phones it shrinks to the dot and engine name.
@@ -64,7 +64,7 @@ One codebase ships two ways:
 ## Repository layout
 ```
 index.html, demo.html, 404.html     app pages
-tests.html, tests-ui.html           engine golden tests (133) · UI end-to-end smoke test (web build only)
+tests.html, tests-ui.html           engine golden tests (134) · UI end-to-end smoke test (web build only)
 css/app.css                         "Clay" design system
 js/                                 engine (worker), platform layer, UI
 js/native-engine.js                 optional Polars adapter; idle unless a desktop engine reports itself available
