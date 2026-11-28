@@ -436,7 +436,11 @@
       });
       return `# ── ${q.name} ${'─'.repeat(Math.max(3, 60 - q.name.length))}\n${vars[id]} = (\n    ${src}\n${body.join('\n')}\n)`;
     });
-    const params = (project.params || []).map((p) => `    ${py(p.name)}: ${p.type === 'number' ? pyVal(p.value) : p.type === 'date' ? 'date.fromisoformat(' + py(p.value) + ')' : p.type === 'list' ? pyList(String(p.value || '').split(',').map((s) => s.trim()).filter(Boolean)) : py(p.value)},`);
+    const params = (project.params || []).map((p) => {
+      const v = PQ.paramValue(p);
+      const text = p.type === 'number' ? (v === null ? 'None' : String(v)) : p.type === 'date' ? (v ? `date(${v.getUTCFullYear()}, ${v.getUTCMonth() + 1}, ${v.getUTCDate()})` : 'None') : p.type === 'list' ? pyList(v) : (v === null ? 'None' : py(v));
+      return `    ${py(p.name)}: ${text},`;
+    });
     const outputs = ids.map((id) => byId.get(id)).filter((q) => q.load && q.load.target && q.load.target !== 'none').map((q) => {
       const v = vars[q.id], f = PQ.snake(q.name);
       if (q.load.target === 'xlsx') return `    ${v}.collect().write_excel(OUT_DIR / "${f}.xlsx", worksheet=${py(q.name.slice(0, 31))}, table_style="Table Style Medium 2", autofit=True, freeze_panes=(1, 0))`;

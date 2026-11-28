@@ -286,12 +286,28 @@ C.push(
   ['excel_sheets', [excelSource({ type: 'sheets', pattern: '*', sheetColumn: '_sheet' })]],
   ['folder_csv', [folderSource('*.csv')]],
 );
+C.push(
+  ['param_number', filterBy([{ col: 'val', op: 'gt', value: '1' }])],
+  ['param_filter_formula', { type: 'Filter', mode: 'advanced', formula: '[val] > @Min' }],
+  ['param_lenient_number', { type: 'AddColumn', name: 'r', formula: '[val] + @Big' }],
+  ['param_date', { type: 'Filter', mode: 'advanced', formula: '[day] >= @Since' }],
+  ['param_date_us', { type: 'Filter', mode: 'advanced', formula: '[day] >= @SinceUs' }],
+  ['param_text', { type: 'AddColumn', name: 'r', formula: '[grp] & @Label' }],
+);
+const messyLocale = (col, type, locale) => [messySrc, { type: 'ChangeType', locale, changes: [{ col, type }] }, { type: 'ReplaceErrors', cols: [col] }];
+C.push(
+  ['messy_de_number', messyLocale('n', 'number', 'de-DE')],
+  ['messy_de_int', messyLocale('n', 'int', 'de-DE')],
+  ['messy_de_date', messyLocale('d', 'date', 'de-DE')],
+  ['messy_de_datetime', messyLocale('t', 'datetime', 'de-DE')],
+  ['messy_gb_date', messyLocale('d', 'date', 'en-GB')],
+);
 C.push(...formulaCases);
 const formulaNames = new Set(formulaCases.map((x) => x[0]));
 const project = {
   name: 'Export check',
   settings: { previewRows: 1000, locale: 'en-US' },
-  params: [],
+  params: [{ name: 'Min', type: 'number', value: '50' }, { name: 'Big', type: 'number', value: '1,000' }, { name: 'Since', type: 'date', value: '2025-01-15' }, { name: 'SinceUs', type: 'date', value: '01/15/2025' }, { name: 'Label', type: 'text', value: 'x' }, { name: 'Regs', type: 'list', value: 'a, b' }],
   queries: C.map(([name, kind], i) => ({ id: 'q' + i, name, load: { target: 'csv' }, steps: (Array.isArray(kind) && kind[0].type === 'Source' ? kind : [src, ct].concat(Array.isArray(kind) ? kind : [kind])).map((k, j) => ({ id: 's' + j, name: j === 0 ? 'Source' : 'Step', kind: k })) })),
 };
 writeFileSync(join(dir, 'check.floe'), JSON.stringify(project));
