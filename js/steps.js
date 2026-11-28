@@ -300,6 +300,11 @@
         valid = valid & (day <= pl.date(safe_year, safe_month, 1).dt.month_end().dt.day())
         stamp = pl.datetime(safe_year, safe_month, pl.when(valid).then(day).otherwise(1)) + pl.duration(hours=pl.when(valid).then(hour).otherwise(0), minutes=pl.when(valid).then(minute).otherwise(0), seconds=pl.when(valid).then(second).otherwise(0))
         built.append(pl.when(valid & (stamp.dt.day() == day)).then(stamp))
+    serial = text.str.extract(r"^(\\d+(?:\\.\\d+)?)$", 1).cast(pl.Float64, strict=False)
+    whole = serial.floor()
+    seconds = ((serial - whole) * 86400 + 0.5).floor()
+    base = pl.when(serial < 60).then(pl.datetime(1899, 12, 31)).otherwise(pl.datetime(1899, 12, 30))
+    built.append(pl.when(serial.is_not_null() & (serial > 0) & (serial < 2958466)).then(base + pl.duration(days=whole.fill_null(0).cast(pl.Int64), seconds=seconds.fill_null(0).cast(pl.Int64))))
     return pl.coalesce(built)`,
     'def floe_parse_number': `def floe_parse_number(column: pl.Expr, comma: bool = False) -> pl.Expr:
     column = column if isinstance(column, pl.Expr) else pl.lit(column)

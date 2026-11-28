@@ -210,9 +210,9 @@
   def('Number.Sign', ['n'], 'int', '-1, 0 or 1', (x) => Math.sign(x), (a) => `${a[0]}.sign()`);
   def('Number.Mod', ['n', 'n'], 'number', 'Remainder of a division', (x, y) => (y === 0 ? new CellError('Division by zero') : ((x % y) + y) % y), (a) => `${a[0]} % ${a[1]}`);
   def('Number.IntegerDivide', ['n', 'n'], 'int', 'Whole-number division', (x, y) => (y === 0 ? new CellError('Division by zero') : Math.floor(x / y)), (a) => `${a[0]} // ${a[1]}`);
-  def('Number.Power', ['n', 'n'], 'number', 'x to the power of y', (x, y) => Math.pow(x, y), (a) => `${a[0]}.pow(${a[1]})`);
-  def('Number.Sqrt', ['n'], 'number', 'Square root', (x) => (x < 0 ? new CellError('Square root of a negative number') : Math.sqrt(x)), (a) => `${a[0]}.sqrt()`);
-  def('Number.Log', ['n'], 'number', 'Natural logarithm', (x) => (x <= 0 ? new CellError('Log of a non-positive number') : Math.log(x)), (a) => `${a[0]}.log()`);
+  def('Number.Power', ['n', 'n'], 'number', 'x to the power of y', (x, y) => Math.pow(x, y), (a) => `${a[0]}.cast(pl.Float64).pow(${a[1]})`);
+  def('Number.Sqrt', ['n'], 'number', 'Square root', (x) => (x < 0 ? new CellError('Square root of a negative number') : Math.sqrt(x)), (a) => `pl.when(${a[0]} >= 0).then(${a[0]}.sqrt())`);
+  def('Number.Log', ['n'], 'number', 'Natural logarithm', (x) => (x <= 0 ? new CellError('Log of a non-positive number') : Math.log(x)), (a) => `pl.when(${a[0]} > 0).then(${a[0]}.log())`);
   def('Number.From', ['a'], 'number', 'Converts text, booleans or dates to a number (lenient: "1,234", "(5)", "12%")', (v) => (v instanceof Date ? PQ.dateToExcelSerial(v) : num(v)), (a) => `floe_parse_number(${a[0]})`, true);
   def('Date.Year', ['d'], 'int', 'Year', (d) => d.getUTCFullYear(), (a) => `${a[0]}.dt.year()`);
   def('Date.Month', ['d'], 'int', 'Month number 1–12', (d) => d.getUTCMonth() + 1, (a) => `${a[0]}.dt.month()`);
@@ -224,9 +224,9 @@
   def('Date.DayOfWeekName', ['d'], 'text', 'Weekday name, e.g. "Monday"', (d) => DOWN[d.getUTCDay()], (a) => `${a[0]}.dt.strftime("%A")`);
   def('Date.AddDays', ['d', 'n'], 'arg0', 'Adds N days', (d, n) => new Date(d.getTime() + n * DAY), (a) => `${a[0]} + pl.duration(days=${a[1]})`);
   def('Date.AddMonths', ['d', 'n'], 'arg0', 'Adds N months (clamps to month end)', (d, n) => addMonths(d, n), (a) => `${a[0]}.dt.offset_by(pl.format("{}mo", ${a[1]}))`);
-  def('Date.StartOfMonth', ['d'], 'date', 'First day of the month', (d) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)), (a) => `${a[0]}.dt.month_start()`);
-  def('Date.EndOfMonth', ['d'], 'date', 'Last day of the month', (d) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)), (a) => `${a[0]}.dt.month_end()`);
-  def('Date.DiffDays', ['d', 'd'], 'int', 'Whole days from the first date to the second', (a, b) => Math.round((b - a) / DAY), (a) => `(${a[1]} - ${a[0]}).dt.total_days()`);
+  def('Date.StartOfMonth', ['d'], 'date', 'First day of the month', (d) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)), (a) => `${a[0]}.dt.date().dt.month_start()`);
+  def('Date.EndOfMonth', ['d'], 'date', 'Last day of the month', (d) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)), (a) => `${a[0]}.dt.date().dt.month_end()`);
+  def('Date.DiffDays', ['d', 'd'], 'int', 'Whole days from the first date to the second', (a, b) => Math.round((b - a) / DAY), (a) => `(((${a[1]}.cast(pl.Datetime) - ${a[0]}.cast(pl.Datetime)).dt.total_seconds() / 86400 + 0.5).floor().cast(pl.Int64))`);
   def('Date.From', ['a'], 'date', 'Converts text or an Excel serial number to a date', (v) => { const d = PQ.parseDate(v); return d ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) : new CellError('Cannot convert "' + v + '" to a date', v); }, (a) => `floe_parse_datetime(${a[0]}).dt.date()`, true);
   def('Date.ToText', ['d', 't?'], 'text', 'Formats a date: tokens yyyy, MM, dd, MMM', (d, f) => {
     f = f || 'yyyy-MM-dd'; const p = (n) => String(n).padStart(2, '0');

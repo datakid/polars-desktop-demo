@@ -206,6 +206,39 @@ const C = [
   ['text_trim', { type: 'TextTransform', cols: ['name'], op: 'trim' }],
   ['text_clean', { type: 'TextTransform', cols: ['name'], op: 'clean' }],
 ];
+const formulaCases = [];
+{
+  const source = readFileSync(join(root, 'js', 'expr.js'), 'utf8');
+  const columnsFor = { t: ['[name]', '[code]', '[grp]'], n: ['[val]', '[price]'], d: ['[day]', '[ts]'], a: ['[price]', '[name]', '[val]'], L: ['{"a", "b", "c"}', '{1, 2, 3}'] };
+  const literalFor = { t: '"a"', n: '2', d: '[ts]', a: '[price]' };
+  const optionalFor = { t: '"*"', n: '1' };
+  for (const m of source.matchAll(/def\('([A-Za-z.]+)', \[([^\]]*)\], '([a-z]+)'/g)) {
+    const fn = m[1], sig = m[2].split(',').map((x) => x.trim().replace(/'/g, '')).filter(Boolean);
+    const required = sig.filter((x) => !x.endsWith('?') && !x.endsWith('...'));
+    const variants = fn === 'List.Contains' ? [0, 1] : [0, 1, 2];
+    const seen = new Set();
+    for (const variant of variants) {
+      for (const withOptional of sig.some((x) => x.endsWith('?')) ? [false, true] : [false]) {
+        const args = [];
+        sig.forEach((p, i) => {
+          const kind = p.replace(/[?.]/g, '');
+          if (p.endsWith('?') && !withOptional) return;
+          if (p.endsWith('...')) { args.push('[name]', '[grp]'); return; }
+          if (fn === 'List.Contains') { args.push(i === 0 ? columnsFor.L[variant % 2] : ['[grp]', '[val]'][variant % 2]); return; }
+          if (i === 0) { const options = columnsFor[kind] || ['[val]']; args.push(options[variant % options.length]); return; }
+          args.push(p.endsWith('?') ? optionalFor[kind] || '1' : literalFor[kind] || '1');
+        });
+        const formula = `${fn}(${args.join(', ')})`;
+        if (seen.has(formula)) continue;
+        seen.add(formula);
+        formulaCases.push([`fx_${fn.toLowerCase().replace('.', '_')}_${seen.size}`, { type: 'AddColumn', name: 'r', formula }]);
+      }
+    }
+    void required;
+  }
+}
+C.push(...formulaCases);
+const formulaNames = new Set(formulaCases.map((x) => x[0]));
 const project = {
   name: 'Export check',
   settings: { previewRows: 1000, locale: 'en-US' },
@@ -221,7 +254,11 @@ const run = (cmd, args, cwd) => {
 };
 const fail = (r, code) => { console.error(r.stdout + r.stderr); process.exit(code || 1); };
 const built = run('node', ['scripts/floe.mjs', 'run', join(dir, 'check.floe'), '--data', data, '--out', join(dir, 'app'), '--quiet']);
-if (built.status !== 0) fail(built);
+const rejected = new Set();
+if (built.status !== 0) {
+  for (const line of built.stderr.split('\n')) { const m = /^✗ ([^:]+):/.exec(line); if (m) rejected.add(m[1]); }
+  if ([...rejected].some((n) => !formulaNames.has(n)) || !rejected.size) fail(built);
+}
 const gen = run('node', ['scripts/floe.mjs', 'python', join(dir, 'check.floe'), '--out', join(dir, 'export.py')]);
 if (gen.status !== 0) fail(gen);
 const py = run(python, ['export.py'], dir);
@@ -245,6 +282,7 @@ const table = (file) => {
 const plain = /^-?\d+(\.\d+)?([eE][-+]?\d+)?$/;
 const same = (x, y) => {
   if (x === y) return true;
+  if (x === '#ERROR' && y === '') return true;
   if (!plain.test(x) || !plain.test(y)) return false;
   const a = Number(x), b = Number(y);
   return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
@@ -252,6 +290,7 @@ const same = (x, y) => {
 const problems = [];
 for (const [name] of C) {
   let a, b;
+  if (rejected.has(name)) continue;
   try { a = table(join(dir, 'app', name + '.csv')); b = table(join(dir, 'out', name + '.csv')); } catch (e) { problems.push(`${name}: an output file is missing`); continue; }
   let why = null;
   if (a[0].join() !== b[0].join()) why = `columns [${a[0]}] against [${b[0]}]`;
@@ -275,5 +314,6 @@ const stopsOnBadValue = (errorMode) => {
 for (const mode of ['fail', 'error', 'null']) { const why = stopsOnBadValue(mode); if (why) problems.push('change type, error mode ' + mode + ': ' + why); }
 rmSync(dir, { recursive: true, force: true });
 problems.forEach((x) => console.log('FAIL ' + x));
+if (rejected.size) console.log(`${rejected.size} generated formulas are rejected by the app and were skipped`);
 console.log(problems.length ? `${problems.length} of ${C.length} cases differ` : `all ${C.length} cases match`);
 process.exit(problems.length ? 1 : 0);
