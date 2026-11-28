@@ -95,8 +95,9 @@
     const pathOf = (name) => 'DATA_DIR / ' + py(name);
     if (src.kind === 'folder') {
       helpers.add('from pathlib import Path');
-      const reader = src.format === 'excel' ? 'pl.read_excel(f, engine="calamine").lazy()' : `pl.scan_csv(f, separator=${py((src.csv && src.csv.delimiter) || ',')}, infer_schema=False)`;
-      return `pl.concat(\n        [${reader}.with_columns(pl.lit(f.name).alias(${py(src.fileColumn || 'Source.Name')})) for f in sorted((DATA_DIR / ${py(src.folder)}).glob(${py(src.pattern || '*')}))],\n        how="diagonal_relaxed",\n    )`;
+      helpers.add('def floe_scan_csv');
+      const reader = src.format === 'excel' ? 'pl.read_excel(f, engine="calamine").lazy()' : `floe_scan_csv(f, ${py((src.csv && src.csv.delimiter) || ',')})`;
+      return `pl.concat(\n        [${reader}.select(pl.lit(f.name).alias(${py(src.fileColumn || 'Source.Name')}), pl.all()) for f in sorted((DATA_DIR / ${py(src.folder)}).glob(${py(src.pattern || '*')}))],\n        how="diagonal_relaxed",\n    )`;
     }
     const kind = src.format || (PQ.IO ? PQ.IO.fileKind(src.fileName) : 'csv');
     if (kind === 'excel') {
@@ -104,7 +105,7 @@
       if (it.type === 'table') return `pl.read_excel(${pathOf(src.fileName)}, table_name=${py(it.name)}, engine="calamine").lazy()`;
       if (it.type === 'sheets') {
         helpers.add('import fastexcel');
-        return `pl.concat(\n        [pl.read_excel(${pathOf(src.fileName)}, sheet_name=s, engine="calamine").lazy().with_columns(pl.lit(s).alias(${py(it.sheetColumn || '_sheet')}))\n         for s in fastexcel.read_excel(${pathOf(src.fileName)}).sheet_names if fnmatch.fnmatch(s, ${py(it.pattern || '*')})],\n        how="diagonal_relaxed",\n    )`;
+        return `pl.concat(\n        [pl.read_excel(${pathOf(src.fileName)}, sheet_name=s, engine="calamine").lazy().select(pl.lit(s).alias(${py(it.sheetColumn || '_sheet')}), pl.all())\n         for s in fastexcel.read_excel(${pathOf(src.fileName)}).sheet_names if fnmatch.fnmatch(s, ${py(it.pattern || '*')})],\n        how="diagonal_relaxed",\n    )`;
       }
       const sheet = it.sheet || it.name;
       const opts = ['"header_row": None'];
@@ -116,7 +117,8 @@
           opts.push(`"use_columns": ${py(PQ.idxToCol(r.c1) + ':' + (r.c2 === Infinity ? 'XFD' : PQ.idxToCol(r.c2)))}`);
         }
       }
-      return `pl.read_excel(${pathOf(src.fileName)}, sheet_name=${py(sheet)}, engine="calamine", read_options={${opts.join(', ')}}).lazy()`;
+      helpers.add('def floe_excel_raw');
+      return `pl.read_excel(${pathOf(src.fileName)}, sheet_name=${py(sheet)}, engine="calamine", read_options={${opts.join(', ')}}).lazy().pipe(floe_excel_raw)`;
     }
     if (kind === 'parquet') return `pl.scan_parquet(${pathOf(src.fileName)})` + (src.columns && src.columns.length ? `.select(${pyList(src.columns)})` : '');
     if (kind === 'arrow') return `pl.scan_ipc(${pathOf(src.fileName)})`;
@@ -126,9 +128,9 @@
     if (c.delimiter && c.delimiter !== ',') args.push(`separator=${py(c.delimiter)}`);
     if (c.header === false) args.push('has_header=False');
     if (c.skipRows) args.push(`skip_rows=${c.skipRows}`);
-    if (c.encoding && !/utf-8/.test(c.encoding)) args.push('encoding="utf8-lossy"');
-    args.push('infer_schema=False');
-    return `pl.scan_csv(${args.join(', ')})`;
+    if (c.encoding && !/^utf-?8$/i.test(c.encoding)) args.push(`encoding=${py(c.encoding)}`);
+    helpers.add('def floe_scan_csv');
+    return `floe_scan_csv(${args.join(', ')})`;
   }
 
   function stepCode(k, ctx) {
@@ -352,6 +354,28 @@
     if how == "right":
         joined = joined.filter(pl.col("__present").is_not_null())
     return joined.drop(left_keys + right_keys + ["__present"])`,
+    'def floe_scan_csv': `def floe_scan_csv(path: Path, separator: str = ",", has_header: bool = True, skip_rows: int = 0, encoding: str = "utf-8") -> pl.LazyFrame:
+    options = dict(separator=separator, has_header=False, skip_rows=skip_rows, infer_schema=False)
+    if encoding.lower().replace("-", "").replace("_", "") in ("utf8", "utf8sig", "ascii"):
+        raw = pl.scan_csv(path, **options)
+    else:
+        raw = pl.read_csv(path.read_bytes().decode(encoding, errors="replace").encode("utf-8"), **options).lazy()
+    raw = raw.filter(~pl.all_horizontal(pl.all().is_null()))
+    old_names = raw.collect_schema().names()
+    first = raw.head(1).collect().rows() if has_header else []
+    header = first[0] if first else [None] * len(old_names)
+    names, used = [], set()
+    for i, value in enumerate(header if has_header else [None] * len(old_names)):
+        base = str(value).strip() if value is not None and str(value).strip() else f"Column{i + 1}"
+        name, k = base, 1
+        while name in used:
+            name, k = f"{base}_{k}", k + 1
+        used.add(name)
+        names.append(name)
+    return (raw.slice(1) if has_header else raw).rename(dict(zip(old_names, names)))`,
+    'def floe_excel_raw': `def floe_excel_raw(lf: pl.LazyFrame) -> pl.LazyFrame:
+    names = lf.collect_schema().names()
+    return lf.rename({name: f"Column{i + 1}" for i, name in enumerate(names)}).with_columns(pl.col(pl.String).replace({"true": "TRUE", "false": "FALSE"}))`,
     'def demote_headers': `def demote_headers(lf: pl.LazyFrame) -> pl.LazyFrame:
     df = lf.collect()
     df = df.select([floe_as_text(pl.col(c), t).alias(c) for c, t in df.schema.items()])

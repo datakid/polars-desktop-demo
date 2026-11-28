@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import vm from 'node:vm';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const python = process.env.PYTHON || 'python3';
@@ -58,6 +59,34 @@ const messy = [
 writeFileSync(join(data, 'm.csv'), messy);
 const messySrc = { type: 'Source', source: { kind: 'file', fileId: 'm.csv', fileName: 'm.csv', csv: { delimiter: ',', header: true } } };
 const messyCase = (col, type) => [messySrc, { type: 'ChangeType', changes: [{ col, type }] }, { type: 'ReplaceErrors', cols: [col] }];
+writeFileSync(join(data, 's_semicolon.csv'), 'id;name;note\n1;alpha;"x;y"\n2;beta;plain\n');
+writeFileSync(join(data, 's_tab.tsv'), 'id\tname\n1\ta b\n2\tc d\n');
+writeFileSync(join(data, 's_noheader.csv'), '1,alpha\n2,beta\n');
+writeFileSync(join(data, 's_skip.csv'), 'junk line one\nanother junk\nid,name\n1,alpha\n2,beta\n');
+writeFileSync(join(data, 's_latin1.csv'), Buffer.from('id,name\n1,café\n2,señor\n', 'latin1'));
+writeFileSync(join(data, 's_bom.csv'), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('id,name\n1,alpha\n2,beta\n')]));
+writeFileSync(join(data, 's_crlf.csv'), 'id,name\r\n1,alpha\r\n2,"be\r\nta"\r\n3,gamma\r\n');
+writeFileSync(join(data, 's_quotes.csv'), 'id,name\n1,"say ""hi"""\n2,"a,b"\n3,\n');
+writeFileSync(join(data, 's_ragged.csv'), 'id,name,x\n1,alpha\n2,beta,9\n3,gamma,7\n');
+writeFileSync(join(data, 's_dupe_header.csv'), 'id,id,\n1,2,3\n4,5,6\n');
+writeFileSync(join(data, 's_blank_lines.csv'), 'id,name\n\n1,alpha\n\n2,beta\n\n');
+writeFileSync(join(data, 's_spaces.csv'), 'id , name\n 1 , alpha \n2,  beta\n');
+const csvSource = (file, csv) => ({ type: 'Source', source: { kind: 'file', fileId: file, fileName: file, csv: Object.assign({ delimiter: ',', header: true }, csv || {}) } });
+const XLSX = (() => { const sandbox = { self: {} }; sandbox.self = sandbox; vm.runInNewContext(readFileSync(join(root, 'vendor', 'xlsx.full.min.js'), 'utf8'), sandbox); return sandbox.XLSX; })();
+{
+  const book = XLSX.utils.book_new();
+  const day = (d) => new Date(Date.UTC(2025, 0, d));
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['id', 'name', 'val', 'price', 'day', 'ok'], [1, 'alpha', 10, 1.5, day(5), true], [2, 'beta', null, 2, day(6), false], [3, null, 30, 3.25, null, true], [4, 'delta', 40, null, day(8), null]]), 'Data');
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['id', 'name'], [10, 'x'], [11, 'y']]), 'Other');
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['id', 'name'], [20, 'z']]), 'Extra');
+  writeFileSync(join(data, 'x.xlsx'), XLSX.write(book, { type: 'buffer', bookType: 'xlsx', cellDates: true }));
+  mkdirSync(join(data, 'monthly'), { recursive: true });
+  writeFileSync(join(data, 'monthly', 'a.csv'), 'id,name\n1,alpha\n2,beta\n');
+  writeFileSync(join(data, 'monthly', 'b.csv'), 'id,name,extra\n3,gamma,x\n');
+  writeFileSync(join(data, 'monthly', 'ignore.txt'), 'nothing');
+}
+const excelSource = (item) => ({ type: 'Source', source: { kind: 'file', fileId: 'x.xlsx', fileName: 'x.xlsx', format: 'excel', item } });
+const folderSource = (pattern) => ({ type: 'Source', source: { kind: 'folder', folder: 'monthly', pattern, format: 'csv', csv: { delimiter: ',' }, fileColumn: 'Source.Name' } });
 const jsonSrc = { type: 'Source', source: { kind: 'file', fileId: 'j.csv', fileName: 'j.csv', csv: { delimiter: ',', header: true } } };
 const filterBy = (conds, join) => ({ type: 'Filter', mode: 'builder', builder: { join: join || 'and', conds } });
 const C = [
@@ -237,6 +266,26 @@ const formulaCases = [];
     void required;
   }
 }
+C.push(
+  ['src_semicolon', [csvSource('s_semicolon.csv', { delimiter: ';' })]],
+  ['src_tab', [csvSource('s_tab.tsv', { delimiter: '\t' })]],
+  ['src_noheader', [csvSource('s_noheader.csv', { header: false })]],
+  ['src_skip', [csvSource('s_skip.csv', { skipRows: 2 })]],
+  ['src_latin1', [csvSource('s_latin1.csv', { encoding: 'windows-1252' })]],
+  ['src_bom', [csvSource('s_bom.csv')]],
+  ['src_crlf', [csvSource('s_crlf.csv')]],
+  ['src_quotes', [csvSource('s_quotes.csv')]],
+  ['src_ragged', [csvSource('s_ragged.csv')]],
+  ['src_dupe_header', [csvSource('s_dupe_header.csv')]],
+  ['src_blank_lines', [csvSource('s_blank_lines.csv')]],
+  ['src_spaces', [csvSource('s_spaces.csv')]],
+);
+C.push(
+  ['excel_sheet', [excelSource({ type: 'sheet', sheet: 'Data' }), { type: 'PromoteHeaders', row: 0 }]],
+  ['excel_range', [excelSource({ type: 'range', sheet: 'Data', range: 'B2:D4' })]],
+  ['excel_sheets', [excelSource({ type: 'sheets', pattern: '*', sheetColumn: '_sheet' })]],
+  ['folder_csv', [folderSource('*.csv')]],
+);
 C.push(...formulaCases);
 const formulaNames = new Set(formulaCases.map((x) => x[0]));
 const project = {
