@@ -322,6 +322,17 @@ C.push(
   ['rv_null_date', { type: 'ReplaceValues', cols: ['day'], find: null, replace: '2000-01-01' }],
   ['rv_null_number', { type: 'ReplaceValues', cols: ['price'], find: null, replace: '1.25' }],
 );
+const aggAll = (col) => ['count', 'count_distinct', 'min', 'max', 'first', 'last', 'mode'].map((fn) => ({ fn, col }));
+C.push(
+  ['agg_val_all', { type: 'GroupBy', keys: ['grp'], aggs: aggAll('val').concat([{ fn: 'sum', col: 'val' }, { fn: 'mean', col: 'val' }, { fn: 'median', col: 'val' }, { fn: 'std', col: 'val' }, { fn: 'var', col: 'val' }, { fn: 'percentile', col: 'val', p: 25 }, { fn: 'percentile', col: 'val', p: 90 }]) }],
+  ['agg_name_all', { type: 'GroupBy', keys: ['grp'], aggs: aggAll('name').filter((a) => a.fn !== 'min' && a.fn !== 'max').concat([{ fn: 'concat', col: 'name', sep: '|' }]) }],
+  ['agg_day_all', { type: 'GroupBy', keys: ['grp'], aggs: aggAll('day') }],
+  ['agg_ts_all', { type: 'GroupBy', keys: ['ok'], aggs: aggAll('ts') }],
+  ['agg_ok_all', { type: 'GroupBy', keys: ['grp'], aggs: aggAll('ok') }],
+  ['agg_price_stats', { type: 'GroupBy', keys: ['ok'], aggs: [{ fn: 'sum', col: 'price' }, { fn: 'mean', col: 'price' }, { fn: 'median', col: 'price' }, { fn: 'std', col: 'price' }, { fn: 'var', col: 'price' }, { fn: 'min', col: 'price' }, { fn: 'max', col: 'price' }] }],
+  ['agg_no_keys', { type: 'GroupBy', keys: [], aggs: [{ fn: 'count_rows' }, { fn: 'sum', col: 'val' }, { fn: 'mean', col: 'price' }, { fn: 'min', col: 'name' }, { fn: 'max', col: 'ts' }] }],
+  ['agg_null_key', { type: 'GroupBy', keys: ['name'], aggs: [{ fn: 'count_rows' }, { fn: 'sum', col: 'val' }] }],
+);
 C.push(...formulaCases);
 const formulaNames = new Set(formulaCases.map((x) => x[0]));
 const project = {
