@@ -103,3 +103,53 @@ fn sql_in_a_preview_runs_on_the_sample_only() {
     let r = floe_engine::call("evaluate", &json!({ "plan": plan(&p, vec![cast(&[("n", "int")]), sql("SELECT COUNT(*) AS c FROM self")]), "mode": "preview", "previewRows": 4 })).unwrap();
     assert_eq!(nums(rows_of(&r)), vec![Some(4.0)]);
 }
+
+#[test]
+fn sql_plans_keep_projection_pushdown_into_the_scan() {
+    let p = csv("explain", "id,region,qty,note\n1,EU,5,x\n2,US,1,y\n3,EU,7,z\n");
+    let r = floe_engine::call("explain", &json!({ "plan": plan(&p, vec![cast(&[("qty", "int")]), sql("SELECT region, SUM(qty) AS total_qty FROM self WHERE qty > 2 GROUP BY region ORDER BY region NULLS FIRST")]) })).unwrap();
+    let text = r["text"].as_str().unwrap();
+    assert!(text.contains("SCAN") && text.contains("PROJECT 2/4 COLUMNS"), "{text}");
+}
+
+fn ids_ascend_within_ties(rows: &[Vec<Value>]) -> usize {
+    let mut breaks = 0;
+    let mut prev: Option<(String, f64)> = None;
+    for row in rows {
+        let id = row[0].as_f64().unwrap();
+        let key = row[1..].iter().map(|v| v.to_string()).collect::<Vec<_>>().join("|");
+        if let Some((pk, pid)) = &prev {
+            if *pk == key && id < *pid {
+                breaks += 1;
+            }
+        }
+        prev = Some((key, id));
+    }
+    breaks
+}
+
+#[test]
+fn sql_order_by_keeps_input_order_among_ties_on_a_large_table() {
+    let n = 500_000usize;
+    let mut body = String::from("id,region,qty\n");
+    for i in 0..n {
+        body.push_str(&format!("{},{},{}\n", i, ["EU", "US", "APAC", "LATAM", "MEA"][i % 5], i % 7));
+    }
+    let big = csv("large", &body);
+    let small = csv("large_regions", "region,zone\nEU,a\nUS,b\nAPAC,c\nLATAM,d\nMEA,e\n");
+    let casts = cast(&[("id", "int"), ("qty", "int")]);
+    let run = |text: &str, tables: Vec<Value>| {
+        let op = json!({ "op": "sql", "sql": text, "tables": tables });
+        let r = evaluate(plan(&big, vec![casts.clone(), op])).unwrap();
+        floe_engine::rows(r["resultId"].as_str().unwrap(), n + 10).unwrap()
+    };
+    let one = run("SELECT id, region, qty FROM self ORDER BY region NULLS FIRST, qty DESC NULLS LAST, __floe_row NULLS FIRST", vec![]);
+    assert_eq!(one.len(), n);
+    assert_eq!(ids_ascend_within_ties(&one), 0);
+    let joined = run(
+        "SELECT s.id, s.region, s.qty, z.zone FROM self AS s LEFT JOIN zones AS z ON s.region = z.region ORDER BY s.qty NULLS FIRST, s.region NULLS FIRST, s.__floe_row NULLS FIRST, z.__floe_row NULLS FIRST",
+        vec![json!({ "name": "zones", "plan": plan(&small, vec![]) })],
+    );
+    assert_eq!(joined.len(), n);
+    assert_eq!(ids_ascend_within_ties(&joined), 0);
+}

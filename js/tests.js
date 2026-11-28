@@ -111,7 +111,7 @@
     test('plan: Custom SQL lowers, normalises the text and orders nulls the way the built-in engine does', () => {
       const r = sqlLow('select a, b as c from self where a != 1 order by a desc, b;');
       assert(r.ok, r.reason);
-      assertEq(r.plan.ops[0], { op: 'sql', sql: 'SELECT a, b AS c FROM self WHERE a <> 1 ORDER BY a DESC NULLS LAST, b NULLS FIRST', tables: [] });
+      assertEq(r.plan.ops[0], { op: 'sql', sql: 'SELECT a, b AS c FROM self WHERE a <> 1 ORDER BY a DESC NULLS LAST, b NULLS FIRST, __floe_row NULLS FIRST', tables: [] });
     });
     test('plan: Custom SQL lowers the allow-listed shapes unchanged', () => {
       [
@@ -155,6 +155,17 @@
         ['SELECT a FROM self WHERE a = 1 -- note', /built-in engine/],
         ['', /Write a SQL query/],
       ].forEach(([sql, why]) => { const r = sqlLow(sql); assert(!r.ok && why.test(r.reason) && /^Step 2 “SQL”: /.test(r.reason), JSON.stringify(sql) + ' → ' + JSON.stringify(r)); });
+    });
+    test('plan: Custom SQL without GROUP BY ends ORDER BY with the row index of every table so ties keep their input order', () => {
+      const one = sqlLow('SELECT a FROM self ORDER BY a');
+      assert(one.ok, one.reason);
+      assertEq(one.plan.ops[0].sql, 'SELECT a FROM self ORDER BY a NULLS FIRST, __floe_row NULLS FIRST');
+      const two = sqlLow('SELECT s.id, c.name FROM self s LEFT JOIN customers c ON s.cust = c.cust ORDER BY s.id');
+      assert(two.ok, two.reason);
+      assertEq(two.plan.ops[0].sql, 'SELECT s.id, c.name FROM self AS s LEFT JOIN customers AS c ON s.cust = c.cust ORDER BY s.id NULLS FIRST, s.__floe_row NULLS FIRST, c.__floe_row NULLS FIRST');
+      const grouped = sqlLow('SELECT a, COUNT(*) AS n FROM self GROUP BY a ORDER BY a');
+      assert(grouped.ok, grouped.reason);
+      assertEq(grouped.plan.ops[0].sql, 'SELECT a, COUNT(*) AS n FROM self GROUP BY a ORDER BY a NULLS FIRST');
     });
     test('plan: Custom SQL registers the queries it names and not self', () => {
       const r = sqlLow('SELECT s.id, c.name, d.v FROM self s LEFT JOIN customers c ON s.cust = c.cust JOIN sales_data d ON s.id = d.id ORDER BY s.id');

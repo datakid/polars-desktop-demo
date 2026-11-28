@@ -421,7 +421,11 @@
     if (where) sql += ' WHERE ' + where;
     if (group.length) sql += ' GROUP BY ' + group.map(refText).join(', ');
     if (having) sql += ' HAVING ' + having.s;
-    if (order.length) sql += ' ORDER BY ' + order.map((o) => refText(o.r) + (o.desc ? ' DESC NULLS LAST' : ' NULLS FIRST')).join(', ');
+    if (order.length) {
+      const keys = order.map((o) => refText(o.r) + (o.desc ? ' DESC NULLS LAST' : ' NULLS FIRST'));
+      if (!group.length && !aggregated) tables.forEach((t) => keys.push((tables.length > 1 ? t.q + '.' : '') + '__floe_row NULLS FIRST'));
+      sql += ' ORDER BY ' + keys.join(', ');
+    }
     if (limit !== null) sql += ' LIMIT ' + limit + (offset !== null ? ' OFFSET ' + offset : '');
     return { op: 'sql', sql, tables: names };
   }
