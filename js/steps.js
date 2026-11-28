@@ -168,10 +168,9 @@
       case 'FillDown': return `.with_columns(pl.col(${pyList(k.cols)}).forward_fill())`;
       case 'FillUp': return `.with_columns(pl.col(${pyList(k.cols)}).backward_fill())`;
       case 'ReplaceValues': {
-        const isNull = k.find === null || k.find === '' || k.find === undefined;
-        if (isNull) return `.with_columns(pl.col(${pyList(k.cols)}).fill_null(${pyVal(k.replace)}))`;
-        if (k.wholeCell === false) return `.with_columns(pl.col(${pyList(k.cols)}).str.replace_all(${py(k.find)}, ${py(k.replace || '')}, literal=True))`;
-        return `.with_columns(pl.col(${pyList(k.cols)}).replace(${pyVal(k.find)}, ${pyVal(k.replace)}))`;
+        helpers.add('def floe_replace_values'); helpers.add('def floe_parse_number'); helpers.add('def floe_parse_datetime');
+        const text = (v) => (v === null || v === undefined || v === '' ? 'None' : py(String(v)));
+        return `.pipe(floe_replace_values, ${pyList(k.cols)}, ${text(k.find)}, ${text(k.replace)}, ${k.wholeCell === false ? 'False' : 'True'})`;
       }
       case 'ReplaceErrors': return k.value === undefined || k.value === null || k.value === '' ? `  # ReplaceErrors with null: Polars casts non-strictly, so errors are already null` : `  # ReplaceErrors: Polars casts non-strictly, so errors are already null\n    .with_columns(pl.col(${pyList(k.cols)}).fill_null(${pyVal(k.value)}))`;
       case 'RemoveErrors': case 'KeepErrors': return `  # ${k.type}: per-cell errors are a Floe concept; nulls from failed casts are the Polars equivalent`;
@@ -376,6 +375,37 @@
     'def floe_excel_raw': `def floe_excel_raw(lf: pl.LazyFrame) -> pl.LazyFrame:
     names = lf.collect_schema().names()
     return lf.rename({name: f"Column{i + 1}" for i, name in enumerate(names)}).with_columns(pl.col(pl.String).replace({"true": "TRUE", "false": "FALSE"}))`,
+    'def floe_replace_values': `def floe_replace_values(lf: pl.LazyFrame, cols: list[str], find, replace, whole: bool = True) -> pl.LazyFrame:
+    schema = lf.collect_schema()
+
+    def typed(value, dtype):
+        if value is None or value == "":
+            return pl.lit(None, dtype)
+        literal = pl.lit(str(value))
+        if dtype == pl.String:
+            return literal
+        if dtype == pl.Boolean:
+            lowered = literal.str.strip_chars().str.to_lowercase()
+            return pl.when(lowered.is_in(["true", "yes", "y", "1", "wahr", "vrai"])).then(True).when(lowered.is_in(["false", "no", "n", "0", "falsch", "faux"])).then(False)
+        if dtype == pl.Date:
+            return floe_parse_datetime(literal).dt.date()
+        if dtype == pl.Datetime:
+            return floe_parse_datetime(literal)
+        if dtype.is_numeric():
+            return floe_parse_number(literal).cast(dtype, strict=False)
+        return literal
+
+    updates = []
+    for col in cols:
+        dtype = schema[col]
+        column = pl.col(col)
+        if find is None or find == "":
+            updates.append(column.fill_null(typed(replace, dtype)).alias(col))
+        elif not whole and dtype == pl.String:
+            updates.append(column.str.replace_all(str(find), "" if replace is None else str(replace), literal=True).alias(col))
+        else:
+            updates.append(pl.when(column.eq_missing(typed(find, dtype))).then(typed(replace, dtype)).otherwise(column).alias(col))
+    return lf.with_columns(updates)`,
     'def demote_headers': `def demote_headers(lf: pl.LazyFrame) -> pl.LazyFrame:
     df = lf.collect()
     df = df.select([floe_as_text(pl.col(c), t).alias(c) for c, t in df.schema.items()])

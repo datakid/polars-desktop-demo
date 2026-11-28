@@ -308,6 +308,20 @@ C.push(
   ['fmt_arrow', [src, ct, { type: 'Sort', by: [{ col: 'id', desc: true }] }], 'arrow'],
   ['fmt_xlsx', [src, ct, { type: 'SelectColumns', cols: ['id', 'grp', 'val', 'price', 'name', 'day', 'ok', 'ts'] }], 'xlsx'],
 );
+C.push(
+  ['rv_number', { type: 'ReplaceValues', cols: ['val'], find: '10', replace: '99', wholeCell: true }],
+  ['rv_float', { type: 'ReplaceValues', cols: ['price'], find: '1.5', replace: '9.5', wholeCell: true }],
+  ['rv_date', { type: 'ReplaceValues', cols: ['day'], find: '2025-01-05', replace: '2025-12-31', wholeCell: true }],
+  ['rv_bool', { type: 'ReplaceValues', cols: ['ok'], find: 'true', replace: 'false', wholeCell: true }],
+  ['rv_to_null', { type: 'ReplaceValues', cols: ['grp'], find: 'a', replace: '', wholeCell: true }],
+  ['rv_partial_empty', { type: 'ReplaceValues', cols: ['name'], find: 'a', replace: '', wholeCell: false }],
+  ['rv_partial_regex_chars', { type: 'ReplaceValues', cols: ['name'], find: '.', replace: '!', wholeCell: false }],
+  ['rv_whole_case', { type: 'ReplaceValues', cols: ['name'], find: 'ALICE SMITH', replace: 'x', wholeCell: true }],
+  ['rv_multi', { type: 'ReplaceValues', cols: ['grp', 'name'], find: 'a', replace: 'b', wholeCell: true }],
+  ['rv_null_text', { type: 'ReplaceValues', cols: ['name'], find: null, replace: 'unknown' }],
+  ['rv_null_date', { type: 'ReplaceValues', cols: ['day'], find: null, replace: '2000-01-01' }],
+  ['rv_null_number', { type: 'ReplaceValues', cols: ['price'], find: null, replace: '1.25' }],
+);
 C.push(...formulaCases);
 const formulaNames = new Set(formulaCases.map((x) => x[0]));
 const project = {
