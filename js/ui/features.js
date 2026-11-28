@@ -39,7 +39,7 @@
         on.addEventListener('change', () => { p.on = on.checked; card.classList.toggle('off', !p.on); ctx.changed(); });
         to.addEventListener('input', PQ.debounce(() => { p.to = to.value; ctx.changed(); }, 250));
         const card = h('div.cluster', { class: p.on ? '' : 'off' },
-          h('div.cluster-h', on, h('span.faint', 'Merge into'), to, h('span.faint', PQ.fmtInt(c.rows) + ' rows')),
+          h('div.cluster-h', on, h('span.faint', 'Merge into'), to, h('span.faint', PQ.plural(c.rows, 'row'))),
           h('div.cluster-vals', c.values.map((v) => h('button.chip', { type: 'button', title: 'Use this spelling', disabled: auto.checked, on: { click: () => { p.to = v.value.trim(); to.value = p.to; ctx.changed(); } } }, h('span.mono', JSON.stringify(v.value).slice(1, -1)), h('span.cnt', PQ.fmtInt(v.count))))));
         list.appendChild(card);
       });

@@ -202,7 +202,7 @@
   };
   App.afterAdd = function (added) {
     if (added.length === 1) UI.navigator(added[0].id);
-    else if (added.length) UI.toast(added.length + ' files added. Choose one in Files to load it.', 'ok');
+    else if (added.length) UI.toast(PQ.plural(added.length, 'file') + ' added. Choose one in Files to load it.', 'ok');
     if (added.length) setPane(added.length === 1 ? 'data' : 'queries');
   };
   App.pasteTable = async function (text) {
@@ -225,7 +225,7 @@
     Store.saveUI();
     setPane('data');
     autoTypes(q.id);
-    UI.toast('Created "' + q.name + '" from ' + PQ.fmtInt(body.length) + ' pasted rows', 'ok');
+    UI.toast('Created "' + q.name + '" from ' + PQ.plural(body.length, 'pasted row'), 'ok');
     return true;
   };
   App.addFolder = async function () {
@@ -233,7 +233,7 @@
     try { r = await PQ.Platform.pickFolder(); } catch (e) { return UI.toast(e.message || String(e), 'err'); }
     if (!r || !r.files.length) return;
     await App.addFiles(r.files, r.folder);
-    UI.toast(r.folder + ' · ' + r.files.length + ' files', 'ok');
+    UI.toast(r.folder + ' · ' + PQ.plural(r.files.length, 'file'), 'ok');
     UI.folderDialog();
   };
   App.loadSamples = async function () {
@@ -590,7 +590,7 @@
           s.note ? UI.icon('fa-note-sticky', 's-note') : null,
           cat.materializes ? h('span', { title: 'Forces materialization — the engine checkpoints here, later steps stay lazy' }, UI.icon('fa-bolt', 's-mat')) : null,
           st && st.ok && st.cached && !s.disabled ? h('span', { title: 'Result cached (fingerprint ' + (st.fp || '').slice(0, 8) + ')' }, UI.icon('fa-database', 's-cache')) : null,
-          st && st.ok && (st.rows || i === active) ? h('span.rows', { title: PQ.fmtInt(st.rows) + ' rows × ' + st.cols + ' cols · ' + UI.fmtMs(st.ms) }, fmtShort(st.rows)) : null),
+          st && st.ok && (st.rows || i === active) ? h('span.rows', { title: PQ.plural(st.rows, 'row') + ' × ' + PQ.plural(st.cols, 'column') + ' · ' + UI.fmtMs(st.ms) }, fmtShort(st.rows)) : null),
         h('span.s-actions',
           h('button.icon-btn', { title: 'Edit step', 'aria-label': 'Edit ' + s.name, on: { click: (e) => { e.stopPropagation(); UI.editStep({ qid: q.id, index: i }); } } }, UI.icon('fa-gear')),
           i > 0 ? h('button.icon-btn.danger', { title: 'Delete step', 'aria-label': 'Delete ' + s.name, on: { click: (e) => { e.stopPropagation(); deleteStep(q, i); } } }, UI.icon('fa-xmark')) : null));
@@ -811,7 +811,7 @@
     if (lr) {
       kv.push(row('Last run', (q ? q.name + ' · ' : '') + 'step ' + (lr.upto + 1) + ' of ' + lr.total));
       kv.push(row('Data', lr.mode === 'full' ? 'Full data' : lr.truncated ? 'Sample: first ' + PQ.fmtInt(Store.project.settings.previewRows) + ' rows' : 'All rows (fits in the preview)'));
-      kv.push(row('Result', lr.failed ? 'Error: ' + (lr.error || 'failed') : PQ.fmtInt(lr.n) + ' rows × ' + lr.cols + ' columns'));
+      kv.push(row('Result', lr.failed ? 'Error: ' + (lr.error || 'failed') : PQ.plural(lr.n, 'row') + ' × ' + PQ.plural(lr.cols, 'column')));
       kv.push(row('Time', UI.fmtMs(lr.ms) + (lr.engine === 'built-in' && lr.cached ? ' · ' + lr.cached + ' of ' + lr.total + ' steps reused' : '')));
       if (lr.note) kv.push(row('Note', lr.note));
     }
@@ -891,7 +891,7 @@
   async function copyColumn(c) {
     try {
       const { values } = await UI.Engine.call('distinct', { resultId: App.result.resultId, col: c.name });
-      UI.copy(values.map((v) => UI.cellText(v.value, c.type).text).join('\n'), 'Copied ' + values.length + ' distinct values');
+      UI.copy(values.map((v) => UI.cellText(v.value, c.type).text).join('\n'), 'Copied ' + PQ.plural(values.length, 'distinct value'));
     } catch (err) { UI.toast(err.message, 'err'); }
   }
   function filterPopover(c) {
@@ -954,9 +954,9 @@
     App.busy('Exporting ' + q.name, true);
     try {
       const r = await UI.Engine.call('exportQuery', { qid: q.id, format: fmt, limit: fmt === 'tsv' ? 100000 : undefined }, (p) => App.progress(p));
-      if (fmt === 'tsv') { await UI.copy(r.data, 'Copied ' + PQ.fmtInt(Math.min(r.rows, 100000)) + ' rows — paste straight into Excel or Sheets.'); }
-      else if (r.written) UI.toast('Exported ' + PQ.fmtInt(r.rows) + ' rows with Polars to ' + String(r.path).split(/[\\/]/).pop(), 'ok');
-      else { const where = await UI.download(PQ.snake(q.name) + '.' + fmt, r.data, r.mime); if (where) UI.toast('Exported ' + PQ.fmtInt(r.rows) + ' rows (full data) to ' + String(where).split(/[\\/]/).pop(), 'ok'); }
+      if (fmt === 'tsv') { await UI.copy(r.data, 'Copied ' + PQ.plural(Math.min(r.rows, 100000), 'row') + ' — paste straight into Excel or Sheets.'); }
+      else if (r.written) UI.toast('Exported ' + PQ.plural(r.rows, 'row') + ' with Polars to ' + String(r.path).split(/[\\/]/).pop(), 'ok');
+      else { const where = await UI.download(PQ.snake(q.name) + '.' + fmt, r.data, r.mime); if (where) UI.toast('Exported ' + PQ.plural(r.rows, 'row') + ' (full data) to ' + String(where).split(/[\\/]/).pop(), 'ok'); }
     } catch (e) { if (!e.cancelled) UI.toast('Export failed: ' + e.message, 'err'); }
     finally { App.busy(null); }
   }

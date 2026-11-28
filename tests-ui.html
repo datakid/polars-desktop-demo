@@ -275,6 +275,13 @@ f.addEventListener('load', async () => {
       const root = doc.querySelector('.modal-back') || doc.body;
       await Promise.all(root.getAnimations({ subtree: true }).filter((an) => an.effect && isFinite(an.effect.getComputedTiming().endTime)).map((an) => an.finished.catch(() => null)));
     };
+    const plural = w.PQ.plural;
+    if (plural(1, 'row') !== '1 row' || plural(2, 'row') !== '2 rows' || plural(0, 'column') !== '0 columns' || plural(1200, 'file') !== '1,200 files' || plural(1, 'entry', 'entries') !== '1 entry' || plural(3, 'entry', 'entries') !== '3 entries') throw new Error('PQ.plural spells counts wrongly');
+    UI().App.stepDialog('GroupBy', {}); await sleep(900); await settle(doc);
+    const groupPreview = doc.querySelector('.modal').innerText.replace(/\s+/g, ' ');
+    if (/\b1 rows\b|\b1 columns\b/.test(groupPreview) || !/1 row × 1 column/.test(groupPreview)) throw new Error('the Group by preview with no keys does not read 1 row × 1 column: ' + groupPreview.slice(0, 220));
+    doc.querySelector('.modal .close').click(); await sleep(150);
+    console.log('E2E a count of one is singular');
     const probe = async (width, height) => {
       frame.style.width = width + 'px'; frame.style.height = height + 'px';
       await sleep(500);

@@ -135,7 +135,7 @@
     const label = pq ? 'Parquet' : 'Arrow IPC';
     const rows = (info.preview || []).slice(1, 31);
     const m = info.meta || {};
-    const facts = [h('b', label), ' · ', h('b', PQ.fmtInt(info.rows)), ' rows · ', h('b', info.cols), ' typed columns'];
+    const facts = [h('b', label), ' · ', h('b', PQ.fmtInt(info.rows)), info.rows === 1 ? ' row · ' : ' rows · ', h('b', info.cols), info.cols === 1 ? ' typed column' : ' typed columns'];
     if (m.rowGroups) facts.push(' · ' + m.rowGroups + ' row group' + (m.rowGroups > 1 ? 's' : ''));
     if (m.codec && m.codec !== 'UNCOMPRESSED') facts.push(' · ' + m.codec.toLowerCase());
     facts.push('. Types come from the file, no inference needed.');
@@ -363,7 +363,7 @@
       const st = UI.App.queryStatus.get(id);
       inner.appendChild(h('div.dep-node', { class: (isSrc ? 'src ' : '') + (isOut ? 'out ' : '') + (st && st.error ? 'err' : ''), style: { left: p.x + 'px', top: p.y + 'px' }, title: 'Open ' + q.name, on: { click: () => { m.close(); UI.App.selectQuery(id); } } },
         h('div.n', UI.icon(isSrc ? 'fa-database' : 'fa-table'), q.name, isOut ? h('span.load-badge', q.load.target) : null),
-        h('div.d', src ? PQ.Steps.describe(q.steps[0].kind) : 'No source', ' · ', q.steps.length + ' steps')));
+        h('div.d', src ? PQ.Steps.describe(q.steps[0].kind) : 'No source', ' · ', PQ.plural(q.steps.length, 'step'))));
     });
     canvas.appendChild(inner);
     m = UI.modal({ title: 'Query dependencies', icon: 'fa-diagram-project', size: 'xwide', body: h('div.col', { style: { height: '100%' } }, h('div.row.muted', { style: { fontSize: '12px' } }, h('span', UI.icon('fa-square', 'tag-lazy'), ' source'), h('span', UI.icon('fa-square', '', ''), ' '), h('span', { style: { color: 'var(--ok)' } }, UI.icon('fa-square'), ' has output'), h('span', '· Refresh All runs in this order (left → right), independent branches in parallel.')), canvas) });

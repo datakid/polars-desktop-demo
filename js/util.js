@@ -338,6 +338,7 @@
     return String(v);
   };
   PQ.fmtInt = (n) => (n === Infinity ? '∞' : Number(n).toLocaleString('en-US'));
+  PQ.plural = (n, one, many) => PQ.fmtInt(n) + ' ' + (n === 1 ? one : many || one + 's');
 
   PQ.hash = function (str) {
     let h1 = 0xdeadbeef, h2 = 0x41c6ce57;

@@ -307,7 +307,7 @@
           return;
         }
         const before = idx > 0 ? r.states[idx - 1] : null;
-        hdr.append(h('b', PQ.fmtInt(r.n) + ' rows × ' + r.schema.length + ' columns'), before && before.ok ? h('span', '(before: ' + PQ.fmtInt(before.rows) + ' × ' + before.cols + ')') : null, h('span.grow'), h('span', UI.fmtMs(st.ms)), r.truncated ? h('span', { title: 'Based on the preview sample' }, '· sample') : null);
+        hdr.append(h('b', PQ.plural(r.n, 'row') + ' × ' + PQ.plural(r.schema.length, 'column')), before && before.ok ? h('span', '(before: ' + PQ.fmtInt(before.rows) + ' × ' + before.cols + ')') : null, h('span.grow'), h('span', UI.fmtMs(st.ms)), r.truncated ? h('span', { title: 'Based on the preview sample' }, '· sample') : null);
         const newCols = r.schema.map((c) => c.name).filter((n) => !schema.some((s) => s.name === n));
         UI.clear(lp).appendChild(UI.miniTable(r.schema, r.firstPage.slice(0, 30), { highlight: newCols }));
       } catch (e) {
