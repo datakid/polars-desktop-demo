@@ -27,7 +27,7 @@
   node scripts/floe.mjs plan project.floe --query <name>
   ```
   Exit codes: 0 ok · 1 query failed · 2 usage · 3 input missing. `npm link` installs it as `floe`.
-- Tests: 126 golden tests in `tests.html`, the UI end-to-end test in `tests-ui.html`, and the Rust tests in `engine/tests` (`plan.rs`, `ops.rs`, `cancel.rs` and `parity.rs`, which runs the 72 fixtures from `scripts/gen-fixtures.mjs` against the built-in engine and compares every column's profile and distinct values). `npm run test:engine` in `desktop` runs the Rust tests and prints their count.
+- Tests: 134 golden tests in `tests.html`, the UI end-to-end test in `tests-ui.html`, and the Rust tests in `engine/tests` (`plan.rs`, `ops.rs`, `sql.rs`, `cancel.rs` and `parity.rs`, which runs the 123 fixtures from `scripts/gen-fixtures.mjs` against the built-in engine and compares every column's profile and distinct values). `npm run test:engine` in `desktop` runs the Rust tests and prints their count.
 
 ## What's new in 1.1
 - **Engine indicator** in the status bar: `● Built-in · 42 ms · Sample 1,000`. Click it (or press Enter on it) for engine, location, last run, data scope and, on desktop, why that engine ran. The dot shows idle, busy, starting or error. On phones it shrinks to the dot and engine name.
@@ -64,7 +64,7 @@ One codebase ships two ways:
 ## Repository layout
 ```
 index.html, demo.html, 404.html     app pages
-tests.html, tests-ui.html           engine golden tests (126) · UI end-to-end smoke test (web build only)
+tests.html, tests-ui.html           engine golden tests (134) · UI end-to-end smoke test (web build only)
 css/app.css                         "Clay" design system
 js/                                 engine (worker), platform layer, UI
 js/native-engine.js                 optional Polars adapter; idle unless a desktop engine reports itself available
@@ -191,18 +191,35 @@ CI builds both variants for Windows: `Floe_*` uses the built-in engine and `Floe
 - Values: replace values, replace/remove/keep errors, text transforms (except Proper), round.
 - Reshaping and combining: group by (count, distinct count, sum, average, median, standard deviation, variance, mode, percentile, min, max, first, last, concatenate), unpivot, pivot, merge (all join types), append, window columns (running total, running max and min, row number, rank, dense rank, change and % change from previous, previous and next value, percent of total, moving average, rolling sum, min, max and std deviation).
 - Formula functions: the text, number, date and logic functions listed in `PQ.Plan.FUNCS`.
+- Custom SQL, for the statements described under "Custom SQL on Polars" below; every other statement runs on the built-in engine with the reason shown.
 
 **Runs on built-in (with the reason shown):**
 - Sources: Excel tables, named ranges, multi-sheet sources, merged-cell fill, non-UTF-8 CSV, pasted files. Folders of CSV, Parquet, Arrow or JSON files run on Polars, combined in name order with the file-name column first and missing columns as null; a folder falls back if a column has different types in different files, a file already has the file-name column, or a file is an Excel workbook. JSON runs on Polars when it has the same shape the built-in reader accepts; a JSON column that mixes value types or is all null, a single object whose array property would become the rows, rows that are not objects, integer-like keys and non-UTF-8 text fall back.
-- Steps: ClusterValues, Validate, Transpose, DemoteHeaders, Custom SQL, Proper case. Transpose and DemoteHeaders produce columns that hold values of different types, which a Polars column cannot; Custom SQL has no dialect-identical Polars equivalent; Expand JSON runs on Polars for object cells and falls back for arrays, invalid JSON, mixed-type or all-null fields; ClusterValues, Validate and Text.Similarity have no Polars equivalent and stay on the built-in engine.
+- Steps: ClusterValues, Validate, Transpose, DemoteHeaders, Proper case, and Custom SQL that is not one of the lowered shapes. Transpose and DemoteHeaders produce columns that hold values of different types, which a Polars column cannot; Expand JSON runs on Polars for object cells and falls back for arrays, invalid JSON, mixed-type or all-null fields; ClusterValues, Validate and Text.Similarity have no Polars equivalent and stay on the built-in engine.
 - Formula functions without a Polars mapping: `Text.Similarity`, `Text.Fingerprint`, `Text.RemoveDiacritics`, `Text.Proper`, `Date.From` and `Value.IsError`. Dialog previews also stay on built-in.
+
+**Custom SQL on Polars:**
+Custom SQL is lowered to Polars only when `js/plan.js` can read the whole statement and every part of it is one that was checked against the built-in engine (AlaSQL) on the same data. The text sent to Polars is rebuilt from what was read, never passed through. The two engines read SQL differently in many small ways, so everything else keeps running on AlaSQL, and a Polars error at run time falls back to it as well.
+- Lowered: one SELECT of plain columns or `*`; named expressions (`AS` is required); AND, OR, parentheses, `=`, `<>`, `!=`, `<`, `<=`, `>`, `>=`, IS [NOT] NULL, IN and NOT IN lists of numbers or text, BETWEEN; `+`, `-`, `*`, and `/` and `%` by a non-zero number; CASE WHEN, COALESCE; COUNT(*), COUNT, COUNT(DISTINCT), SUM, AVG, MIN, MAX; GROUP BY, HAVING, ORDER BY, LIMIT with OFFSET; INNER and LEFT joins on column equalities between `self`, other queries (by their snake_case name) and each other.
+- Rewritten to give the same rows: ORDER BY gets NULLS FIRST when ascending and NULLS LAST when descending, because AlaSQL sorts NULL as the smallest value and Polars as the largest. Without GROUP BY, ORDER BY also ends with the row number of every table in the query, which the engine adds and hides: AlaSQL's sort is stable and Polars' sort on several keys is not (on 500,000 rows it reordered 250,093 rows that tied on every key), so rows that tie keep the order they had. SQL text order is by character on both engines (unlike the Sort step on the built-in engine).
+- Not lowered: LIKE (AlaSQL ignores case), NOT, DISTINCT, functions other than COALESCE and the aggregates, `||`, names in quotes or brackets or with spaces, an expression without `AS`, division by a column or by zero (AlaSQL gives NULL, Polars infinity), a minus sign before a column, LIMIT 0 (AlaSQL ignores it), NULL as a value, GROUP BY unless ORDER BY lists every GROUP BY column (AlaSQL lists group keys that look like whole numbers first, whatever the data order), joins without ORDER BY, `SELECT *` with joins, columns of joined tables not written as `table.column`, RIGHT, FULL and CROSS joins, and queries that read themselves.
+- 36 statements are fixtures in `scripts/gen-fixtures.mjs`; each gives the same schema and rows on both engines. `PQ.Plan.lower` refusals are tested in `js/tests.js` and the run-time fallback in `tests-ui.html`.
 
 **Known differences:**
 - Polars sorts text in plain character order, while the built-in engine uses natural, accent-insensitive order. This also decides the minimum and maximum shown for text columns in the profile.
 - With Polars, per-step row counts show only for the selected step.
 - Division by zero gives null instead of a cell error.
+- Custom SQL, where AlaSQL is the one that departs from SQL and Polars follows the standard:
+  - A result with no rows keeps its columns on Polars; AlaSQL returns a table with no columns.
+  - Column types follow the Polars type. The built-in engine infers them from the values, so a result of whole numbers is `int` there and `number` on Polars, and a column of only nulls is `any` there.
+  - SUM over no rows is NULL on Polars and 0 in AlaSQL. MIN and MAX of a text column give the text on Polars and NULL in AlaSQL.
+  - A date column compared with a text literal (`order_date >= '2025-03-01'`) is compared as dates on Polars; AlaSQL finds no rows.
+  - A NULL key joins to a NULL key in AlaSQL and never on Polars.
+  - A name that AlaSQL reserves (for example `total`) as a column alias is a parse error there and works on Polars.
+  - Text compared with a number (`name = 3`) is an error on Polars, which falls back to AlaSQL.
 
 ## Not implemented / known limits
+- The built-in engine reads a Custom SQL step as using another query when that query's name appears in it as a whole word outside quotes, so a column alias equal to a query's name (an alias `q` next to a query named `q`) is read as a reference.
 - Phone layout is tested in an emulated browser at 390×844 and 360×640 (no horizontal overflow, Parameters and Automate footers inside the screen). It has not been checked on a real device.
 - The `floe` CLI runs on the built-in JS engine (Node). A native Rust CLI on `floe-engine` is not built yet.
 - The Rust code (`floe-engine` and the Tauri shell) compiles and the engine tests run in CI, but the installers have not been tested by hand on a Windows PC yet.

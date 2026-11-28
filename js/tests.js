@@ -101,6 +101,84 @@
       const book = PQ.Plan.lower(proj([{ type: 'Source', source: { kind: 'folder', folder: 'books', pattern: '*.xlsx' } }]), 'q1', Object.assign({}, files, { folders: { books: [{ name: 'e.xlsx', path: '/d/e.xlsx' }] } }));
       assert(!book.ok, 'excel files in a folder run on the built-in engine');
     });
+    const csvSrc = (fileId, fileName) => ({ type: 'Source', source: { kind: 'file', fileId, fileName, csv: { delimiter: ',' } } });
+    const sqlProj = (sql) => ({ settings: { previewRows: 1000, locale: 'en-US' }, params: [], queries: [
+      { id: 'q1', name: 'Orders', steps: [{ id: 's0', name: 'Source', kind: csvSrc('f1', 'orders.csv') }, { id: 's1', name: 'SQL', kind: { type: 'CustomSql', sql } }] },
+      { id: 'c1', name: 'Customers', steps: [{ id: 'c0', name: 'Source', kind: csvSrc('f2', 'customers.csv') }] },
+      { id: 'c2', name: 'Sales Data', steps: [{ id: 'd0', name: 'Source', kind: csvSrc('f3', 'sales.csv') }] },
+    ] });
+    const sqlLow = (sql) => PQ.Plan.lower(sqlProj(sql), 'q1', { files: { f1: '/data/orders.csv', f2: '/data/customers.csv', f3: '/data/sales.csv' } });
+    test('plan: Custom SQL lowers, normalises the text and orders nulls the way the built-in engine does', () => {
+      const r = sqlLow('select a, b as c from self where a != 1 order by a desc, b;');
+      assert(r.ok, r.reason);
+      assertEq(r.plan.ops[0], { op: 'sql', sql: 'SELECT a, b AS c FROM self WHERE a <> 1 ORDER BY a DESC NULLS LAST, b NULLS FIRST, __floe_row NULLS FIRST', tables: [] });
+    });
+    test('plan: Custom SQL lowers the allow-listed shapes unchanged', () => {
+      [
+        ['SELECT * FROM self LIMIT 5 OFFSET 2', 'SELECT * FROM self LIMIT 5 OFFSET 2'],
+        ['SELECT region, SUM(qty) AS s, COUNT(*) AS n, COUNT(DISTINCT cust) AS d, AVG(p) AS a, MIN(p) AS lo, MAX(p) AS hi FROM self GROUP BY region HAVING SUM(qty) > 5 ORDER BY region', 'SELECT region, SUM(qty) AS s, COUNT(*) AS n, COUNT(DISTINCT cust) AS d, AVG(p) AS a, MIN(p) AS lo, MAX(p) AS hi FROM self GROUP BY region HAVING SUM(qty) > 5 ORDER BY region NULLS FIRST'],
+        ["SELECT a FROM self WHERE a IN (1, 2) AND b NOT IN ('x', 'it''s') OR c BETWEEN 1 AND 2 OR d IS NOT NULL", "SELECT a FROM self WHERE a IN (1, 2) AND b NOT IN ('x', 'it''s') OR c BETWEEN 1 AND 2 OR d IS NOT NULL"],
+        ["SELECT CASE WHEN a > 1 THEN 'x' ELSE 'y' END AS k, COALESCE(b, 0) + 1 AS n, a / 2 AS h, a % 3 AS m, (a + 1) * 2 AS w FROM self", "SELECT CASE WHEN a > 1 THEN 'x' ELSE 'y' END AS k, COALESCE(b, 0) + 1 AS n, a / 2 AS h, a % 3 AS m, (a + 1) * 2 AS w FROM self"],
+        ['SELECT a FROM self WHERE (a = 1 OR b = 2) AND c > -1', 'SELECT a FROM self WHERE (a = 1 OR b = 2) AND c > -1'],
+      ].forEach(([sql, want]) => { const r = sqlLow(sql); assert(r.ok, sql + ' — ' + r.reason); assertEq(r.plan.ops[0].sql, want); });
+    });
+    test('plan: Custom SQL the built-in engine reads differently is refused with the reason', () => {
+      [
+        ["SELECT * FROM self WHERE a LIKE 'x%'", /LIKE/],
+        ['SELECT * FROM self WHERE NOT a = 1', /NOT/],
+        ['SELECT DISTINCT a FROM self', /DISTINCT/],
+        ['SELECT UPPER(a) AS u FROM self', /UPPER/],
+        ['SELECT a || b AS c FROM self', /character/],
+        ['SELECT "a" FROM self', /character/],
+        ['SELECT [a] FROM self', /character/],
+        ['SELECT `a` FROM self', /character/],
+        ['SELECT SUM(a) FROM self', /name the expression/],
+        ['SELECT a b FROM self', /AS/],
+        ['SELECT a, SUM(b) AS s FROM self GROUP BY a', /ORDER BY lists every GROUP BY column/],
+        ['SELECT a, SUM(b) AS s FROM self GROUP BY a ORDER BY s DESC', /ORDER BY lists every GROUP BY column/],
+        ['SELECT a, b, SUM(c) AS s FROM self GROUP BY a ORDER BY a', /GROUP BY column/],
+        ['SELECT a / b AS r FROM self', /division/],
+        ['SELECT a / 0 AS r FROM self', /division/],
+        ['SELECT -a AS r FROM self', /built-in engine/],
+        ['SELECT * FROM self WHERE a = NULL', /NULL/],
+        ['SELECT * FROM self LIMIT 0', /LIMIT/],
+        ['SELECT * FROM self ORDER BY LENGTH(a)', /built-in engine/],
+        ['SELECT s.a FROM self s JOIN customers c ON s.k = c.k', /ORDER BY/],
+        ['SELECT * FROM self s JOIN customers c ON s.k = c.k ORDER BY s.k', /SELECT \*/],
+        ['SELECT a FROM self JOIN customers c ON self.k = c.k ORDER BY self.k', /table\.column/],
+        ['SELECT s.a FROM self s RIGHT JOIN customers c ON s.k = c.k ORDER BY s.a', /INNER and LEFT/],
+        ['SELECT a FROM nowhere', /not a query/],
+        ['SELECT a FROM SELF', /not a query/],
+        ["SELECT a FROM self WHERE b = 'open", /unterminated/],
+        ["SELECT a FROM self WHERE b = 'x\\y'", /backslash/],
+        ['SELECT a FROM self; SELECT 1', /character/],
+        ['SELECT a FROM self WHERE a = 1 -- note', /built-in engine/],
+        ['', /Write a SQL query/],
+      ].forEach(([sql, why]) => { const r = sqlLow(sql); assert(!r.ok && why.test(r.reason) && /^Step 2 “SQL”: /.test(r.reason), JSON.stringify(sql) + ' → ' + JSON.stringify(r)); });
+    });
+    test('plan: Custom SQL without GROUP BY ends ORDER BY with the row index of every table so ties keep their input order', () => {
+      const one = sqlLow('SELECT a FROM self ORDER BY a');
+      assert(one.ok, one.reason);
+      assertEq(one.plan.ops[0].sql, 'SELECT a FROM self ORDER BY a NULLS FIRST, __floe_row NULLS FIRST');
+      const two = sqlLow('SELECT s.id, c.name FROM self s LEFT JOIN customers c ON s.cust = c.cust ORDER BY s.id');
+      assert(two.ok, two.reason);
+      assertEq(two.plan.ops[0].sql, 'SELECT s.id, c.name FROM self AS s LEFT JOIN customers AS c ON s.cust = c.cust ORDER BY s.id NULLS FIRST, s.__floe_row NULLS FIRST, c.__floe_row NULLS FIRST');
+      const grouped = sqlLow('SELECT a, COUNT(*) AS n FROM self GROUP BY a ORDER BY a');
+      assert(grouped.ok, grouped.reason);
+      assertEq(grouped.plan.ops[0].sql, 'SELECT a, COUNT(*) AS n FROM self GROUP BY a ORDER BY a NULLS FIRST');
+    });
+    test('plan: Custom SQL registers the queries it names and not self', () => {
+      const r = sqlLow('SELECT s.id, c.name, d.v FROM self s LEFT JOIN customers c ON s.cust = c.cust JOIN sales_data d ON s.id = d.id ORDER BY s.id');
+      assert(r.ok, r.reason);
+      assertEq(r.plan.ops[0].tables.map((t) => [t.name, t.plan.source.path]), [['customers', '/data/customers.csv'], ['sales_data', '/data/sales.csv']]);
+      const same = sqlLow('SELECT a.id, b.id AS other FROM self a JOIN self b ON a.k = b.k ORDER BY a.id, b.id');
+      assert(same.ok, same.reason);
+      assertEq(same.plan.ops[0].tables, []);
+    });
+    test('plan: Custom SQL that reads its own query is refused as circular', () => {
+      const r = sqlLow('SELECT s.a FROM self s JOIN orders o ON s.k = o.k ORDER BY s.a');
+      assert(!r.ok && /Circular/.test(r.reason), JSON.stringify(r));
+    });
     test('plan: file without a disk path is refused', () => { const r = PQ.Plan.lower(proj([src]), 'q1', {}); assert(!r.ok && /isn’t linked to a file on disk/.test(r.reason), r.reason); });
     test('plan: unsupported step names the step', () => { const r = PQ.Plan.lower(proj([src, { type: 'Transpose' }]), 'q1', files); assert(!r.ok && /^Step 2 “Transposed Table”: isn’t supported/.test(r.reason), r.reason); });
     test('plan: sample lowers with the default seed and a numeric seed', () => {
@@ -264,6 +342,8 @@
   test('compiler: missing column error explains rename + offers fix', () => { const p = proj(); p.queries[0].steps.push({ id: '5', name: 'Rm', kind: { type: 'RemoveColumns', cols: ['y'] } }); E.setProject(p); const r = E.evaluate('a', undefined, 'preview'); const st = r.states[4]; assert(!st.ok && /renamed to `label` in step 3/.test(st.error), st.error); assert(st.fixes.some((f) => f.kind === 'replaceColumn' && f.to === 'label'), 'fix offered'); });
   test('renameColumnInKind fixes formulas and lists', () => { const k = PQ.Steps.renameColumnInKind({ type: 'AddColumn', name: 'y', formula: '[y] & [yy]' }, 'y', 'label'); assertEq(k, { type: 'AddColumn', name: 'y', formula: '[label] & [yy]' }); assertEq(PQ.Steps.renameColumnInKind({ type: 'RemoveColumns', cols: ['y', 'q'] }, 'y', 'label').cols, ['label', 'q']); });
   test('compiler: cycle detection with readable path', () => { const p = proj(); p.queries.push({ id: 'b', name: 'B', steps: [{ id: 'b1', name: 'Source', kind: { type: 'Source', source: { kind: 'query', query: 'a' } } }] }); p.queries[0].steps.push({ id: '9', name: 'M', kind: { type: 'Merge', right: 'b', on: [['x', 'x']] } }); E.setProject(p); let msg = ''; try { PQ.Steps.topo(p); } catch (e) { msg = e.message; } assert(/A → B → A|B → A → B/.test(msg), msg); });
+  test('compiler: Custom SQL depends only on queries it names as whole words', () => { const p = proj(); p.queries[0].steps.push({ id: '9', name: 'SQL', kind: { type: 'CustomSql', sql: "SELECT x AS total_x FROM self WHERE label = 'a'" } }); E.setProject(p); E.clearCache(); const r = E.evaluate('a', undefined, 'preview'); assert(r.table && r.failedAt < 0, r.states.map((s) => s.error).join(' | ')); assertEq(r.table.toRows(), [[1]]); });
+  test('compiler: Custom SQL still finds a query named in the text', () => { const p = proj(); p.queries.push({ id: 'b', name: 'Other', steps: [{ id: 'b1', name: 'Source', kind: { type: 'Source', source: { kind: 'blank', columns: ['k'], rows: [['9']] } } }] }); p.queries[0].steps.push({ id: '9', name: 'SQL', kind: { type: 'CustomSql', sql: 'SELECT o.k FROM self s JOIN other o ON 1 = 1 LIMIT 1' } }); E.setProject(p); E.clearCache(); assert(E.refsOf(p.queries[0].steps[4]).includes('b'), 'query other is a dependency'); });
   test('preview mode applies head(N) at the source', () => { const p = proj(); p.settings.previewRows = 2; E.setProject(p); E.clearCache(); const r = E.evaluate('a', undefined, 'preview'); assert(r.table.n === 3); });
 
   const samples = PQ.IO.makeSamples();

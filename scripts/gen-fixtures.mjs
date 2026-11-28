@@ -9,6 +9,7 @@ const out = resolve(root, process.argv[2] || 'desktop/src-tauri/engine/tests/fix
 const ctx = { console, TextDecoder, TextEncoder, performance, Intl, setTimeout, clearTimeout, structuredClone, indexedDB: undefined, navigator: {} };
 ctx.self = ctx;
 vm.createContext(ctx);
+vm.runInContext(readFileSync(join(root, 'vendor', 'alasql.min.js'), 'utf8'), ctx, { filename: 'alasql.min.js' });
 for (const f of ['util', 'expr', 'io', 'steps', 'engine', 'engine-ext', 'parquet', 'plan']) {
   vm.runInContext(readFileSync(join(root, 'js', f + '.js'), 'utf8'), ctx, { filename: f + '.js' });
 }
@@ -32,6 +33,7 @@ const INPUTS = {
   'casing.csv': ['g,v', '1,b', '1,B', '1,a', '1,b', '1,B', '2,é', '2,z', '2,Z', '3,x', '3,', '3,x'].join('\n'),
   'tags.csv': ['id,tags,name', '1,"a, b, c",  Ana  ', '2,b,BEN', '3,,chloé martin'].join('\n'),
   'mixed.csv': ['id,v,k,t', '1,1,5,a', '2,,5,', '3,x,5,b', '4,4,5,', '5,,5,a'].join('\n'),
+  'words.csv': ['w,n,f', 'b,1,1.5', 'B,2,2.5', 'a,3,-0.5', 'é,,0', 'z,5,', 'Z,6,3.25', ',7,100', 'ab,9,0.1', 'Ab,10,0.2', 'a b,11,4', 'ñ,12,5', '10,13,6', '9,14,7', 'É,15,8', 'a,3,2.5'].join('\n'),
   'many.csv': ['id,g'].concat(Array.from({ length: 1300 }, (_, i) => i + ',' + (i % 3))).join('\n'),
   'ties.csv': ['id,g,v,amt', '1,a,5,10', '2,a,,20', '3,a,3,30', '4,b,,40', '5,b,7,50', '6,b,1,60', '7,b,,70'].join('\n'),
   'people.json': String.raw`[{"id":1,"name":"Ann","score":9.5,"active":true,"tags":["a","b"],"meta":{"x":1.0,"y":[1,2.50,1e21,0.0000001,-0.0,123456789012345680000]},"note":"héllo \"q\"\n"},{"id":2,"name":null,"score":7,"active":false,"extra":"only here"},{"id":3,"name":"Cy","score":null,"active":true,"tags":[],"meta":{},"note":"tab\there"},null,{"id":4,"name":"Dee","score":1e2,"active":true,"extra":"✓","meta":{"é":"ü","k":null}}]`,
@@ -62,6 +64,8 @@ const INPUTS = {
 
 const types = { type: 'ChangeType', onError: 'error', changes: [{ col: 'order_id', type: 'int' }, { col: 'order_date', type: 'date' }, { col: 'qty', type: 'int' }, { col: 'price', type: 'number' }, { col: 'discount', type: 'number' }] };
 const srcOf = (name, csv) => typeof name === 'object' ? ({ type: 'Source', source: Object.assign({ kind: 'folder', csv: { delimiter: ',', header: true } }, name) }) : ({ type: 'Source', source: { kind: 'file', fileId: name, fileName: name, csv: Object.assign({ delimiter: name === 'de.csv' ? ';' : ',', header: true }, csv || {}) } });
+
+const wtypes = { type: 'ChangeType', onError: 'error', changes: [{ col: 'n', type: 'int' }, { col: 'f', type: 'number' }] };
 
 const CASES = [
   ['types and per-cell errors', 'orders.csv', [types]],
@@ -136,6 +140,57 @@ const CASES = [
   ['pivot mode on numbers and text', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'qty', agg: 'mode', index: ['region'] }]],
   ['pivot mode on text values', 'orders.csv', [types, { type: 'Pivot', on: 'region', values: 'customer_id', agg: 'mode', index: ['status'] }]],
   ['append diagonal', 'orders.csv', [{ type: 'SelectColumns', cols: ['customer_id', 'region'] }, { type: 'Append', others: ['customers'], mode: 'diagonal' }]],
+  ["sql: select all columns", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT * FROM self" }]],
+  ["sql: column list with aliases", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id AS id, region AS r, qty FROM self" }]],
+  ["sql: where on text and numbers", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT * FROM self WHERE region = 'EU' AND qty >= 2" }]],
+  ["sql: comparisons drop null rows", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id, qty, discount FROM self WHERE qty < 6 AND discount > 0.05" }]],
+  ["sql: is not null and is null", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id, discount FROM self WHERE discount IS NOT NULL OR qty IS NULL" }]],
+  ["sql: in and not in lists", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id, region FROM self WHERE region IN ('EU', 'US') AND status NOT IN ('pending')" }]],
+  ["sql: between with a null row", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id, qty FROM self WHERE qty BETWEEN 2 AND 5" }]],
+  ["sql: parentheses around or", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id FROM self WHERE (region = 'EU' OR region = 'US') AND qty > 2" }]],
+  ["sql: integer and float arithmetic", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id, qty / 2 AS half, qty * price AS gross, qty + 1 AS next FROM self" }]],
+  ["sql: division and remainder by literals", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id, qty / 4 AS quot, qty % 4 AS rem FROM self ORDER BY order_id" }]],
+  ["sql: case with and without else", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id, CASE WHEN qty > 4 THEN 'big' WHEN qty > 1 THEN 'mid' ELSE 'small' END AS size, CASE WHEN region = 'EU' THEN 1 END AS eu FROM self" }]],
+  ["sql: coalesce", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id, COALESCE(discount, 0) AS d, COALESCE(qty, 0) + 1 AS plus FROM self" }]],
+  ["sql: order by puts nulls first ascending", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id, qty FROM self ORDER BY qty, order_id" }]],
+  ["sql: order by puts nulls last descending", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id, discount FROM self ORDER BY discount DESC, order_id" }]],
+  ["sql: order by ties keep the input order", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT * FROM self ORDER BY region" }]],
+  ["sql: order by ties descending keep the input order", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT * FROM self ORDER BY status DESC" }]],
+  ["sql: limit and offset", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id FROM self ORDER BY order_id LIMIT 3 OFFSET 2" }]],
+  ["sql: order by a date column", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_date, qty FROM self ORDER BY order_date DESC LIMIT 4" }]],
+  ["sql: group by with every common aggregate", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT region, SUM(qty) AS s, COUNT(*) AS n, COUNT(qty) AS nq, AVG(price) AS a, MIN(qty) AS lo, MAX(qty) AS hi FROM self GROUP BY region ORDER BY region" }]],
+  ["sql: group by two keys", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT region, status, COUNT(*) AS n FROM self GROUP BY region, status ORDER BY region, status" }]],
+  ["sql: count distinct", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT region, COUNT(DISTINCT customer_id) AS c FROM self GROUP BY region ORDER BY region" }]],
+  ["sql: having", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT region, SUM(qty) AS s FROM self GROUP BY region HAVING SUM(qty) > 5 ORDER BY region" }]],
+  ["sql: aggregates without group by", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT SUM(qty) AS s, COUNT(*) AS n, AVG(price) AS a FROM self" }]],
+  ["sql: group by ordered by an aggregate then the key", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT region, SUM(qty) AS s FROM self WHERE status = 'shipped' GROUP BY region ORDER BY s DESC, region" }]],
+  ["sql: inner join to another query", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT s.order_id, c.name FROM self s JOIN customers c ON s.customer_id = c.customer_id ORDER BY s.order_id" }]],
+  ["sql: left join keeps unmatched rows", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT s.order_id, c.name, c.segment FROM self AS s LEFT JOIN customers AS c ON s.customer_id = c.customer_id ORDER BY s.order_id" }]],
+  ["sql: join then group by", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT s.region, c.segment, COUNT(*) AS n FROM self s LEFT JOIN customers c ON s.customer_id = c.customer_id GROUP BY s.region, c.segment ORDER BY s.region, c.segment" }]],
+  ["sql: self join on a repeated key", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT a.order_id, b.order_id AS other FROM self a JOIN self b ON a.customer_id = b.customer_id ORDER BY a.order_id, b.order_id" }]],
+  ["sql: text ordering by code point", 'words.csv', [wtypes, { type: 'CustomSql', sql: "SELECT w FROM self ORDER BY w" }]],
+  ["sql: text ordering descending with nulls", 'words.csv', [wtypes, { type: 'CustomSql', sql: "SELECT w, n FROM self ORDER BY w DESC, n" }]],
+  ["sql: text equality is case sensitive", 'words.csv', [wtypes, { type: 'CustomSql', sql: "SELECT w FROM self WHERE w = 'B'" }]],
+  ["sql: text comparison and between", 'words.csv', [wtypes, { type: 'CustomSql', sql: "SELECT w FROM self WHERE w > 'a' AND w < 'z' ORDER BY w" }]],
+  ["sql: text in list skips null rows", 'words.csv', [wtypes, { type: 'CustomSql', sql: "SELECT w, n FROM self WHERE w NOT IN ('a', 'b') ORDER BY n" }]],
+  ["sql: group by text keys that differ in case", 'words.csv', [wtypes, { type: 'CustomSql', sql: "SELECT w, COUNT(*) AS c, SUM(f) AS s FROM self GROUP BY w ORDER BY w" }]],
+  ["sql: sums over floats with nulls", 'words.csv', [wtypes, { type: 'CustomSql', sql: "SELECT n, f, f * 2 AS d, f + n AS t FROM self WHERE f IS NOT NULL ORDER BY n" }]],
+  ["sql: order by two keys with ties keeps the input order", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT order_id, region, status FROM self ORDER BY region, status" }]],
+  ["sql: order by a joined column with ties keeps the join order", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT s.order_id, s.region, c.name FROM self s JOIN customers c ON s.customer_id = c.customer_id ORDER BY s.region" }]],
+  ["sql: left join ordered by a column with ties keeps the join order", 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT s.order_id, s.status, c.segment FROM self s LEFT JOIN customers c ON s.customer_id = c.customer_id ORDER BY s.status DESC, c.segment" }]],
+  ['sql: preview runs on the sample', 'orders.csv', [types, { type: 'CustomSql', sql: "SELECT region, COUNT(*) AS n FROM self GROUP BY region ORDER BY region" }], undefined, { mode: 'preview', previewRows: 5 }],
+  ['window lead, percent of total and moving average', 'orders.csv', [types, { type: 'Window', op: 'lead', col: 'qty', partition: ['region'], n: 1, name: 'nxt' }, { type: 'Window', op: 'pct_of_total', col: 'qty', partition: ['region'], name: 'share' }, { type: 'Window', op: 'moving_avg', col: 'price', partition: ['region'], orderBy: 'order_id', n: 3, name: 'avg3' }]],
+  ['group by median, first, last and concatenate', 'orders.csv', [types, { type: 'GroupBy', keys: ['region'], aggs: [{ fn: 'median', col: 'qty', name: 'med_qty' }, { fn: 'median', col: 'price', name: 'med_price' }, { fn: 'first', col: 'status', name: 'first_status' }, { fn: 'last', col: 'customer_id', name: 'last_cust' }, { fn: 'concat', col: 'customer_id', sep: ', ', name: 'custs' }] }]],
+  ['merge inner', 'orders.csv', [{ type: 'Merge', right: 'customers', how: 'inner', on: [['customer_id', 'customer_id']] }]],
+  ['merge right', 'orders.csv', [{ type: 'SelectColumns', cols: ['order_id', 'customer_id'] }, { type: 'Merge', right: 'customers', how: 'right', on: [['customer_id', 'customer_id']] }]],
+  ['merge semi', 'orders.csv', [{ type: 'Merge', right: 'customers', how: 'semi', on: [['customer_id', 'customer_id']] }]],
+  ['pivot mean, min and max', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'qty', agg: 'mean', index: ['region'] }]],
+  ['pivot min on prices', 'orders.csv', [types, { type: 'Pivot', on: 'region', values: 'price', agg: 'min', index: ['status'] }]],
+  ['pivot max on quantities', 'orders.csv', [types, { type: 'Pivot', on: 'region', values: 'qty', agg: 'max', index: ['status'] }]],
+  ['pivot first and last', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'customer_id', agg: 'first', index: ['region'] }]],
+  ['pivot last', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'customer_id', agg: 'last', index: ['region'] }]],
+  ['pivot median', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'qty', agg: 'median', index: ['region'] }]],
+  ['pivot count rows', 'orders.csv', [types, { type: 'Pivot', on: 'status', values: 'qty', agg: 'count_rows', index: ['region'] }]],
 ];
 
 function wire(v) {
@@ -169,7 +224,8 @@ for (const [label, input, steps, csv, opts] of CASES) {
   E.setProject(project);
   E.clearCache();
   const r = E.evaluate('q', undefined, mode);
-  if (!r.table) throw new Error(label + ': built-in failed at step ' + (r.failedAt + 1) + ': ' + r.states[r.failedAt].error);
+  const bad = r.states.findIndex((s) => s && s.ok === false);
+  if (!r.table || bad >= 0) throw new Error(label + ': built-in failed at step ' + ((bad >= 0 ? bad : r.failedAt) + 1) + ': ' + r.states[bad >= 0 ? bad : r.failedAt].error);
   const low = PQ.Plan.lower(project, 'q', { files, folders });
   if (!low.ok) { refused++; console.warn('refused:', label, '—', low.reason); continue; }
   const names = r.table.schema().map((c) => c.name);

@@ -396,6 +396,16 @@
     const r = String(s).replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').toLowerCase();
     return /^[0-9]/.test(r) || !r ? 'q_' + r : r;
   };
+  PQ.sqlMentions = (sql, alias) => {
+    const text = String(sql || '').replace(/'(?:[^']|'')*'/g, ' ').toLowerCase();
+    const a = String(alias || '').toLowerCase();
+    if (!a) return false;
+    const word = /[a-z0-9_]/;
+    for (let i = text.indexOf(a); i >= 0; i = text.indexOf(a, i + 1)) {
+      if (!word.test(text[i - 1] || ' ') && !word.test(text[i + a.length] || ' ')) return true;
+    }
+    return false;
+  };
   PQ.globToRegex = (g) => new RegExp('^' + String(g).split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i');
 
   PQ.colToIdx = (s) => { let n = 0; for (const ch of s.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; };

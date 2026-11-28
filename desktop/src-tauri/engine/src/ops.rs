@@ -626,8 +626,26 @@ pub fn apply(mut lf: LazyFrame, op: &Value, locale: &str, cx: &mut Ctx) -> R<Laz
             concat_lf_diagonal(lfs, UnionArgs { to_supertypes: true, ..Default::default() }).s()
         }
         "window" => window(lf, op, &s),
+        "sql" => sql(lf, op, &s, cx),
         o => Err(format!("Unknown operation {o}")),
     }
+}
+
+const SQL_ROW: &str = "__floe_row";
+
+fn sql(lf: LazyFrame, op: &Value, s: &Schema, cx: &mut Ctx) -> R<LazyFrame> {
+    let text = st(op, "sql");
+    if text.trim().is_empty() {
+        return Err("Write a SQL query. The previous step is available as `self`.".into());
+    }
+    let mut sc = polars::sql::SQLContext::new();
+    sc.register("self", drop_errs(lf, s).with_row_index(SQL_ROW, None));
+    for t in op["tables"].as_array().cloned().unwrap_or_default() {
+        let mut sub = crate::build(&t["plan"], cx)?;
+        let ss = schema(&mut sub)?;
+        sc.register(&st(&t, "name"), drop_errs(sub, &ss).with_row_index(SQL_ROW, None));
+    }
+    Ok(sc.execute(&text).s()?.drop(by_name([SQL_ROW], false, false)))
 }
 
 fn split(mut lf: LazyFrame, op: &Value, s: &Schema) -> R<LazyFrame> {

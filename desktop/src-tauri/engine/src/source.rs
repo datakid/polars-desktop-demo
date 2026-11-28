@@ -26,7 +26,7 @@ fn sniff(path: &str) -> u8 {
     let text = String::from_utf8_lossy(&buf[..n]);
     let line = text.lines().next().unwrap_or("");
     let mut best = (b',', 0usize);
-    for d in [b',', b';', b'\t', b'|'] {
+    for d in *b",;\t|" {
         let (mut inq, mut c) = (false, 0usize);
         for ch in line.bytes() {
             if ch == b'"' {

@@ -368,7 +368,7 @@
         if (k.type === 'Source' && k.source && k.source.kind === 'query') out.add(k.source.query);
         if (k.type === 'Merge' && k.right) out.add(k.right);
         if (k.type === 'Append') (k.others || []).forEach((o) => out.add(o));
-        if (k.type === 'CustomSql') { const l = (k.sql || '').toLowerCase(); project.queries.forEach((o) => { if (o.id !== q.id && l.includes(PQ.snake(o.name))) out.add(o.id); }); }
+        if (k.type === 'CustomSql') project.queries.forEach((o) => { if (o.id !== q.id && PQ.sqlMentions(k.sql, PQ.snake(o.name))) out.add(o.id); });
       });
       return [...out].filter((id) => byId.has(id));
     };

@@ -85,6 +85,12 @@ Run the same pipelines in the desktop `polars` build with "Prefer Polars" on and
 | `3120c24` (CI artifact) | 2.67 MB | 12.45 MB | 9.78 MB |
 | `v1.1.0-alpha.7` (published) | 2.82 MB | 13.07 MB | 10.25 MB |
 | `v1.1.0-alpha.7` Linux `.deb` (published) | 3.54 MB | 18.38 MB | 14.84 MB |
+| `v1.1.0-alpha.8` (published) | 2.82 MB | 13.08 MB | 10.26 MB |
+| `v1.1.0-alpha.8` Linux `.deb` (published) | 3.54 MB | 18.38 MB | 14.84 MB |
+| Custom SQL branch (pull request 11, CI artifact) | 2.81 MB | 14.59 MB | 11.78 MB |
+| Custom SQL branch Linux package (CI artifact) | 3.54 MB | 20.55 MB | 17.00 MB |
+
+The Custom SQL branch adds the polars `sql` feature. Against `v1.1.0-alpha.8` it grows the Windows Polars installer by 1.51 MB (13,078,894 to 14,593,524 bytes) and the Linux Polars package by 2.17 MB (18,381,004 to 20,547,155 bytes); the built-in installers do not grow (2,823,336 to 2,809,268 bytes on Windows). The branch rows are CI artifacts, which are zip files of installers that are already compressed, so they match the installers to within a few KB. The Phase 2 budget for the Windows Polars installer is 18.9 MB (8.9 MB at the start of the plan plus 10 MB), so 14.59 MB leaves 4.3 MB.
 
 About 3.5 MB of the growth since the start of the plan is the `panic = "unwind"` release setting that lets a Polars panic fall back instead of ending the app.
 
