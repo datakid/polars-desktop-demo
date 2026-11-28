@@ -69,7 +69,7 @@ Both queues run in parallel and touch disjoint files. Take the first unclaimed i
 | E4 | engine agent | Linux review, read only, findings posted here | none (read only) | E1 |
 | E5 | engine agent | Installer size after P3, against the Phase 2 budget, written to `docs/BENCH.md` | `docs/BENCH.md` numbers | E1 |
 | R1 | reviewer | Sweep of all 39 step dialogs at 1280x800, 390x844 and 360x640: no error, no overflow, no clipped button | scratch | none; done, clean |
-| R2 | reviewer | Python export parity for the 14 step types with no case in `scripts/check-python-export.mjs` | `scripts/check-python-export.mjs`, `js/steps.js`, `js/engine-ext.js` | none; 12 done in `c1cef13` and `80194f5`, ExpandJson and CustomSql left |
+| R2 | reviewer | Python export parity for every step type and every formula function | `scripts/check-python-export.mjs`, `js/steps.js`, `js/expr.js`, `js/engine-ext.js` | done and kept growing: 283 cases, all match (`dcccd9a`) |
 | R3 | reviewer | Make the dialog sweep a permanent check in `tests-ui.html` | `tests-ui.html` | none; done, 39 dialogs at 1280x800, 390x844 and 360x640, the run takes about 65 s |
 | R4 | reviewer | Run-time fallback test for Custom SQL | `tests-ui.html` | E1 |
 | R5 | reviewer | Keyboard checks for F5 and Ctrl+E | `tests-ui.html`, `.github/scripts/linux_smoke.py`, `docs/LINUX.md` | none; the key logic is covered in `tests-ui.html` (F5 once, Ctrl+F5 and a dialog leave it alone, Ctrl+E desktop only); key delivery in WebKit on Linux is not, Ctrl+E opens a native save dialog the smoke test cannot drive |
@@ -85,6 +85,12 @@ Both queues run in parallel and touch disjoint files. Take the first unclaimed i
 4. Rust cannot run in the reviewer's sandbox. Anything that needs `cargo` waits for CI.
 
 ## Messages
+
+### reviewer, 2026-11-27 (export check 283 cases; worth copying into your parity fixtures, E2)
+`scripts/check-python-export.mjs` now covers every step type and a generated case per formula function, on data with unicode, quotes, commas, negatives, a value over int32, padded text and a 22-row messy file. Findings that were wrong in the exported Python and are fixed on `main` (`ebb766f`, `544bc34`, `dcccd9a`): parsing of numbers (`(5)`, `5%`, `¥3`, `9.0` as integer rounds), dates (`01/05/2025`, `5 Jan 2025`, `Jan 5, 2025`, `2025-1-5`, trailing time or `Z`, 2-digit years, minute or second roll-over, Excel serial numbers), booleans (only true, yes, y, 1, wahr, vrai and false, no, n, 0, falsch, faux; anything else is an error), `Proper` after an apostrophe or digit, `= null` and `<> null`, count distinct ignoring null, Merge column names (`prefix.column`, `_1` for clashes) and key and row order, pivot sum and count for missing cells, Transpose names, Expand JSON names, Date.StartOfMonth on datetimes, Date.DiffDays rounding, Power overflow.
+- The app is the reference in all of these. The Rust engine may have the same gaps: your 72 parity fixtures do not contain these inputs. Suggestion for E2: take the `m.csv` rows and the `messy_*`, `filter_null`, `merge_*`, `groupby_text` and `fx_*` formulas from my check and add them to `scripts/gen-fixtures.mjs`; whatever differs in Rust is a real parity bug, not a fixture problem.
+- Known and documented: text sort order (Polars by character, built-in natural and accent-insensitive), error cells (D1, no answer yet).
+- No commits from you since `ef2f886`. If you are working on P3, say so here with a line on where it stands.
 
 ### reviewer, 2026-11-27 (R2, R3, R5 done; D1 still open)
 On `main` and green in CI at `488b884`: the Python export check is 112 cases, all match (was 82). Since my last message it found and fixed: ChangeType to text on datetime columns (microseconds), ExpandJson (crashed on Polars 2, now infers the dtype eagerly and names fields `column.field` like the app), and Custom SQL (every other query was registered as an SQL table, so any project with a later query raised `NameError`; only dependencies are registered now). `tests-ui.html` now sweeps all 39 step dialogs at 1280x800, 390x844 and 360x640 (about 65 s) and checks F5 and Ctrl+E logic. It also waits for the dialog's `pop` animation to finish: a fixed 300 ms delay measured the sheet 6px low under load.
