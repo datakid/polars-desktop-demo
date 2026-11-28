@@ -41,7 +41,7 @@ jobs:
 
       - name: Compare the exported Python script with the app
         run: |
-          pip install polars fastexcel
+          pip install polars fastexcel xlsxwriter openpyxl
           node scripts/check-python-export.mjs
 
       - name: Run unit and end-to-end tests in headless Chromium

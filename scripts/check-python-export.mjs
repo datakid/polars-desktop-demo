@@ -302,13 +302,19 @@ C.push(
   ['messy_de_datetime', messyLocale('t', 'datetime', 'de-DE')],
   ['messy_gb_date', messyLocale('d', 'date', 'en-GB')],
 );
+const formatChecks = [];
+C.push(
+  ['fmt_parquet', [src, ct, { type: 'Filter', mode: 'builder', builder: { join: 'and', conds: [{ col: 'val', op: 'gt', value: '10' }] } }], 'parquet'],
+  ['fmt_arrow', [src, ct, { type: 'Sort', by: [{ col: 'id', desc: true }] }], 'arrow'],
+  ['fmt_xlsx', [src, ct, { type: 'SelectColumns', cols: ['id', 'grp', 'val', 'price', 'name', 'day', 'ok', 'ts'] }], 'xlsx'],
+);
 C.push(...formulaCases);
 const formulaNames = new Set(formulaCases.map((x) => x[0]));
 const project = {
   name: 'Export check',
   settings: { previewRows: 1000, locale: 'en-US' },
   params: [{ name: 'Min', type: 'number', value: '50' }, { name: 'Big', type: 'number', value: '1,000' }, { name: 'Since', type: 'date', value: '2025-01-15' }, { name: 'SinceUs', type: 'date', value: '01/15/2025' }, { name: 'Label', type: 'text', value: 'x' }, { name: 'Regs', type: 'list', value: 'a, b' }],
-  queries: C.map(([name, kind], i) => ({ id: 'q' + i, name, load: { target: 'csv' }, steps: (Array.isArray(kind) && kind[0].type === 'Source' ? kind : [src, ct].concat(Array.isArray(kind) ? kind : [kind])).map((k, j) => ({ id: 's' + j, name: j === 0 ? 'Source' : 'Step', kind: k })) })),
+  queries: C.map(([name, kind, target], i) => ({ id: 'q' + i, name, load: { target: target || 'csv' }, steps: (Array.isArray(kind) && kind[0].type === 'Source' ? kind : [src, ct].concat(Array.isArray(kind) ? kind : [kind])).map((k, j) => ({ id: 's' + j, name: j === 0 ? 'Source' : 'Step', kind: k })) })),
 };
 writeFileSync(join(dir, 'check.floe'), JSON.stringify(project));
 
@@ -353,7 +359,9 @@ const same = (x, y) => {
   return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
 };
 const problems = [];
+const otherFormats = new Map(C.filter((x) => x[2] && x[2] !== 'csv').map((x) => [x[0], x[2]]));
 for (const [name] of C) {
+  if (otherFormats.has(name)) continue;
   let a, b;
   if (rejected.has(name)) continue;
   try { a = table(join(dir, 'app', name + '.csv')); b = table(join(dir, 'out', name + '.csv')); } catch (e) { problems.push(`${name}: an output file is missing`); continue; }
@@ -377,6 +385,11 @@ const stopsOnBadValue = (errorMode) => {
   return !appStops && !pyStops ? null : `with errors set to ${errorMode}, the app ${appStops ? 'stopped' : 'went on'} and the Python script ${pyStops ? 'stopped' : 'went on'}`;
 };
 for (const mode of ['fail', 'error', 'null']) { const why = stopsOnBadValue(mode); if (why) problems.push('change type, error mode ' + mode + ': ' + why); }
+if (otherFormats.size) {
+  const compared = run(python, [join(root, 'scripts', 'compare-formats.py'), dir].concat([...otherFormats].map(([n, f]) => n + ':' + f)), dir);
+  if (compared.status !== 0) problems.push('the file formats could not be compared: ' + compared.stderr.slice(0, 200));
+  for (const line of compared.stdout.split('\n')) if (line.startsWith('FAIL ')) problems.push(line.slice(5));
+}
 rmSync(dir, { recursive: true, force: true });
 problems.forEach((x) => console.log('FAIL ' + x));
 if (rejected.size) console.log(`${rejected.size} generated formulas are rejected by the app and were skipped`);
